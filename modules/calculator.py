@@ -54,10 +54,14 @@ class DamageCalculator:
             )
 
         hud_total = sum(hud_damage_by_type.values()) * weapon.multi
-        hud_total_with_bane = (hud_total * bane_mod) if bane_mod > 0 else hud_total
+        # Bane stats are aggregated as fractional bonuses (0.30 for +30%), so
+        # they multiply the totals by (1 + bonus); multiple bane mods stack additively.
+        hud_total_with_bane = (hud_total * (1.0 + bane_mod)) if bane_mod > 0 else hud_total
 
         final_total = excel_round(sum(final_damage_by_type.values()), 0)
-        final_total_with_bane = excel_round(final_total * bane_mod, 0) if bane_mod > 0 else final_total
+        final_total_with_bane = (
+            excel_round(final_total * (1.0 + bane_mod), 0) if bane_mod > 0 else final_total
+        )
 
         return CalculationResults(
             base_weapon_damage=base_weapon_damage,
