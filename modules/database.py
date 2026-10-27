@@ -6,7 +6,6 @@ from typing import List, Optional
 
 from .constants import DAMAGE_TYPES, SEARCH_LIMIT
 from .models import Mod, Weapon
-from .mod_parser import parse_effects
 
 
 class DatabaseSession:
@@ -95,20 +94,6 @@ class ModRepository(DatabaseSession):
             return self._row_to_mod(row) if row else None
         except sqlite3.OperationalError:
             return None
-
-    def get_effects_for_rank(self, unique_name: str, rank: int):
-        try:
-            with self.connect() as connection:
-                rows = connection.execute(
-                    "SELECT effect_code, effect_value, effect_text, position FROM mod_effects WHERE unique_name = ? AND rank = ? ORDER BY position",
-                    (unique_name, rank),
-                ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
-        return [
-            parse_effects(row["effect_text"])[0] if False else None
-            for row in rows
-        ]
 
     def fetch_ranked_effects(self, unique_name: str, rank: int):
         from .models import ModEffect
