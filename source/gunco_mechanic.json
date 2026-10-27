@@ -1,0 +1,1582 @@
+{
+  "meta": {
+    "title": "Condition Overload (GunCO) multiplicative stacking tables",
+    "wiki_url": "https://wiki.warframe.com/w/Condition_Overload_(Mechanic)",
+    "wiki_page_status": "community/unofficial page, banner: actively being worked on",
+    "wiki_page_last_edited": "2026-10-05",
+    "data_retrieved": "2026-10-27",
+    "cross_reference": "dmerced05/verbose-spork-wf-calc src/calc/conditionOverload.ts - wiki pull Oct 2026 plus rainy's GunCO sheet 38.0.12 (Feb 2025); vendored at source/conditionOverload.ts",
+    "catalog_scope": "The wiki lists only discrepant attacks. Any attack not listed behaves as intended: additive +100% of the CO-type bonus.",
+    "default_resolution": {
+      "unlisted_hitscan_aoe": "add, scale 1.0, direct-hit target only",
+      "unlisted_projectile_aoe_radius": "none - projectile explosion radii never receive CO",
+      "unlisted_regular_attack": "add, scale 1.0"
+    }
+  },
+  "stacking_modes": {
+    "multiply": {
+      "label": "Multiplying (wiki behavior #1, not intended; mostly projectiles)",
+      "formula": "Base x MostDamageBonuses x (1 + CO_bonus) x OtherMultipliers",
+      "description": "The CO-type bonus stacks additively with other CO-type bonuses only, then multiplies against ordinary +% damage bonuses (Serration, Hornet Strike, Vex Armor, Arcane Fury, Pressure Point, ...)."
+    },
+    "add": {
+      "label": "Adding (wiki behaviors #2-#4, intended; most hitscan weapons)",
+      "formula": "Base x (MostDamageBonuses x OtherMultipliers + CO_bonus x scale)",
+      "description": "The CO-type bonus is added to the ordinary +% damage pool. 'scale' is the wiki's CO-bonus-relative-to-base column for attacks whose CO only counts part of the base (charged bows, child projectiles, AoE on the directly hit target). Final multipliers are ignored."
+    },
+    "none": {
+      "label": "Does not apply (wiki behavior #5; AoE radii and known bugs)",
+      "formula": "CO_bonus contribution = 0",
+      "description": "Explosion/radius damage of projectile weapons, plus a handful of documented bugged attacks (Azima turret, Balefire Charger, Glory, Sonicor, Stug, ...)."
+    }
+  },
+  "co_sources": [
+    {
+      "name": "Condition Overload",
+      "slot": "melee",
+      "per_status": 0.8,
+      "stacks": "unique status types",
+      "cap": null,
+      "note": "+80% per status type"
+    },
+    {
+      "name": "Galvanized Aptitude",
+      "slot": "primary",
+      "per_status": 0.4,
+      "stacks": 2,
+      "cap": 0.8,
+      "note": "+40% per status type, 2 stacks"
+    },
+    {
+      "name": "Galvanized Shot",
+      "slot": "secondary",
+      "per_status": 0.4,
+      "stacks": 3,
+      "cap": 1.2,
+      "note": "+40% per status type, 3 stacks"
+    },
+    {
+      "name": "Galvanized Savvy",
+      "slot": "shotgun",
+      "per_status": 0.4,
+      "stacks": 2,
+      "cap": 0.8,
+      "note": "+40% per status type, 2 stacks"
+    },
+    {
+      "name": "Secondary Shiver",
+      "slot": "secondary",
+      "per_status": 0.45,
+      "stacks": "Freeze stacks",
+      "cap": null,
+      "note": "+45% per Freeze stack; also the only practical GunCO source for archguns"
+    },
+    {
+      "name": "Cedo / Cedo Prime (innate alt-fire)",
+      "slot": "secondary",
+      "per_status": 0.6,
+      "stacks": "status types",
+      "cap": null,
+      "note": "+60% per status type on alt-fire"
+    },
+    {
+      "name": "Shattering Frost (Duviri decree, Koumei)",
+      "slot": "decree",
+      "per_status": 0.8,
+      "stacks": 3,
+      "cap": 2.4,
+      "note": "+80% vs a Frozen target, up to +240%"
+    },
+    {
+      "name": "Incarnon Genesis perks",
+      "slot": "incarnon",
+      "per_status": null,
+      "stacks": null,
+      "cap": null,
+      "note": "Dual Toxocyst +33%; Lato/Angstrum/Despair/Zylok/Soma +40%; Latron +30%; Kunai/Dread +100% while target under 50% HP"
+    }
+  ],
+  "excluded_sources": [
+    "Catalyze (radial exponential bonus, not a CO-type bonus)"
+  ],
+  "ignored_final_multipliers": [
+    "Extinguished Key",
+    "range damage falloff",
+    "Longbow Sharpshot",
+    "Primary Compression (on projectiles)",
+    "Duality",
+    "Furious Javelin",
+    "Garuda passive",
+    "Eclipse",
+    "Hall of Mirrors",
+    "Parasitic Link",
+    "Overdriver",
+    "Incarnon Genesis base-damage evolutions",
+    "some stance multipliers",
+    "bow charge multiplier (uncharged base is used)"
+  ],
+  "rules": [
+    {
+      "section": "primary",
+      "weapons": [
+        "Acceltra"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Rocket Impact$",
+      "mode": "add",
+      "scale": 0.743,
+      "source": "wiki",
+      "note": "CO uses 26 damage instead of the listed 35"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Aeolak"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Normal Attack|Alt-Fire)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Alternox",
+        "Alternox Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Normal Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Ambassador"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged AoE$",
+      "mode": "add",
+      "scale": 0.75,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Arca Plasmor",
+        "Tenet Arca Plasmor"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Normal Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Basmu"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Auto$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Battacor"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Normal Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Braton",
+        "Mk1-Braton",
+        "Braton Prime",
+        "Braton Vandal"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form AoE$",
+      "mode": "add",
+      "scale": 0.95,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Bubonico"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Auto|Burst)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Burston",
+        "Burston Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form Radial Attack$",
+      "mode": "add",
+      "scale": 0.24,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Buzlok"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Normal Attack|Beacon)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Cedo",
+        "Cedo Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Alt-Fire Glaive$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Cernos",
+        "Cernos Prime",
+        "Rakta Cernos",
+        "Mutalist Cernos",
+        "Daikyu Prime",
+        "Dread",
+        "Paris",
+        "Paris Prime",
+        "Mk1-Paris",
+        "Kuva Drakgoon"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged( Horizontal\\/Vertical)? Shot$",
+      "mode": "add",
+      "scale": 0.5,
+      "source": "wiki",
+      "note": "CO only counts the uncharged base damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Coda Bassocyst"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Normal Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Coda Bassocyst"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Alt-Fire$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Coda Hema",
+        "Hema",
+        "Exergis",
+        "Steflos",
+        "Shedu"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Normal Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Mutalist Cernos"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Uncharged Shot$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Mutalist Cernos"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Toxin Cloud$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Uncharged cloud. The charged cloud instead adds CO based on the arrow's 205 damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Cinta"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Quick Shot|Charged Shot|Perfect Shot)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Drakgoon"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.57,
+      "source": "wiki",
+      "note": "CO only counts the uncharged base damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Dread",
+        "Paris",
+        "Paris Prime",
+        "Mk1-Paris"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Evensong"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.65,
+      "source": "wiki",
+      "note": "CO only counts the uncharged base damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Evensong"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Radial Attack$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Felarx"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Normal Attack|Incarnon Form)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Ferrox"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Radial Attack$",
+      "mode": "add",
+      "scale": 3.5,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Tenet Ferrox"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Radial Attack$",
+      "mode": "add",
+      "scale": 3.33,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Fulmin",
+        "Fulmin Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Semi-Auto Mode$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Harpak"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Harpoon$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Javlok"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Projectile Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Lanka"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.38,
+      "source": "wiki",
+      "note": "CO only counts the partially charged base damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Latron",
+        "Latron Prime",
+        "Latron Wraith",
+        "Miter"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Latron",
+        "Latron Prime",
+        "Latron Wraith"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form AoE$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "CO does not apply to the AoE in any way"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Miter"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.4,
+      "source": "wiki",
+      "note": "CO only counts the partially charged base damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Nataruk"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Charged Shot|Perfect Shot)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Nunchasa"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Alt-Fire$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Opticor"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Charged|Quick) Shot AoE$",
+      "mode": "add",
+      "scale": 2.5,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Opticor Vandal"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot AoE$",
+      "mode": "add",
+      "scale": 2.0,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Paracyst"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Infested Harpoon",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Phantasma",
+        "Phantasma Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Cluster Bombs Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Proboscis Cernos"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Appendages|Charged Shot Explosion)$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Quellor"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Alt-Fire$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Scourge",
+        "Scourge Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Spear Throw( Impact)?$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Stahlta"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Auto|Alt-Fire)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Tenet Envoy"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Grenade Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Torid"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Grenade Impact|Poison Cloud)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Trumna",
+        "Trumna Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Auto AoE$",
+      "mode": "add",
+      "scale": 1.64,
+      "source": "wiki",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Trumna",
+        "Trumna Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Grenade Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Zarr"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Cannon Mode Cluster Bomb Contact$",
+      "mode": "add",
+      "scale": 1.67,
+      "source": "wiki",
+      "note": "Uses the main projectile's 25 damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Kuva Zarr"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Cannon Mode Cluster Bomb Contact$",
+      "mode": "add",
+      "scale": 3.33,
+      "source": "wiki",
+      "note": "Uses the main projectile's 50 damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Zhuge Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Arrow Explosion$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Kuva Bramma"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Cluster Bomb Contact$",
+      "mode": "add",
+      "scale": 4.92,
+      "source": "gunco_sheet",
+      "note": "Uses the main arrow's damage"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Zylok",
+        "Zylok Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form Radial Attack$",
+      "mode": "add",
+      "scale": 0.59,
+      "source": "gunco_sheet",
+      "note": "Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Akarius Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Rocket Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Aegrit"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Direct Hit$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Angstrum",
+        "Prisma Angstrum"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Azima"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Turret",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Bug: should count as hitscan but gets nothing"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Balefire Charger",
+        "Balefire Charger Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": ".",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Bug: should apply but doesn't"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Ballistica"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.25,
+      "source": "wiki",
+      "note": "CO only counts the uncharged base damage"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Akarius"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Rocket Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Rakta Ballistica"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.25,
+      "source": "gunco_sheet",
+      "note": "CO only counts the uncharged base damage"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Ballistica Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Charged Shot$",
+      "mode": "add",
+      "scale": 0.5,
+      "source": "gunco_sheet",
+      "note": "CO only counts the uncharged base damage"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Cyanex",
+        "Catchmoon",
+        "Epitaph",
+        "Epitaph Prime",
+        "Seer",
+        "Kuva Seer",
+        "Sepulcrum",
+        "Tenet Spirex"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(?!.*(AoE|Explosion|Radial)).*",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "From the Secondary Shiver wiki page"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Glory"
+      ],
+      "attack_name": null,
+      "attack_pattern": ".",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Kulstar"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Cluster Bombs$",
+      "mode": "add",
+      "scale": 2.67,
+      "source": "gunco_sheet",
+      "note": "Uses the main rocket's damage"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Kunai"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Incarnon Form$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": "Gets the Evolution base damage too"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Onos"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Normal Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Pox"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Poison Cloud$",
+      "mode": "add",
+      "scale": 2.5,
+      "source": "gunco_sheet",
+      "note": "Embedded enemy only, scales off the contact hit"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Sonicor"
+      ],
+      "attack_name": null,
+      "attack_pattern": ".",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": "Bug: should apply but doesn't"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Stug"
+      ],
+      "attack_name": null,
+      "attack_pattern": ".",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Tenet Diplos"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Lock-on Mode$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Tenet Plinx"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Alt-Fire$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Zakti",
+        "Zakti Prime"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^(Dart Impact|Normal Attack)$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Zymos"
+      ],
+      "attack_name": null,
+      "attack_pattern": "^Homing Spore Contact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "gunco_sheet",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Sporelacer"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Tremor grip; kitgun primary chamber"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Tombfinger"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Brash grip; kitgun primary chamber"
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Zenith"
+      ],
+      "attack_name": "Alt-fire Disk Bonk",
+      "attack_pattern": "^Alt\\-fire\\ Disk\\ Bonk$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "primary",
+      "weapons": [
+        "Vadarya Prime"
+      ],
+      "attack_name": "Primary Fire Lightning Strikes",
+      "attack_pattern": "^Primary\\ Fire\\ Lightning\\ Strikes$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "AoE does not apply"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Ballistica Prime"
+      ],
+      "attack_name": "Incarnon Mode",
+      "attack_pattern": "^Incarnon\\ Mode$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Catabolyst"
+      ],
+      "attack_name": "Partial Reload Impact",
+      "attack_pattern": "^Partial\\ Reload\\ Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Catabolyst"
+      ],
+      "attack_name": "Reload From Empty Impact",
+      "attack_pattern": "^Reload\\ From\\ Empty\\ Impact$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Mk1-Kunai"
+      ],
+      "attack_name": "Incarnon Mode",
+      "attack_pattern": "^Incarnon\\ Mode$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "CO uses the Evolution base damage too"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Tombfinger"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Kitgun secondary chamber"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Sporelacer"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "add",
+      "scale": 0.63,
+      "source": "wiki",
+      "note": "CO uses a 57 damage value regardless of configuration"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Sporelacer"
+      ],
+      "attack_name": "Bomblet Impact",
+      "attack_pattern": "^Bomblet\\ Impact$",
+      "mode": "add",
+      "scale": 6.33,
+      "source": "wiki",
+      "note": "CO uses the parent projectile's 57 damage value"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Castanas"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "AoE does not apply"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Sancti Castanas"
+      ],
+      "attack_name": "Mid-Flight Detonation",
+      "attack_pattern": "^Mid\\-Flight\\ Detonation$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "AoE does not apply"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Sancti Castanas"
+      ],
+      "attack_name": "Embedded Detonation",
+      "attack_pattern": "^Embedded\\ Detonation$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "AoE does not apply"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Kompressa Prime"
+      ],
+      "attack_name": "Radial Attack",
+      "attack_pattern": "^Radial\\ Attack$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "AoE does not apply"
+    },
+    {
+      "section": "secondary",
+      "weapons": [
+        "Scyotid"
+      ],
+      "attack_name": "Alt-Fire Grab",
+      "attack_pattern": "^Alt\\-Fire\\ Grab$",
+      "mode": "none",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Does not apply"
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Corufell"
+      ],
+      "attack_name": "Heavy Attack Projectile",
+      "attack_pattern": "^Heavy\\ Attack\\ Projectile$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Exodia Contagion"
+      ],
+      "attack_name": "Aerial Projectile",
+      "attack_pattern": "^Aerial\\ Projectile$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "2x Zaw base; does not apply to embed damage or resultant AoE"
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Nepheri"
+      ],
+      "attack_name": "Neutral Combo Fireball",
+      "attack_pattern": "^Neutral\\ Combo\\ Fireball$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Syam"
+      ],
+      "attack_name": "Heavy Attack Wave 1",
+      "attack_pattern": "^Heavy\\ Attack\\ Wave\\ 1$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Syam"
+      ],
+      "attack_name": "Heavy Attack Wave 2",
+      "attack_pattern": "^Heavy\\ Attack\\ Wave\\ 2$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Tenet Agendus"
+      ],
+      "attack_name": "Heavy Attack Wave 1",
+      "attack_pattern": "^Heavy\\ Attack\\ Wave\\ 1$",
+      "mode": "multiply",
+      "scale": 0.2,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Tenet Agendus"
+      ],
+      "attack_name": "Heavy Attack Wave 2",
+      "attack_pattern": "^Heavy\\ Attack\\ Wave\\ 2$",
+      "mode": "multiply",
+      "scale": 0.2,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Tenet Grigori"
+      ],
+      "attack_name": "Energy Disk",
+      "attack_pattern": "^Energy\\ Disk$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Disk ignores melee base damage (Pressure Point, Arcane Fury); universal weapon bonuses (Arcane Arachne, Deathbringer) apply and are multiplied by CO"
+    },
+    {
+      "section": "melee",
+      "weapons": [
+        "Verdilac"
+      ],
+      "attack_name": "Energy Wave",
+      "attack_pattern": "^Energy\\ Wave$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "exalted",
+      "weapons": [
+        "Exalted Umbra Blade"
+      ],
+      "attack_name": "Heavy Waves",
+      "attack_pattern": "^Heavy\\ Waves$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Arbucep"
+      ],
+      "attack_name": "Direct Hit",
+      "attack_pattern": "^Direct\\ Hit$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "All 6 projectiles; does not apply to the 228 damage AoE"
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Kuva Ayanga"
+      ],
+      "attack_name": "Direct Hit",
+      "attack_pattern": "^Direct\\ Hit$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Corvas Prime"
+      ],
+      "attack_name": "Uncharged Attack",
+      "attack_pattern": "^Uncharged\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Corvas Prime"
+      ],
+      "attack_name": "Charged Attack",
+      "attack_pattern": "^Charged\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Grattler"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Larkspur Prime"
+      ],
+      "attack_name": "Alt-Fire",
+      "attack_pattern": "^Alt\\-Fire$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Mandonel"
+      ],
+      "attack_name": "Uncharged Attack",
+      "attack_pattern": "^Uncharged\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Velocitus"
+      ],
+      "attack_name": "Uncharged Attack",
+      "attack_pattern": "^Uncharged\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "archgun",
+      "weapons": [
+        "Velocitus"
+      ],
+      "attack_name": "Charged Attack",
+      "attack_pattern": "^Charged\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Burst Laser",
+        "Prisma Burst Laser",
+        "Burst Laser Prime"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Cryotra"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": "Does not apply to the lingering cloud AoE"
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Helstrum"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Laser Rifle"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Prime Laser Rifle"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Multron"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "robotic",
+      "weapons": [
+        "Vulklok"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "amp",
+      "weapons": [
+        "Shwaak Prism"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "amp",
+      "weapons": [
+        "Phahd Scaffold"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    },
+    {
+      "section": "amp",
+      "weapons": [
+        "Shraksun Scaffold"
+      ],
+      "attack_name": "Normal Attack",
+      "attack_pattern": "^Normal\\ Attack$",
+      "mode": "multiply",
+      "scale": 1.0,
+      "source": "wiki",
+      "note": null
+    }
+  ]
+}

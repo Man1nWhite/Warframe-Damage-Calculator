@@ -1,0 +1,165 @@
+section,weapon,attack_name,attack_pattern,mode,scale,source,note
+primary,Acceltra,,^Rocket Impact$,add,0.743,wiki,CO uses 26 damage instead of the listed 35
+primary,Aeolak,,^(Normal Attack|Alt-Fire)$,multiply,1.0,wiki,
+primary,Alternox,,^Normal Attack$,multiply,1.0,wiki,
+primary,Alternox Prime,,^Normal Attack$,multiply,1.0,wiki,
+primary,Ambassador,,^Charged AoE$,add,0.75,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Arca Plasmor,,^Normal Attack$,multiply,1.0,wiki,
+primary,Tenet Arca Plasmor,,^Normal Attack$,multiply,1.0,wiki,
+primary,Basmu,,^Auto$,multiply,1.0,wiki,
+primary,Battacor,,^Normal Attack$,multiply,1.0,wiki,
+primary,Braton,,^Incarnon Form AoE$,add,0.95,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Mk1-Braton,,^Incarnon Form AoE$,add,0.95,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Braton Prime,,^Incarnon Form AoE$,add,0.95,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Braton Vandal,,^Incarnon Form AoE$,add,0.95,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Bubonico,,^(Auto|Burst)$,multiply,1.0,wiki,
+primary,Burston,,^Incarnon Form Radial Attack$,add,0.24,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Burston Prime,,^Incarnon Form Radial Attack$,add,0.24,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Buzlok,,^(Normal Attack|Beacon)$,multiply,1.0,wiki,
+primary,Cedo,,^Alt-Fire Glaive$,multiply,1.0,wiki,
+primary,Cedo Prime,,^Alt-Fire Glaive$,multiply,1.0,wiki,
+primary,Cernos,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Cernos Prime,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Rakta Cernos,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Mutalist Cernos,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Daikyu Prime,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Dread,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Paris,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Paris Prime,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Mk1-Paris,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Kuva Drakgoon,,^Charged( Horizontal\/Vertical)? Shot$,add,0.5,wiki,CO only counts the uncharged base damage
+primary,Coda Bassocyst,,^Normal Attack$,multiply,1.0,wiki,
+primary,Coda Bassocyst,,^Alt-Fire$,none,1.0,wiki,
+primary,Coda Hema,,^Normal Attack$,multiply,1.0,wiki,
+primary,Hema,,^Normal Attack$,multiply,1.0,wiki,
+primary,Exergis,,^Normal Attack$,multiply,1.0,wiki,
+primary,Steflos,,^Normal Attack$,multiply,1.0,wiki,
+primary,Shedu,,^Normal Attack$,multiply,1.0,wiki,
+primary,Mutalist Cernos,,^Uncharged Shot$,multiply,1.0,wiki,
+primary,Mutalist Cernos,,^Toxin Cloud$,multiply,1.0,wiki,Uncharged cloud. The charged cloud instead adds CO based on the arrow's 205 damage
+primary,Cinta,,^(Quick Shot|Charged Shot|Perfect Shot)$,multiply,1.0,wiki,
+primary,Drakgoon,,^Charged Shot$,add,0.57,wiki,CO only counts the uncharged base damage
+primary,Dread,,^Incarnon Form,multiply,1.0,wiki,
+primary,Paris,,^Incarnon Form,multiply,1.0,wiki,
+primary,Paris Prime,,^Incarnon Form,multiply,1.0,wiki,
+primary,Mk1-Paris,,^Incarnon Form,multiply,1.0,wiki,
+primary,Evensong,,^Charged Shot$,add,0.65,wiki,CO only counts the uncharged base damage
+primary,Evensong,,^Charged Radial Attack$,none,1.0,wiki,
+primary,Felarx,,^(Normal Attack|Incarnon Form)$,multiply,1.0,wiki,
+primary,Ferrox,,^Radial Attack$,add,3.5,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Tenet Ferrox,,^Radial Attack$,add,3.33,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Fulmin,,^Semi-Auto Mode$,multiply,1.0,wiki,
+primary,Fulmin Prime,,^Semi-Auto Mode$,multiply,1.0,wiki,
+primary,Harpak,,^Harpoon$,multiply,1.0,wiki,
+primary,Javlok,,^Projectile Impact$,multiply,1.0,wiki,
+primary,Lanka,,^Charged Shot$,add,0.38,wiki,CO only counts the partially charged base damage
+primary,Latron,,^Incarnon Form$,multiply,1.0,wiki,
+primary,Latron Prime,,^Incarnon Form$,multiply,1.0,wiki,
+primary,Latron Wraith,,^Incarnon Form$,multiply,1.0,wiki,
+primary,Miter,,^Incarnon Form$,multiply,1.0,wiki,
+primary,Latron,,^Incarnon Form AoE$,none,1.0,wiki,CO does not apply to the AoE in any way
+primary,Latron Prime,,^Incarnon Form AoE$,none,1.0,wiki,CO does not apply to the AoE in any way
+primary,Latron Wraith,,^Incarnon Form AoE$,none,1.0,wiki,CO does not apply to the AoE in any way
+primary,Miter,,^Charged Shot$,add,0.4,wiki,CO only counts the partially charged base damage
+primary,Nataruk,,^(Charged Shot|Perfect Shot)$,multiply,1.0,wiki,
+primary,Nunchasa,,^Alt-Fire$,multiply,1.0,wiki,
+primary,Opticor,,^(Charged|Quick) Shot AoE$,add,2.5,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Opticor Vandal,,^Charged Shot AoE$,add,2.0,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Paracyst,,^Infested Harpoon,multiply,1.0,wiki,
+primary,Phantasma,,^Cluster Bombs Impact$,multiply,1.0,wiki,
+primary,Phantasma Prime,,^Cluster Bombs Impact$,multiply,1.0,wiki,
+primary,Proboscis Cernos,,^(Appendages|Charged Shot Explosion)$,none,1.0,wiki,
+primary,Quellor,,^Alt-Fire$,multiply,1.0,wiki,
+primary,Scourge,,^Spear Throw( Impact)?$,multiply,1.0,wiki,
+primary,Scourge Prime,,^Spear Throw( Impact)?$,multiply,1.0,wiki,
+primary,Stahlta,,^(Auto|Alt-Fire)$,multiply,1.0,wiki,
+primary,Tenet Envoy,,^Grenade Impact$,multiply,1.0,wiki,
+primary,Torid,,^(Grenade Impact|Poison Cloud)$,multiply,1.0,wiki,
+primary,Trumna,,^Auto AoE$,add,1.64,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Trumna Prime,,^Auto AoE$,add,1.64,wiki,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Trumna,,^Grenade Impact$,multiply,1.0,wiki,
+primary,Trumna Prime,,^Grenade Impact$,multiply,1.0,wiki,
+primary,Zarr,,^Cannon Mode Cluster Bomb Contact$,add,1.67,wiki,Uses the main projectile's 25 damage
+primary,Kuva Zarr,,^Cannon Mode Cluster Bomb Contact$,add,3.33,wiki,Uses the main projectile's 50 damage
+primary,Zhuge Prime,,^Arrow Explosion$,none,1.0,wiki,
+primary,Kuva Bramma,,^Cluster Bomb Contact$,add,4.92,gunco_sheet,Uses the main arrow's damage
+primary,Zylok,,^Incarnon Form Radial Attack$,add,0.59,gunco_sheet,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+primary,Zylok Prime,,^Incarnon Form Radial Attack$,add,0.59,gunco_sheet,"Only on the enemy the hitscan shot hits directly, and scales off the hitscan damage"
+secondary,Akarius Prime,,^Rocket Impact$,multiply,1.0,wiki,
+secondary,Aegrit,,^Direct Hit$,multiply,1.0,wiki,
+secondary,Angstrum,,^Incarnon Form$,multiply,1.0,wiki,
+secondary,Prisma Angstrum,,^Incarnon Form$,multiply,1.0,wiki,
+secondary,Azima,,^Turret,none,1.0,wiki,Bug: should count as hitscan but gets nothing
+secondary,Balefire Charger,,.,none,1.0,wiki,Bug: should apply but doesn't
+secondary,Balefire Charger Prime,,.,none,1.0,wiki,Bug: should apply but doesn't
+secondary,Ballistica,,^Charged Shot$,add,0.25,wiki,CO only counts the uncharged base damage
+secondary,Akarius,,^Rocket Impact$,multiply,1.0,gunco_sheet,
+secondary,Rakta Ballistica,,^Charged Shot$,add,0.25,gunco_sheet,CO only counts the uncharged base damage
+secondary,Ballistica Prime,,^Charged Shot$,add,0.5,gunco_sheet,CO only counts the uncharged base damage
+secondary,Cyanex,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Catchmoon,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Epitaph,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Epitaph Prime,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Seer,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Kuva Seer,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Sepulcrum,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Tenet Spirex,,^(?!.*(AoE|Explosion|Radial)).*,multiply,1.0,wiki,From the Secondary Shiver wiki page
+secondary,Glory,,.,none,1.0,gunco_sheet,
+secondary,Kulstar,,^Cluster Bombs$,add,2.67,gunco_sheet,Uses the main rocket's damage
+secondary,Kunai,,^Incarnon Form$,multiply,1.0,gunco_sheet,Gets the Evolution base damage too
+secondary,Onos,,^Normal Attack$,multiply,1.0,gunco_sheet,
+secondary,Pox,,^Poison Cloud$,add,2.5,gunco_sheet,"Embedded enemy only, scales off the contact hit"
+secondary,Sonicor,,.,none,1.0,gunco_sheet,Bug: should apply but doesn't
+secondary,Stug,,.,none,1.0,gunco_sheet,
+secondary,Tenet Diplos,,^Lock-on Mode$,multiply,1.0,gunco_sheet,
+secondary,Tenet Plinx,,^Alt-Fire$,multiply,1.0,gunco_sheet,
+secondary,Zakti,,^(Dart Impact|Normal Attack)$,multiply,1.0,gunco_sheet,
+secondary,Zakti Prime,,^(Dart Impact|Normal Attack)$,multiply,1.0,gunco_sheet,
+secondary,Zymos,,^Homing Spore Contact$,multiply,1.0,gunco_sheet,
+primary,Sporelacer,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,Tremor grip; kitgun primary chamber
+primary,Tombfinger,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,Brash grip; kitgun primary chamber
+primary,Zenith,Alt-fire Disk Bonk,^Alt\-fire\ Disk\ Bonk$,multiply,1.0,wiki,
+primary,Vadarya Prime,Primary Fire Lightning Strikes,^Primary\ Fire\ Lightning\ Strikes$,none,1.0,wiki,AoE does not apply
+secondary,Ballistica Prime,Incarnon Mode,^Incarnon\ Mode$,multiply,1.0,wiki,
+secondary,Catabolyst,Partial Reload Impact,^Partial\ Reload\ Impact$,multiply,1.0,wiki,
+secondary,Catabolyst,Reload From Empty Impact,^Reload\ From\ Empty\ Impact$,multiply,1.0,wiki,
+secondary,Mk1-Kunai,Incarnon Mode,^Incarnon\ Mode$,multiply,1.0,wiki,CO uses the Evolution base damage too
+secondary,Tombfinger,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,Kitgun secondary chamber
+secondary,Sporelacer,Normal Attack,^Normal\ Attack$,add,0.63,wiki,CO uses a 57 damage value regardless of configuration
+secondary,Sporelacer,Bomblet Impact,^Bomblet\ Impact$,add,6.33,wiki,CO uses the parent projectile's 57 damage value
+secondary,Castanas,Normal Attack,^Normal\ Attack$,none,1.0,wiki,AoE does not apply
+secondary,Sancti Castanas,Mid-Flight Detonation,^Mid\-Flight\ Detonation$,none,1.0,wiki,AoE does not apply
+secondary,Sancti Castanas,Embedded Detonation,^Embedded\ Detonation$,none,1.0,wiki,AoE does not apply
+secondary,Kompressa Prime,Radial Attack,^Radial\ Attack$,none,1.0,wiki,AoE does not apply
+secondary,Scyotid,Alt-Fire Grab,^Alt\-Fire\ Grab$,none,1.0,wiki,Does not apply
+melee,Corufell,Heavy Attack Projectile,^Heavy\ Attack\ Projectile$,multiply,1.0,wiki,
+melee,Exodia Contagion,Aerial Projectile,^Aerial\ Projectile$,multiply,1.0,wiki,2x Zaw base; does not apply to embed damage or resultant AoE
+melee,Nepheri,Neutral Combo Fireball,^Neutral\ Combo\ Fireball$,multiply,1.0,wiki,
+melee,Syam,Heavy Attack Wave 1,^Heavy\ Attack\ Wave\ 1$,multiply,1.0,wiki,
+melee,Syam,Heavy Attack Wave 2,^Heavy\ Attack\ Wave\ 2$,multiply,1.0,wiki,
+melee,Tenet Agendus,Heavy Attack Wave 1,^Heavy\ Attack\ Wave\ 1$,multiply,0.2,wiki,
+melee,Tenet Agendus,Heavy Attack Wave 2,^Heavy\ Attack\ Wave\ 2$,multiply,0.2,wiki,
+melee,Tenet Grigori,Energy Disk,^Energy\ Disk$,multiply,1.0,wiki,"Disk ignores melee base damage (Pressure Point, Arcane Fury); universal weapon bonuses (Arcane Arachne, Deathbringer) apply and are multiplied by CO"
+melee,Verdilac,Energy Wave,^Energy\ Wave$,multiply,1.0,wiki,
+exalted,Exalted Umbra Blade,Heavy Waves,^Heavy\ Waves$,multiply,1.0,wiki,
+archgun,Arbucep,Direct Hit,^Direct\ Hit$,multiply,1.0,wiki,All 6 projectiles; does not apply to the 228 damage AoE
+archgun,Kuva Ayanga,Direct Hit,^Direct\ Hit$,multiply,1.0,wiki,
+archgun,Corvas Prime,Uncharged Attack,^Uncharged\ Attack$,multiply,1.0,wiki,
+archgun,Corvas Prime,Charged Attack,^Charged\ Attack$,multiply,1.0,wiki,
+archgun,Grattler,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+archgun,Larkspur Prime,Alt-Fire,^Alt\-Fire$,multiply,1.0,wiki,
+archgun,Mandonel,Uncharged Attack,^Uncharged\ Attack$,multiply,1.0,wiki,
+archgun,Velocitus,Uncharged Attack,^Uncharged\ Attack$,multiply,1.0,wiki,
+archgun,Velocitus,Charged Attack,^Charged\ Attack$,multiply,1.0,wiki,
+robotic,Burst Laser,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Prisma Burst Laser,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Burst Laser Prime,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Cryotra,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,Does not apply to the lingering cloud AoE
+robotic,Helstrum,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Laser Rifle,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Prime Laser Rifle,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Multron,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+robotic,Vulklok,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+amp,Shwaak Prism,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+amp,Phahd Scaffold,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,
+amp,Shraksun Scaffold,Normal Attack,^Normal\ Attack$,multiply,1.0,wiki,

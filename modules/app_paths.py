@@ -13,6 +13,12 @@ SOURCE_FILES = [
     "ExportWeapons_en_Cleaned.zip",
     "ExportKeys_en_Cleaned.zip",
     "Warframe-Damage-Calculator_v2.xlsx",
+    "riven_tags.json",
+    "riven_stats_average_1_2.json",
+    "riven_stats_average_1_2.csv",
+    "gunco_mechanic.json",
+    "gunco_mechanic.csv",
+    "conditionOverload.ts",
 ]
 
 
