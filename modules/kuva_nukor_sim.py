@@ -62,6 +62,7 @@ from modules.enemy_scaling import (
 )
 from modules.constants import FACTION_MULTIPLIERS
 from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
+from modules.crit import quantize_crit_multiplier
 from modules.trial_statistics import sample_percentile
 from modules.status_damage import (
     heat_tick, magnetic_break_electric_tick, toxin_tick, wiki_quantized_damage,
@@ -223,7 +224,9 @@ def build_nukor(last_mod: str = BASELINE_LAST_MOD) -> NukorBuild:
     status_per_beam = BASE_STATUS * (
         1.0 + GALV_SHOT_STATUS + extra.get("status", 0.0))
     crit_chance = BASE_CRIT_CHANCE * (1.0 + extra.get("crit_chance", 0.0))
-    crit_mult = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: the base multiplier is a quantized 12-bit value,
+    # then relative Critical Damage bonuses scale it.
+    crit_mult = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + PRIMED_TARGET_CRACKER + RIVEN_CRIT_DAMAGE
         + extra.get("crit_damage", 0.0))
     sd_mult = 1.0 + RIVEN_STATUS_DURATION
@@ -667,8 +670,11 @@ def simulate(build: NukorBuild,
         due = [p for p in target.blast_stacks if p.fuse_end <= when]
         for p in due:
             target.blast_stacks.remove(p)
-            amount = (BLAST_SINGLE_COEF * p.seed
-                      * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+            # Damage/Blast_Damage and Damage/Calculation: an expiring stack
+            # deals max(1, 0.3 x H).  The floor is unreachable for the bundled
+            # builds (seeds are far above 3.33) but is part of the formula.
+            amount = max(1.0, BLAST_SINGLE_COEF * p.seed
+                         * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
             route({"BLAST": amount}, when, "blast")
             if target.health <= 0:
                 break

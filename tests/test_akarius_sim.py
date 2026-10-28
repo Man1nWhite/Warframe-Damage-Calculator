@@ -6,6 +6,7 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
+from modules.crit import quantize_crit_multiplier
 from modules.akarius_sim import (
     BURST_DELAY,
     GALV_SHOT_CO,
@@ -42,7 +43,8 @@ class BuildStatTests(unittest.TestCase):
         # No crit-chance mods: AFCC is driven purely by Secondary Enervate.
         self.assertAlmostEqual(b.afcc_pct, 102.45 + 0.5 * 18.0)
         # 2.0 x (1 + 110% PTC + 133.7% Riven).
-        self.assertAlmostEqual(b.crit_multiplier, 2.0 * 3.437)
+        self.assertAlmostEqual(
+            b.crit_multiplier, quantize_crit_multiplier(2.0) * 3.437)
         # Elementalist gives status damage and reload speed, not duration.
         self.assertAlmostEqual(b.status_duration_mult, 1.0)
         self.assertAlmostEqual(b.heat_ramp_interval, 0.5)

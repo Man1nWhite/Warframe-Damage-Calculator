@@ -51,6 +51,7 @@ from typing import Callable
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
 from modules.trial_statistics import sample_percentile
+from modules.crit import quantize_crit_multiplier
 from modules.kuva_nukor_sim import (
     BLAST_MAX_STACKS,
     BLAST_SINGLE_COEF,
@@ -156,7 +157,8 @@ def build_akarius(riven: str = RIVEN_VIRAL) -> AkariusBuild:
     fire_rate = BASE_FIRE_RATE * (1.0 + LETHAL_TORRENT_FR)
     status_per_instance = BASE_STATUS * (1.0 + GALV_SHOT_STATUS)
     afcc = enervate_afcc(BASE_CRIT_CHANCE * 100.0)  # no +crit-chance mods
-    crit_mult = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+    crit_mult = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + PRIMED_TARGET_CRACKER + RIVEN_CRIT_DAMAGE)
     sd_mult = 1.0  # Elementalist changes status damage, not duration
 
@@ -358,8 +360,9 @@ def simulate(build: AkariusBuild,
         due = [p for p in target.blast_stacks if p.fuse_end <= when]
         for p in due:
             target.blast_stacks.remove(p)
-            amount = (BLAST_SINGLE_COEF * p.seed
-                      * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+            # Damage/Calculation: an expiring stack deals max(1, 0.3 x H).
+            amount = max(1.0, BLAST_SINGLE_COEF * p.seed
+                         * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
             route({"BLAST": amount}, when, "blast")
             if target.health <= 0:
                 break

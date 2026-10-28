@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import unittest
 
+from modules.crit import quantize_crit_multiplier
 from modules.kuva_nukor_sim import (
     AMMO_PER_TICK,
     BASE_MAGNETIC,
@@ -54,7 +55,8 @@ class BuildStatTests(unittest.TestCase):
         self.assertAlmostEqual(b.merged_status, 3.51)
         # Wiki Primed Target Cracker: +110% at max rank.
         # 5.0 x (1 + 110% PTC + 101.3% riven).
-        self.assertAlmostEqual(b.crit_multiplier, 5.0 * 3.113)
+        self.assertAlmostEqual(
+            b.crit_multiplier, quantize_crit_multiplier(5.0) * 3.113)
         # Only the Riven affects duration; Elementalist buffs status damage.
         self.assertAlmostEqual(b.status_duration_mult, 2.125)
         self.assertAlmostEqual(b.proc_duration, 12.75)
@@ -68,7 +70,8 @@ class BuildStatTests(unittest.TestCase):
         # changes the assumed 101.3% Riven critical-damage bonus.
         for name in ("Hornet Strike", "Scorch", "Frostbite"):
             with self.subTest(last_mod=name):
-                self.assertAlmostEqual(build_nukor(name).crit_multiplier, 15.565)
+                self.assertAlmostEqual(build_nukor(name).crit_multiplier,
+                                       quantize_crit_multiplier(5.0) * 3.113)
 
     def test_ppg_crit_chance_and_afcc(self) -> None:
         b = build_nukor("Primed Pistol Gambit")
@@ -79,7 +82,8 @@ class BuildStatTests(unittest.TestCase):
     def test_hollow_point_tradeoff(self) -> None:
         b = build_nukor("Hollow Point")
         self.assertAlmostEqual(b.damage_bonus, 1.05)       # 120% - 15%
-        self.assertAlmostEqual(b.crit_multiplier, 5.0 * 3.713)
+        self.assertAlmostEqual(
+            b.crit_multiplier, quantize_crit_multiplier(5.0) * 3.713)
         self.assertAlmostEqual(b.afcc_pct, 102.45 + 0.5 * 7.0)
 
     def test_scorch_keeps_heat_and_raises_status(self) -> None:

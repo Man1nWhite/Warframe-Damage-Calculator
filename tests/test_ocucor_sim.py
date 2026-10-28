@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import math
 import unittest
+from unittest.mock import patch
 
 from modules.enemy_scaling import steel_path_eximus_heavy_gunner
 from modules.kuva_nukor_sim import DummyTarget
+from modules.crit import quantize_crit_multiplier
+import modules.ocucor_sim as ocucor
 from modules.ocucor_sim import (
     ARCANE_ENERVATE,
     ARCANE_FLARE,
@@ -50,7 +53,8 @@ class BuildStatTests(unittest.TestCase):
         self.assertAlmostEqual(b.crit_chance_pct, 16.0)
         self.assertAlmostEqual(b.afcc_pct, 102.45 + 0.5 * 16.0)
         # 1.8 x (1 + 110% PTC + 133.7% CD Riven).
-        self.assertAlmostEqual(b.crit_multiplier, 1.8 * 3.437)
+        self.assertAlmostEqual(
+            b.crit_multiplier, quantize_crit_multiplier(1.8) * 3.437)
         # Galv Shot CO adds to the ordinary damage bracket for Ocucor.
         self.assertAlmostEqual(b.base_damage_bracket, 1.0 + GALV_SHOT_CO)
         # Pistol Elementalist changes status damage, not status duration.
@@ -82,7 +86,8 @@ class BuildStatTests(unittest.TestCase):
         # Non-CD variants keep the un-Rivened crit multiplier (1.8 x 2.1);
         # non-Damage variants keep the 2.2 damage bracket.
         for other in (dmg, fr, ms, sc, cc):
-            self.assertAlmostEqual(other.crit_multiplier, 1.8 * 2.1)
+            self.assertAlmostEqual(
+                other.crit_multiplier, quantize_crit_multiplier(1.8) * 2.1)
         for other in (fr, ms, sc, cc):
             self.assertAlmostEqual(other.base_damage_bracket,
                                    cd.base_damage_bracket)
@@ -136,6 +141,26 @@ class FlareMechanicTests(unittest.TestCase):
         result = simulate(b, factory(), seed=7)
         self.assertGreater(result.flare_stacks_peak, 0)
         self.assertLessEqual(result.flare_stacks_peak, FLARE_MAX_STACKS)
+
+    def test_one_flare_stack_per_damage_instance(self) -> None:
+        """Cascadia_Flare: multishot Heat procs in one hit add one stack."""
+        class AlwaysHeat:
+            def random(self):
+                return 0.0
+
+            def choices(self, population, weights, k):
+                return ["HEAT"] * k
+
+        with patch.object(ocucor.random, "Random", return_value=AlwaysHeat()):
+            single = simulate(build_ocucor(arcane=ARCANE_FLARE),
+                              DummyTarget(10**12, 0, 0), max_time=0.01)
+            room = simulate_room(ARCANE_FLARE, "Multishot", 1,
+                                 factory=lambda: DummyTarget(10**12, 0, 0),
+                                 max_time=0.01)
+        # One merged beam tick = one damage instance, however many Heat
+        # procs it rolls (0.24 x 1.8 x 4 beams -> 2 procs here).
+        self.assertEqual(single.flare_stacks_peak, 1)
+        self.assertEqual(room.flare_peak, 1)
 
 
 class RampTests(unittest.TestCase):

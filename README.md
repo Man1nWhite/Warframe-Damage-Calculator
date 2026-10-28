@@ -16,7 +16,9 @@ Desktop Warframe damage calculator built around the calculator engine and packag
 
 > **Scope:** results are estimates, not a complete combat model. See the
 > [formula audit](docs/formula_audit.md) for verified examples, wiki source
-> disagreements, unsupported mechanics and known simulation errors.
+> disagreements, unsupported mechanics and known simulation errors, and the
+> [wiki verification report](docs/wiki_formula_verification.md) for the
+> per-formula checks.
 
 - PyQt6 dark mode UI
 - SQLite database for weapons and mods
@@ -289,6 +291,9 @@ Mod filtering is **partial**, not a complete Arsenal legality check:
 
 - [Formula audit](docs/formula_audit.md) — findings, source disagreements,
   tested scope and known limitations.
+- [Wiki verification report](docs/wiki_formula_verification.md) — every
+  formula family checked against the WARFRAME Wiki on 2026-10-28, with the page
+  it was read from, the code that implements it and any documented deviation.
 - [Damage and status reference](docs/damage_formula_reference.md) — the
   wiki's direct-hit, armor, trigger, status and DoT formulas. The Python DoT
   helpers use binary64, not exact in-game binary32 arithmetic.
@@ -323,7 +328,9 @@ unverified Afflictions and status-timing hypotheses change the results.
 
 **Do not treat simulated TTKs or rankings as validated in-game results.**
 Historical reports predate corrected mechanics and are retained only as marked
-archives. Several simulations model Overguard overflow and Magnetic break ticks;
+archives; the crit multipliers quoted in them predate the
+[12-bit base-multiplier quantization](docs/damage_formula_reference.md#14-total-crit-aoe-and-weak-points)
+adopted on 2026-10-28, which moves those figures by at most 0.2%. Several simulations model Overguard overflow and Magnetic break ticks;
 the new Jat slam-count experiment instead assumes no overflow at the user's
 request. All still rely on unverified routing assumptions, simplified status timing and
 weapon-specific approximations; see the

@@ -46,6 +46,7 @@ import random
 from dataclasses import dataclass, field
 
 from modules.constants import FACTION_MULTIPLIERS
+from modules.crit import quantize_crit_multiplier
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
 from modules.trial_statistics import sample_percentile
@@ -180,7 +181,8 @@ def build_ocucor(arcane: str = ARCANE_ENERVATE,
         + (riven if riven_stat == "Status Chance" else 0.0))
     crit_chance = BASE_CRIT_CHANCE * (
         1.0 + (riven if riven_stat == "Critical Chance" else 0.0))
-    crit_mult = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+    crit_mult = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + PRIMED_TARGET_CRACKER
         + (riven if riven_stat == "Critical Damage" else 0.0))
     bracket = 1.0 + GALV_SHOT_CO + (

@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import unittest
 
+from modules.crit import quantize_crit_multiplier
 from modules.jat_kittag_sim import (
     ALL_OPTIONS,
     AFFLICTION_STACKS,
@@ -79,7 +80,7 @@ class BuildStatTests(unittest.TestCase):
         # 15% x (1 + 110% Galv Steel, doubled on Heavy Attacks).
         self.assertAlmostEqual(b.crit_chance,
                                0.15 * (1 + 2 * GALV_STEEL_CC))
-        self.assertAlmostEqual(b.crit_multiplier, 2.0)
+        self.assertAlmostEqual(b.crit_multiplier, quantize_crit_multiplier(2.0))
         self.assertAlmostEqual(b.seismic_bracket, 1 + SEISMIC_WAVE)
         self.assertEqual(b.status_per_slam, 1.0)
         self.assertAlmostEqual(b.slam_interval, 1.0)
@@ -120,7 +121,8 @@ class BuildStatTests(unittest.TestCase):
         expected = 0.15 * (1 + 2 * GALV_STEEL_CC + 2 * R_CRIT_CHANCE)
         self.assertAlmostEqual(b.crit_chance, expected)
         self.assertGreater(b.crit_chance, 1.0)  # guaranteed yellow tier
-        self.assertAlmostEqual(b.crit_multiplier, 2.0 * (1 + 1.337))
+        self.assertAlmostEqual(
+            b.crit_multiplier, quantize_crit_multiplier(2.0) * (1 + 1.337))
 
     def test_riven_attack_speed_and_status(self) -> None:
         spd = build_jat_kittag("Riven MD+AtkSpd")
@@ -280,7 +282,7 @@ class PlainGunnerAndDualStatTests(unittest.TestCase):
                                        + 2 * R3_CRIT_CHANCE))
         self.assertGreater(b.crit_chance, 1.0)          # guaranteed crits
         self.assertAlmostEqual(b.crit_multiplier,
-                               2.0 * (1 + R3_CRIT_DAMAGE + 1.2))
+                               quantize_crit_multiplier(2.0) * (1 + R3_CRIT_DAMAGE + 1.2))
         self.assertAlmostEqual(b.attack_speed, 1 + R3_ATTACK_SPEED)
         self.assertAlmostEqual(b.slam_interval, 1 / (1 + R3_ATTACK_SPEED),
                                places=4)

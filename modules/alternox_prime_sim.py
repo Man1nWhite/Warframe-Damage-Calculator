@@ -83,6 +83,7 @@ from typing import Optional
 
 from modules.condition_overload import apply_co, resolve_co_behavior
 from modules.constants import FACTION_MULTIPLIERS
+from modules.crit import quantize_crit_multiplier
 # Preserve the old simulator-level import for external callers.
 from modules.enemy_scaling import (enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
                                    steel_path_heavy_gunner)
@@ -337,7 +338,8 @@ def build_alternox(
 
     crit_chance = BASE_CRIT_CHANCE * (
         1.0 + CRIT_DELAY_CC + riven.get(R_CC, 0.0))
-    crit_multiplier = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+    crit_multiplier = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + VITAL_SENSE_CD + riven.get(R_CD, 0.0))
     fire_rate = BASE_FIRE_RATE * (
         1.0 - CRIT_DELAY_ROF_PENALTY + riven.get(R_FIRE_RATE, 0.0))
@@ -588,7 +590,9 @@ def simulate(
                 for proc in due:
                     target.blast_stacks.remove(proc)
                     detonations += 1
-                    amount = BLAST_SINGLE_COEF * proc.seed * proc.crit_factor * sd_mult
+                    # Damage/Calculation: an expiring stack deals max(1, 0.3 x H).
+                    amount = max(1.0, BLAST_SINGLE_COEF * proc.seed
+                                 * proc.crit_factor * sd_mult)
                     route({"BLAST": amount}, event)
                     if target.health <= 0:
                         break
@@ -670,6 +674,12 @@ def simulate(
                 elif ptype == "MAG":
                     target.add_magnetic(now, PROC_DURATION, source)
                 elif ptype == "COLD":
+                    # Kept for completeness: every bundled element mix folds
+                    # Cold into Viral/Blast/Magnetic, so this branch is not
+                    # reachable with the current Riven candidates. If a build
+                    # ever leaves Cold standalone, its +0.1x/+0.05x critical
+                    # damage bonus (modules.crit.cold_crit_damage_bonus) must
+                    # be added to the crit factor.
                     target.record_status("COLD", now, PROC_DURATION)
                     target.cold_expiries.append(now + PROC_DURATION)
             if target.health > 0:

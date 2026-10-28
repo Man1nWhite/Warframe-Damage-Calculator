@@ -8,6 +8,88 @@ weapon, catalog entry, game update, or edge case is correct. It uses the Wiki
 and public community discussions rather than assuming in-game verification;
 export snapshots and player reports may be incomplete or outdated.
 
+## 2026-10-28 follow-up: full formula re-check against the Wiki
+
+Every formula family in the repository was re-read against the live Wiki
+wikitext on 2026-10-28 (direct hit and quantization, status chance and proc
+weighting, DoT ticks and per-type coefficients, Blast, Corrosive, Heat,
+Magnetic, Viral, Puncture, Cold, critical hits, enemy scaling, Riven values,
+Condition Overload and the arcane/mod constants used by the simulators). The
+per-item verdict is in [wiki_formula_verification.md](wiki_formula_verification.md);
+the two substantive gaps found were both about
+[critical hits](https://wiki.warframe.com/w/Critical_Hit):
+
+- **The base critical-damage multiplier was never quantized.** The Wiki stores
+  it as a 12-bit code, `Code(x) = floor(clamp(x, 0, 32) × 4095/32 + 0.5)` and
+  `decoded = Code(x) × 32/4095`. `modules/crit.py` now implements that
+  encoding and all six damage models use it (Kuva Nukor 5.0 → 5.001221,
+  Ocucor 1.8 → 1.797314, Akarius 2.0 → 2.000488, Alternox 2.2 → 2.203663,
+  Jat Kittag 2.0 → 2.000488). The change is at most 0.2% per build, but the
+  earlier figures were not exact.
+- **Cold's critical-damage bonus had no implementation.** The
+  [Cold page](https://wiki.warframe.com/w/Damage/Cold_Damage) grants +0.10x
+  with the first Freeze stack, +0.05x per subsequent stack, +1.0x while frozen
+  and a 4-stack cap under Overguard; it is additive with Critical Damage mods
+  and does not apply to AoE. `modules/crit.py` implements the table, but no
+  bundled build leaves Cold as a standalone proc (Cold always merges into
+  Viral/Blast/Magnetic), so the simulators remain unaffected and the
+  `COLD` branch in `alternox_prime_sim` stays unreachable.
+
+The same pass added `modules/crit.py` (modded critical chance, tiers,
+normal/critical/average shot, direct+radial sum, weak-point form) plus two
+pinned test files, `tests/test_crit_wiki.py` and
+`tests/test_wiki_cross_checks.py`. Pinned expectations that encoded an
+unquantized base multiplier were rewritten as
+`quantize_crit_multiplier(…) × bonus` rather than adjusted by hand.
+
+Nothing else needed a code change: the faction matrix reproduces every
+non-neutral cell of the [Overview Table](https://wiki.warframe.com/w/Damage/Overview_Table),
+the armor, scaling, DoT, proc-weighting, Blast, Corrosive, Heat-strip,
+Magnetic-break, Riven and Condition Overload families match their pages, and
+the arcane/mod constants (Cascadia Flare 12% × 40, Sentient Surge 60% per
+tendril, Secondary Enervate AFCC, Primed Target Cracker +110%) are correct.
+This is a documentation-level agreement, not in-game validation.
+
+### Second pass (same day): end-to-end checks and small fixes
+
+The same pages were re-read through the API and the checks were pushed one
+level further, from "the expression matches" to "the repository reproduces the
+wiki's own numbers":
+
+- **Quantization end to end.** The
+  [Nagantaka Prime example](https://wiki.warframe.com/w/Damage/Calculation#Adding_Physical_and/or_Elemental_Mods/Bonuses)
+  now runs through `DamageCalculator` — Puncture 32.4375, Slash 156.78125,
+  Viral 259.5, Heat 156.78125, Gas 346, total 951.5, Impact 1.73 quantized to
+  0 — and is pinned in `tests/test_crit_wiki.py`.
+- **Faction matrix rebuilt from the per-type pages.** All fourteen factions
+  were re-derived from the "DAMAGE EFFICACY" quote on each of the thirteen
+  damage-type pages (Impact, Puncture, Slash, Cold, Electricity, Heat, Toxin,
+  Blast, Corrosive, Gas, Magnetic, Radiation, Viral) and every non-neutral cell
+  matches `modules/constants.py`. The overview table's wikitext is malformed
+  (resistance `-` markers land on row separators), so the per-type quotes are
+  the reference of record for this check.
+- **Blast stack expiry.** `Damage/Calculation` states that a stack which
+  expires on its own deals `max(1, 0.3 × H)`. The three Blast simulators now
+  apply that floor; it is unreachable for the bundled builds (their seeds are
+  hundreds of damage), so no pinned number moved.
+- **Critical-hit arithmetic.** The tier table, `1 + tier × (CDM − 1)`, the
+  average shot, the headshot-crit form and the Cold table were re-checked line
+  by line; `modules/crit.py`'s docstring had one wrong decoder output
+  (`2.0002442` instead of `2.0004884` for code 256) and that was corrected.
+- **Documented deviations that turned out to be non-issues.**
+  Cascadia Flare's
+  [one-stack-per-damage-instance rule](https://wiki.warframe.com/w/Cascadia_Flare)
+  was already enforced by `ocucor_sim` (a new test now pins it), the
+  [Corrosive](https://wiki.warframe.com/w/Damage/Corrosive_Damage) armor
+  formula `(1 − 50% Heat)·[1 − (20% + 6%·n)]·(1 − 18%·Corrosive Projection)` is
+  already multiplicative in `JatTarget.current_armor` (projections aside,
+  which no bundled build carries), and
+  [Puncture's](https://wiki.warframe.com/w/Damage/Puncture_Damage) flat
+  critical chance cannot apply to the Jat Kittag slam build, which deals no
+  Puncture damage.
+- **CI parity.** `ruff check --select F,E9` (the selection the workflow uses)
+  and `compileall` are clean on the current tree.
+
 ## 2026-10-28 follow-up: imported mod effects and compatibility
 
 The old parser could mistake [Firestorm's Blast radius](https://wiki.warframe.com/w/Firestorm),
@@ -154,7 +236,7 @@ provenance. Do not assume arbitrary named Rivens are detected.
 | Export/import data | Corrected DE `damagePerShot` indices for Heat (3), Cold (4), and Electricity (5); select the player Grimoire over its same-named Doppelganger; and rebuilt the bundled database. Ignis Wraith, Tenet Glaxion, Alternox Prime and Grimoire examples exercise the types. Legacy AppData databases are upgraded from saved exports with a backup. | Export snapshots may be stale, merge multiple hit components, or omit attack modes. Automatic migration refuses incomplete or mismatching exports rather than overwriting a possibly edited Grimoire row. |
 | Mods, progenitors, factions | Ordered mod effects are passed to the calculator. Primaries are paired in slot order, followed by innate and progenitor primaries in Heat/Cold/Electricity/Toxin order; the last-listed Riven elemental stat has priority. A pre-combined element remains independent. `X1.55` is interpreted as a +55% faction bonus, not +155%; Narmer does not inherit Grineer/Corpus bane. | A bare `CalculationInputs.mods` dictionary cannot preserve the original pairing history; callers needing exact slot-order resolution should pass `equipped_mods`. Only names containing `Riven` trigger the Riven-order rule. Complex negative elemental stats, nonstandard weapon inheritance, and spliced Riven entry in the desktop UI have not been fully validated. |
 | Enemy scaling | Added faction-specific shield curves, Eximus base shields, and unrounded enemy armor DR for damage. Heavy Gunner gadget fixtures and independently transcribed shield/armor examples are tested. | The model follows the wiki infobox **gadget** for Overguard level difference; the article disagrees, as described below. Python binary64 and rounded gadget EHP are not exact in-game binary32 emulation. Supplying the right enemy base stats, faction curves and special exceptions remains the caller's responsibility. |
-| Status damage | Wiki examples for Slash, Heat, Toxin, Electricity, Gas, faction double dipping, critical seeds and the tick-group `+1` accumulator have tests. Heat armor strip is one shared 15/30/40/50% ramp. AoE tick counting distinguishes an exact expiry from a fractional duration. | `status_damage.py` uses Python binary64, not the wiki's binary32 intermediate operations or exact critical-multiplier quantization. Some simulators use simplified tick clocks and do not implement every interaction such as Heat inheritance or special immunities. |
+| Status damage | Wiki examples for Slash, Heat, Toxin, Electricity, Gas, faction double dipping, critical seeds and the tick-group `+1` accumulator have tests. Heat armor strip is one shared 15/30/40/50% ramp. AoE tick counting distinguishes an exact expiry from a fractional duration. | `status_damage.py` uses Python binary64, not the wiki's binary32 intermediate operations. Base critical-damage quantization lives in `modules/crit.py` and is applied by the simulators, but Cold's critical-damage bonus, binary32 rounding and per-type immunity renormalization are not modeled. Some simulators use simplified tick clocks and omit interactions such as Heat inheritance. |
 | CO / GunCO | The cap on Galvanized's per-status bonus is per type, not a cap on the sum across types; multiplicative `scale` is applied to its CO term. The Cedo and Secondary Shiver source descriptions were corrected. Tests cover selected wiki attack examples and formulas. | The attack catalog is a dated snapshot of community-sourced, changing, attack-specific behavior; **not every row has been independently verified**. The desktop calculator does not automatically apply CO. Simulation assumptions about kill stacks and target statuses must be supplied correctly. |
 | Riven tables | Selected Wiki rank-8 range endpoints, rollable trait signs, display units, and the four standard positive/negative layout weights are covered by tests; current default disposition is 1.2. | The vendored tag catalog and every possible stat/roll were not independently verified. Binary32 rounding is not emulated; spliced traits and weapon-specific restrictions are not fully modeled. Historical fingerprint tests use older explicit dispositions and are not assertions about today's disposition. |
 | Weapon simulations | Corrected Elementalist's reload/status-damage bonuses, shared Heat strip, stat stacking, burst timing, live GunCO counts, Microwave timing and beam multishot sampling. All five simulators use typed shieldless Overguard/health routing and timed Magnetic-break Electricity; Jat uses faction and combo in its DoT seeds. Added unit and deterministic integration fixtures. | **Experimental, not validated TTK calculators.** Unverified routing assumptions and proc, timing and weapon-specific approximations below materially affect results. Previous rankings and recommendations are invalid. Passing tests do not establish accuracy of a complete simulated fight. |
@@ -194,8 +276,9 @@ provenance. Do not assume arbitrary named Rivens are detected.
    to both proc seeds and proc counts, as the [Multishot Wiki](https://wiki.warframe.com/w/Multishot)
    describes; that does not establish every weapon-specific interaction.
    Cross-source Heat
-   inheritance, exact restoration, many immunities and binary32/critical
-   quantization are not fully modeled. Beam ramp recovery/reloads are
+   inheritance, exact restoration, many immunities, Cold's critical-damage
+   bonus and binary32 intermediate arithmetic are not modeled (the base
+   critical-damage multiplier *is* quantized). Beam ramp recovery/reloads are
    approximate; the Nukor model applies ramp to direct hits but not status
    seeds, whose ramp interaction is not established here. The Nukor room
    simulation also skips procs on fatal direct hits, including Blast's

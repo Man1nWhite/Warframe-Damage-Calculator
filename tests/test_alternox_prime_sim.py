@@ -5,6 +5,7 @@ import math
 import unittest
 
 import modules.alternox_prime_sim as sim
+from modules.crit import quantize_crit_multiplier
 from modules.alternox_prime_sim import (
     APTITUDE_STACK_CAP,
     BLAST_FUSE,
@@ -139,7 +140,8 @@ class BuildTests(unittest.TestCase):
     def test_default_fire_rate_toxin_build_stats(self) -> None:
         b = build_alternox((R_BLAST, R_FIRE_RATE, R_TOXIN))
         self.assertAlmostEqual(b.crit_chance, 0.20 * 3.0)
-        self.assertAlmostEqual(b.crit_multiplier, 2.2 * 2.2)
+        self.assertAlmostEqual(
+            b.crit_multiplier, quantize_crit_multiplier(2.2) * 2.2)
         self.assertAlmostEqual(b.fire_rate, 5.33 * (1 - 0.20 + 0.675), places=4)
         self.assertAlmostEqual(b.multishot, 1.0 + 0.8 + 1.5)
         self.assertAlmostEqual(b.status_per_pellet, 0.40 * 1.8)

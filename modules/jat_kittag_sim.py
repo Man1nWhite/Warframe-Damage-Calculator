@@ -63,6 +63,7 @@ from modules.enemy_scaling import (
     steel_path_heavy_gunner,
 )
 from modules.trial_statistics import sample_percentile
+from modules.crit import quantize_crit_multiplier
 from modules.kuva_nukor_sim import (
     DummyTarget,
     ToxinProc,
@@ -302,7 +303,8 @@ def _build_from_spec(spec: dict, label: str, is_riven: bool,
     crit_chance = BASE_CRIT_CHANCE * (
         1.0 + 2.0 * GALV_STEEL_CC
         + 2.0 * spec.get("crit_chance", 0.0))
-    crit_multiplier = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+    crit_multiplier = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + spec.get("crit_damage", 0.0)
         + GALV_STEEL_KILL_CD * galv_stacks)
     attack_speed = 1.0 + spec.get("attack_speed", 0.0)
