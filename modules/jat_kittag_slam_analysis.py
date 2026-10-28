@@ -21,11 +21,11 @@ Run from the repository root:
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
-from modules.status_damage import PROC_DURATION, magnetic_break_electric_tick, wiki_quantized_damage
 from modules.crit import quantize_crit_multiplier
+from modules.status_damage import PROC_DURATION, magnetic_break_electric_tick, wiki_quantized_damage
 
 # The current WARFRAME Wiki's weapon, mod and Riven values. Initial combo is
 # the unrounded 4 * 20.35 Galvanized Reflex value; actual UI/engine rounding

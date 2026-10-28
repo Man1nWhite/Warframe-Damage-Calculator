@@ -2,17 +2,20 @@
 
 These fixtures do not establish current in-game Jat/Afflictions behavior.
 """
-from dataclasses import replace
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from modules.enemy_scaling import steel_path_eximus_heavy_gunner
 from modules.jat_kittag_slam_analysis import BUILD_BY_KEY
 from modules.jat_kittag_slam_counts import (
-    Assumptions, Fight, Target, simulate_trial, summarize,
+    Assumptions,
+    Fight,
+    Target,
+    simulate_trial,
+    summarize,
 )
 from modules.status_damage import magnetic_break_electric_tick
-
 
 A = BUILD_BY_KEY["focus_fever_gas_cold_damage"]
 B = BUILD_BY_KEY["focus_gas_cc_cd"]

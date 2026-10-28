@@ -11,7 +11,6 @@ from unittest.mock import patch
 import build_riven_tables
 from modules.riven import DEFAULT_DISPOSITION, build_average_tables
 
-
 SOURCE = Path(__file__).resolve().parents[1] / "source"
 
 

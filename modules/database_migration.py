@@ -19,7 +19,11 @@ from .database_revision import (
     require_supported_revision,
 )
 from .importer import (
-    ImportPayload, apply_import_payload, apply_mod_import_payload, load_import_payload, upsert_weapon_rows,
+    ImportPayload,
+    apply_import_payload,
+    apply_mod_import_payload,
+    load_import_payload,
+    upsert_weapon_rows,
 )
 from .mod_parser import source_effect_fragments
 from .weapon_export_policy import GRIMOIRE_DOPPELGANGER_ID, GRIMOIRE_NAME, GRIMOIRE_PLAYER_ID
@@ -119,7 +123,7 @@ def _prepare_grimoire_correction(connection: sqlite3.Connection,
     ).fetchone()
     if found is None:
         return None
-    old = dict(zip(columns, found))
+    old = dict(zip(columns, found, strict=True))
     if old["unique_name"] != GRIMOIRE_DOPPELGANGER_ID:
         return None  # a custom, already-correct, or otherwise unrelated row
     candidates = [row for row in payload.export_weapons if row["weapon"] == GRIMOIRE_NAME]

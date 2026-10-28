@@ -47,19 +47,24 @@ from dataclasses import dataclass, field
 
 from modules.constants import FACTION_MULTIPLIERS
 from modules.crit import quantize_crit_multiplier
+
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
-from modules.trial_statistics import sample_percentile
 from modules.kuva_nukor_sim import (
     DummyTarget,
-    HeatProc as HeatProc,
     enervate_afcc,
     heat_tick,
     roll_multishot,
     steel_path_dummy_factory,
-    viral_magnetic_multiplier as viral_magnetic_multiplier,
     wiki_quantized_damage,
 )
+from modules.kuva_nukor_sim import (
+    HeatProc as HeatProc,
+)
+from modules.kuva_nukor_sim import (
+    viral_magnetic_multiplier as viral_magnetic_multiplier,
+)
+from modules.trial_statistics import sample_percentile
 
 # --- Base weapon ------------------------------------------------------------
 

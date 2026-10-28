@@ -76,9 +76,10 @@ def seed_source_files(project_root: Path) -> None:
         stage = Path(tempfile.mkdtemp(prefix=".wdc-refresh-seed-", dir=source))
         try:
             staged = [stage / name for name in EXPORT_FILES]
-            for original, copy in zip(bundled_pair, staged):
+            for original, copy in zip(bundled_pair, staged, strict=True):
                 shutil.copy2(original, copy)
-            WarframeDataUpdater._publish_exports(tuple(zip(staged, targets)), stage)
+            WarframeDataUpdater._publish_exports(
+                tuple(zip(staged, targets, strict=True)), stage)
         finally:
             if not (stage / "PUBLISHING.json").exists():
                 shutil.rmtree(stage, ignore_errors=True)

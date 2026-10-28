@@ -36,7 +36,6 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Dict, Optional
 
 # --- Game constants (from RivenParser.js) -----------------------------------
 
@@ -117,7 +116,7 @@ _POSITIVE_ONLY_TAGS = frozenset({
 _NEGATIVE_ONLY_TAGS = frozenset({"WeaponMeleeComboPointsOnHitMod"})
 
 # tag -> (human-readable label, unit kind, WDC damage/mod code when applicable)
-TAG_METADATA: Dict[str, tuple[str, str, Optional[str]]] = {
+TAG_METADATA: dict[str, tuple[str, str, str | None]] = {
     "WeaponDamageAmountMod": ("Damage", UNIT_PERCENT, "TRUE"),
     "WeaponMeleeDamageMod": ("Melee Damage", UNIT_PERCENT, "TRUE"),
     "WeaponImpactDamageMod": ("Impact", UNIT_PERCENT, "IMPACT"),
@@ -168,7 +167,7 @@ def _default_tags_path() -> Path:
     return candidates[0]
 
 
-def load_riven_tags(path: Optional[str | Path] = None) -> Dict[str, list[dict]]:
+def load_riven_tags(path: str | Path | None = None) -> dict[str, list[dict]]:
     """Load the per-type Riven stat tables (``{riven_type: [{tag, value, ...}]}``)."""
     tags_path = Path(path) if path else _default_tags_path()
     with tags_path.open("r", encoding="utf-8") as handle:
@@ -235,7 +234,7 @@ def curse_layout_factor(num_buffs: int, num_curses: int) -> float:
     return NUM_BUFFS_CURSE_ATTEN[curse_index] * NUM_BUFFS_ATTEN[buff_index]
 
 
-def _tag_value(tables: Dict[str, list[dict]], riven_type: str, tag: str) -> float:
+def _tag_value(tables: dict[str, list[dict]], riven_type: str, tag: str) -> float:
     for entry in tables[riven_type]:
         if entry["tag"] == tag:
             return float(entry["value"])
@@ -250,7 +249,7 @@ def average_buff(
     num_buffs: int = 2,
     num_curses: int = 0,
     grade_t: float = AVERAGE_GRADE_T,
-    tables: Optional[Dict[str, list[dict]]] = None,
+    tables: dict[str, list[dict]] | None = None,
 ) -> float:
     """Raw average-grade value of a rollable positive trait for a given layout."""
     tables = tables or load_riven_tags()
@@ -273,7 +272,7 @@ def average_curse(
     num_buffs: int = 3,
     num_curses: int = 1,
     grade_t: float = AVERAGE_GRADE_T,
-    tables: Optional[Dict[str, list[dict]]] = None,
+    tables: dict[str, list[dict]] | None = None,
 ) -> float:
     """Raw average-grade modifier for a rollable negative trait.
 
@@ -335,7 +334,7 @@ def parse_riven(riven_type: str, fingerprint: dict, disposition: float) -> list[
 
 
 def _stat_entry(
-    tables: Dict[str, list[dict]],
+    tables: dict[str, list[dict]],
     riven_type: str,
     entry: dict,
     disposition: float,
@@ -374,7 +373,7 @@ def _stat_entry(
 def build_average_tables(
     disposition: float = DEFAULT_DISPOSITION,
     rank: int = MAX_RIVEN_RANK,
-    tags_path: Optional[str | Path] = None,
+    tags_path: str | Path | None = None,
 ) -> dict:
     """Build average-grade stat tables for every Riven type at one disposition."""
     tables = load_riven_tags(tags_path)

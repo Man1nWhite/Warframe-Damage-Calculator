@@ -1,8 +1,6 @@
 import unittest
 
 from modules.calculator import DamageCalculator
-from modules.mod_engine import ModAggregator
-from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from modules.crit import quantize_crit_multiplier
 from modules.jat_kittag_slam_analysis import (
     BUILD_BY_KEY,
@@ -22,6 +20,8 @@ from modules.jat_kittag_slam_analysis import (
     probability_three,
     sustainable_interval,
 )
+from modules.mod_engine import ModAggregator
+from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 
 
 class BuildTests(unittest.TestCase):

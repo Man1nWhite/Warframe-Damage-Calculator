@@ -169,7 +169,11 @@ class SimulatorIntegrationTests(unittest.TestCase):
 
     def test_alternox_base_multiplier_is_quantized(self) -> None:
         from modules.alternox_prime_sim import (
-            R_BLAST, R_FIRE_RATE, R_TOXIN, VITAL_SENSE_CD, build_alternox,
+            R_BLAST,
+            R_FIRE_RATE,
+            R_TOXIN,
+            VITAL_SENSE_CD,
+            build_alternox,
         )
         build = build_alternox((R_BLAST, R_FIRE_RATE, R_TOXIN))
         self.assertAlmostEqual(

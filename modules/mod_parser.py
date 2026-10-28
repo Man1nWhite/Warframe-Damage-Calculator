@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import List
 
 from .models import ModEffect
 
@@ -60,10 +59,10 @@ IGNORE_TERMS = {
 }
 
 
-def parse_effects(stat_line: str) -> List[ModEffect]:
+def parse_effects(stat_line: str) -> list[ModEffect]:
     cleaned_line = clean_stat_line(stat_line)
     matches = list(TOKEN_PATTERN.finditer(cleaned_line))
-    effects: List[ModEffect] = []
+    effects: list[ModEffect] = []
     # Conditions may precede, follow, or span multiple numeric bonuses. The
     # desktop calculator has no activation state, so reject the whole line
     # instead of accidentally making one of its bonuses permanent.

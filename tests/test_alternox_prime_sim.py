@@ -5,7 +5,6 @@ import math
 import unittest
 
 import modules.alternox_prime_sim as sim
-from modules.crit import quantize_crit_multiplier
 from modules.alternox_prime_sim import (
     APTITUDE_STACK_CAP,
     BLAST_FUSE,
@@ -30,6 +29,7 @@ from modules.alternox_prime_sim import (
     run_trials,
     simulate,
 )
+from modules.crit import quantize_crit_multiplier
 
 # Average-grade Rifle Riven values, 3 positives + 1 curse (1.20 disposition).
 AVG_DAMAGE = 1.856

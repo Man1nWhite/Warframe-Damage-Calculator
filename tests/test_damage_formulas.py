@@ -13,9 +13,9 @@ import unittest
 
 from modules.calculator import DamageCalculator
 from modules.constants import DAMAGE_TYPES, FACTION_MULTIPLIERS
-from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from modules.mod_engine import ModAggregator, _bane_bonus
 from modules.mod_parser import parse_effects
+from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 
 
 def make_weapon(damage: dict[str, float], dmg: float | None = None, multi: float = 1.0) -> Weapon:

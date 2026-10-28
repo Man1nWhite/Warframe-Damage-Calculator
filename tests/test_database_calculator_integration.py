@@ -3,14 +3,13 @@
 The snapshot is not a live wiki feed. These examples verify that database
 fields and mod text reach the calculator with the intended meanings.
 """
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from modules.calculator import DamageCalculator
 from modules.database import ModRepository, WeaponRepository
 from modules.mod_engine import ModAggregator
 from modules.models import CalculationInputs, EquippedMod
-
 
 DB = Path(__file__).resolve().parents[1] / "data" / "weapons.db"
 

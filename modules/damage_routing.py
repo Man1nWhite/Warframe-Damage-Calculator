@@ -15,8 +15,8 @@ other enemy defenses, or exact engine float/rounding order.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 from .enemy_scaling import enemy_armor_damage_reduction
 

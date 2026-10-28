@@ -1,13 +1,12 @@
 """Regression tests for name collisions in the official weapon export."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import json
 import sqlite3
 import tempfile
 import unittest
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 from modules.importer import create_schema, rows_from_cleaned_json, upsert_weapon_rows

@@ -8,9 +8,9 @@ This is not a comprehensive legality checker. Custom mods are left untouched.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 from .mod_effect_policy import is_supported_export_mod
 from .models import Mod, Weapon
@@ -64,7 +64,7 @@ class ModCompatibility:
     primary_classes: Mapping[str, str]
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "ModCompatibility":
+    def from_file(cls, path: str | Path) -> ModCompatibility:
         """Load the bundled data; a missing/corrupt file means unknown classes."""
         try:
             payload = json.loads(Path(path).read_text(encoding="utf-8"))

@@ -11,7 +11,6 @@ outside this screen's scope.
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Dict
 
 from .constants import (
     BASE_ELEMENT_TYPES,
@@ -50,9 +49,9 @@ class DamageCalculator:
         armor_modifiers = self._build_armor_modifiers(inputs.armor_value, faction_modifiers)
         bane_multiplier = max(0.0, 1.0 + inputs.mod_for("BANE"))
 
-        hud_damage_by_type: Dict[str, float] = {}
-        final_damage_by_type: Dict[str, float] = {}
-        bane_final_by_type: Dict[str, float] = {}
+        hud_damage_by_type: dict[str, float] = {}
+        final_damage_by_type: dict[str, float] = {}
+        bane_final_by_type: dict[str, float] = {}
         for damage_type in DAMAGE_TYPES:
             base_value = base_by_type[damage_type] + lich_damage[damage_type]
             mod_value = resolved_mods.get(damage_type, 0.0)
@@ -101,7 +100,7 @@ class DamageCalculator:
     @staticmethod
     def _resolve_elements(weapon: Weapon, inputs: CalculationInputs,
                           lich_element: str, valence_damage: float
-                          ) -> tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+                          ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
         """Combine ordered primary mods, then innate and progenitor primaries.
 
         Already-combined elemental mods and innate secondary elements remain
@@ -153,7 +152,7 @@ class DamageCalculator:
             if i + 1 < len(ordered):
                 other, other_values = ordered[i + 1]
                 destination = ELEMENT_COMBINATIONS[frozenset((kind, other))]
-                values = [a + b for a, b in zip(values, other_values)]
+                values = [a + b for a, b in zip(values, other_values, strict=True)]
             else:
                 destination = kind
             mods[destination] = mods.get(destination, 0.0) + values[0]
@@ -162,12 +161,12 @@ class DamageCalculator:
         return base, lich, mods
 
     @staticmethod
-    def _build_faction_modifiers(faction: str) -> Dict[str, float]:
+    def _build_faction_modifiers(faction: str) -> dict[str, float]:
         if faction == "Zairman":  # compatibility with saved builds
             faction = "Zariman"
         return {kind: float(FACTION_MULTIPLIERS[faction][kind]) for kind in DAMAGE_TYPES}
 
     @staticmethod
-    def _build_armor_modifiers(armor_value: float, faction_modifiers: Dict[str, float]) -> Dict[str, float]:
+    def _build_armor_modifiers(armor_value: float, faction_modifiers: dict[str, float]) -> dict[str, float]:
         armor_term = 1.0 - enemy_armor_damage_reduction(armor_value)
         return {kind: armor_term * faction_modifiers[kind] for kind in DAMAGE_TYPES}

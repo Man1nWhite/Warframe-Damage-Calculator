@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import math
 
-from .models import ModEffect
 from .mod_parser import parse_effects
+from .models import ModEffect
 
 # Proton Snap's source line says to Wall Latch before gaining Toxin, but older
 # databases retained only "+100% toxin damage". The Wiki describes the trigger:

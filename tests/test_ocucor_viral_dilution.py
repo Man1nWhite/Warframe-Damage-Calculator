@@ -8,16 +8,8 @@ import math
 import unittest
 from pathlib import Path
 
-from modules.ocucor_comparison import compare as arcane_compare, make_target
-from modules.ocucor_viral_comparison import (
-    RIVEN_LOWER_VIRAL,
-    RIVEN_LOW_VIRAL_TWO_POS,
-    RIVEN_NO_RELOAD,
-    RIVEN_THREE_POS,
-    RIVEN_TWO_POS,
-    compare,
-    target_factory,
-)
+from modules.ocucor_comparison import compare as arcane_compare
+from modules.ocucor_comparison import make_target
 from modules.ocucor_sim import (
     ARCANE_ENERVATE,
     ARCANE_FLARE,
@@ -25,6 +17,15 @@ from modules.ocucor_sim import (
     build_ocucor,
     simulate,
     simulate_room,
+)
+from modules.ocucor_viral_comparison import (
+    RIVEN_LOW_VIRAL_TWO_POS,
+    RIVEN_LOWER_VIRAL,
+    RIVEN_NO_RELOAD,
+    RIVEN_THREE_POS,
+    RIVEN_TWO_POS,
+    compare,
+    target_factory,
 )
 
 

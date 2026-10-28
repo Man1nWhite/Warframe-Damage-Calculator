@@ -17,9 +17,9 @@ from unittest.mock import patch
 
 import modules.kuva_nukor_sim as nukor
 from modules.akarius_sim import (
-    AkariusTarget,
     RIVEN_CORROSIVE,
     RIVEN_VIRAL,
+    AkariusTarget,
     akarius_dummy_factory,
     build_akarius,
     simulate,
@@ -157,7 +157,7 @@ def compare(name, target_factory, trials, seed, *, direct_hits=True,
                               for i in range(trials)]
     viral = results[RIVEN_VIRAL]
     corrosive = results[RIVEN_CORROSIVE]
-    differences = [c.ttk - v.ttk for v, c in zip(viral, corrosive)
+    differences = [c.ttk - v.ttk for v, c in zip(viral, corrosive, strict=True)
                    if math.isfinite(v.ttk) and math.isfinite(c.ttk)]
     paired = None
     if differences:

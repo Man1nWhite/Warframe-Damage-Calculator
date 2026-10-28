@@ -113,7 +113,7 @@ class WikiRangeTableTests(unittest.TestCase):
     def test_buff_range_endpoints(self) -> None:
         for riven_type, tag, wiki_ranges, scale, tolerance in WIKI_BUFF_RANGES:
             for (num_buffs, num_curses), (wiki_low, wiki_high) in zip(
-                ((3, 1), (2, 1), (3, 0), (2, 0)), wiki_ranges
+                ((3, 1), (2, 1), (3, 0), (2, 0)), wiki_ranges, strict=True
             ):
                 low = average_buff(
                     riven_type, tag, num_buffs=num_buffs, num_curses=num_curses, grade_t=0.0

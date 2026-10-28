@@ -10,9 +10,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import modules.ocucor_sim as ocucor
+from modules.crit import quantize_crit_multiplier
 from modules.damage_routing import route_enemy_hit
 from modules.kuva_nukor_sim import DummyTarget, enervate_afcc
-from modules.crit import quantize_crit_multiplier
 from modules.ocucor_comparison import compare, discard_overguard_overflow, make_target
 from modules.ocucor_sim import (
     ARCANE_ENERVATE,

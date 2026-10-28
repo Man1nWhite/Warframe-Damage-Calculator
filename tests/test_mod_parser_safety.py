@@ -6,11 +6,10 @@ and https://wiki.warframe.com/w/Proton_Snap (conditional on Wall Latch).
 """
 from __future__ import annotations
 
-from contextlib import closing
-
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from modules.database import ModRepository

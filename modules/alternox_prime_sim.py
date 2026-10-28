@@ -79,15 +79,15 @@ import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
+from modules import status_damage
 from modules.condition_overload import apply_co, resolve_co_behavior
 from modules.constants import FACTION_MULTIPLIERS
 from modules.crit import quantize_crit_multiplier
+
 # Preserve the old simulator-level import for external callers.
-from modules.enemy_scaling import (enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
-                                   steel_path_heavy_gunner)
-from modules.trial_statistics import sample_percentile
+from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
+from modules.enemy_scaling import steel_path_heavy_gunner
 from modules.kuva_nukor_sim import (
     BlastProc,
     DummyTarget,
@@ -95,10 +95,12 @@ from modules.kuva_nukor_sim import (
     viral_magnetic_multiplier,
     wiki_quantized_damage,
 )
-from modules import status_damage
 from modules.status_damage import (
-    ELEMENTAL_DOT_COEFFICIENT, blast_stack_damage, electricity_tick,
+    ELEMENTAL_DOT_COEFFICIENT,
+    blast_stack_damage,
+    electricity_tick,
 )
+from modules.trial_statistics import sample_percentile
 
 # --- Weapon base stats (wiki Alternox Prime, Normal Attack) -----------------
 
@@ -192,7 +194,7 @@ def _source_dir() -> Path:
 
 def load_rifle_riven_averages(
     column: str = "buff_3_pos_1_neg",
-    csv_path: Optional[str | Path] = None,
+    csv_path: str | Path | None = None,
 ) -> dict[str, float]:
     """Average Rifle Riven values from a vendored layout column.
 
@@ -311,8 +313,8 @@ def build_alternox(
     galv_kill_stacks: int = APTITUDE_STACK_CAP,
     chamber_stacks: int = CHAMBER_STACK_CAP,
     riven_column: str = "buff_3_pos_1_neg",
-    riven_values: Optional[dict[str, float]] = None,
-    blast_value: Optional[float] = None,
+    riven_values: dict[str, float] | None = None,
+    blast_value: float | None = None,
 ) -> AlternoxBuild:
     """Build one Riven configuration on top of the fixed eight mods.
 

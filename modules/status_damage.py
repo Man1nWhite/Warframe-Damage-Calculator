@@ -33,8 +33,8 @@ these helpers do not reproduce exact game rounding or crit quantization.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 # Status coefficients (fraction of modded base damage per tick).
 SLASH_COEFFICIENT = 0.35

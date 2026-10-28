@@ -1,8 +1,6 @@
 """Offline, transactional migration of legacy AppData databases."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import contextlib
 import io
 import json
@@ -14,6 +12,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 

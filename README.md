@@ -61,6 +61,9 @@ Inside that folder the app keeps:
 
 ## Running
 
+Requires **Python 3.11 or newer** (CI covers 3.11 and 3.12; the code uses
+`datetime.UTC`, `zip(strict=...)` and PEP 604/585 annotations).
+
 ```bash
 pip install -r requirements.txt
 python main.py
@@ -353,6 +356,19 @@ The suite is fully offline and takes roughly 13 seconds on a laptop; each
 migration or rebuild test parses the same bundled exports, so the workbook and
 mod-export parsers in `modules/importer.py` are memoized on the source file's
 identity (path, mtime, size) and invalidate themselves when the file changes.
+
+### Code style
+
+Linting is enforced from `ruff.toml` (`E`, `W`, `F`, `I`, `UP`, `B`; `E501` is
+off because the UI tooltips, data tables and wiki URLs are deliberately long).
+CI runs exactly the same command, so a local run is authoritative:
+
+```bash
+pip install -r requirements-dev.txt
+python -m ruff check .
+```
+
+### GUI test prerequisites
 
 The Qt integration tests exercise real widgets, ordered mod selection,
 save/load/compare, offline rebuild, and migration startup. They run with Qt's

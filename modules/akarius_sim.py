@@ -45,28 +45,35 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
+
+from modules.crit import quantize_crit_multiplier
 
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
-from modules.trial_statistics import sample_percentile
-from modules.crit import quantize_crit_multiplier
-from modules.status_damage import blast_stack_damage
 from modules.kuva_nukor_sim import (
     BLAST_MAX_STACKS,
     BLAST_SINGLE_COEF,
     PISTOL_ELEMENTALIST_SD,
     BlastProc,
     DummyTarget,
-    HeatProc as HeatProc,
-    _heat_strip_fraction as _heat_strip_fraction,
     enervate_afcc,
     heat_tick,
     steel_path_eximus_heavy_gunner,
-    viral_magnetic_multiplier as viral_magnetic_multiplier,
     wiki_quantized_damage,
 )
+from modules.kuva_nukor_sim import (
+    HeatProc as HeatProc,
+)
+from modules.kuva_nukor_sim import (
+    _heat_strip_fraction as _heat_strip_fraction,
+)
+from modules.kuva_nukor_sim import (
+    viral_magnetic_multiplier as viral_magnetic_multiplier,
+)
+from modules.status_damage import blast_stack_damage
+from modules.trial_statistics import sample_percentile
 
 # --- Akarius Prime base stats ----------------------------------------------
 

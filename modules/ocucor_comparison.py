@@ -103,7 +103,7 @@ def _summarize(results, attempted: int, *, room: bool) -> dict:
 def _paired_difference(enervate, flare, *, room: bool) -> dict | None:
     attr = "clear_time" if room else "ttk"
     differences = [getattr(f, attr) - getattr(e, attr)
-                   for e, f in zip(enervate, flare)
+                   for e, f in zip(enervate, flare, strict=True)
                    if math.isfinite(getattr(e, attr))
                    and math.isfinite(getattr(f, attr))]
     if not differences:
@@ -134,7 +134,8 @@ def compare(name: str, *, eximus: bool, trials: int, seed: int,
     if room and full_beam_ramp:
         raise ValueError("the room model always starts each fresh target cold")
     target_type = SharedHeatClockTarget if shared_heat_clock else DummyTarget
-    factory = lambda: make_target(eximus, target_type)
+    def factory():
+        return make_target(eximus, target_type)
     patch_route = (patch.object(nukor, "route_enemy_hit", discard_overguard_overflow)
                    if gate_overguard else nullcontext())
     settings = {

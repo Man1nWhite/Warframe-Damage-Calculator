@@ -5,7 +5,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -23,7 +23,7 @@ def create_database_backup(connection: sqlite3.Connection, db_path: str | Path,
     db_path = Path(db_path)
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     path = backup_dir / f"{db_path.stem}-{label}-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
     # Reserve a fresh filename and never overwrite an earlier backup.
     with path.open("xb"):

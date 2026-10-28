@@ -54,20 +54,23 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Optional
 
 from modules.akarius_sim import corrosive_armor_factor
+from modules.crit import quantize_crit_multiplier
+
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import (
     enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
+)
+from modules.enemy_scaling import (
     steel_path_heavy_gunner,
 )
-from modules.trial_statistics import sample_percentile
-from modules.crit import quantize_crit_multiplier
 from modules.kuva_nukor_sim import (
     DummyTarget,
     ToxinProc,
     steel_path_dummy_factory,
+)
+from modules.kuva_nukor_sim import (
     viral_magnetic_multiplier as viral_magnetic_multiplier,
 )
 from modules.status_damage import (
@@ -75,6 +78,7 @@ from modules.status_damage import (
     toxin_tick,
     wiki_quantized_damage,
 )
+from modules.trial_statistics import sample_percentile
 
 # --- Weapon base stats -------------------------------------------------------
 
@@ -243,7 +247,7 @@ def _combine_elements(heat: float, cold: float, elec: float,
     return out
 
 
-def _merged_spec(mod_option: Optional[str], riven_option: Optional[str]) -> dict:
+def _merged_spec(mod_option: str | None, riven_option: str | None) -> dict:
     """Merge a last-slot mod spec and a Riven spec (disjoint stat keys)."""
     spec: dict = {}
     if mod_option is not None:
@@ -260,8 +264,8 @@ def _merged_spec(mod_option: Optional[str], riven_option: Optional[str]) -> dict
     return spec
 
 
-def build_loadout(mod_option: Optional[str],
-                  riven_option: Optional[str] = None,
+def build_loadout(mod_option: str | None,
+                  riven_option: str | None = None,
                   galv_stacks: int = 0) -> JatBuild:
     """Build a full loadout: fixed mods + last-slot mod + optional Riven."""
     if not 0 <= galv_stacks <= 4:
@@ -434,7 +438,7 @@ def plain_heavy_gunner_factory() -> JatTarget:
     return JatTarget(gunner.health, gunner.armor, gunner.overguard)
 
 
-def has_live_status(target: "JatTarget", when: float) -> bool:
+def has_live_status(target: JatTarget, when: float) -> bool:
     """True if at least one (un-expired) status stack is present."""
     if any(when < p.start + PROC_DURATION
            for p in target.gas_procs):
@@ -445,7 +449,7 @@ def has_live_status(target: "JatTarget", when: float) -> bool:
     return bool(target.viral_stacks(when) or target.corrosive_stacks(when))
 
 
-def has_live_dot(target: "JatTarget", when: float) -> bool:
+def has_live_dot(target: JatTarget, when: float) -> bool:
     """True if a damaging DoT status (Gas/Toxin) is live on the target.
 
     This helper only classifies the stored procs. Melee Afflictions may
@@ -458,7 +462,7 @@ def has_live_dot(target: "JatTarget", when: float) -> bool:
                for p in target.toxin_procs)
 
 
-def apply_melee_afflictions(target: "JatTarget", when: float,
+def apply_melee_afflictions(target: JatTarget, when: float,
                             stacks: int = LIFTED_AFFLICTION_STACKS) -> None:
     """Melee Afflictions: add stacks of every status already live on target.
 
@@ -537,7 +541,7 @@ def simulate(build: JatBuild,
              target: JatTarget,
              *,
              seed: int = 1,
-             combo_multiplier: Optional[float] = 1.0,
+             combo_multiplier: float | None = 1.0,
              combo_recovery: bool = False,
              afflictions: bool = True,
              trace: bool = False,
@@ -705,10 +709,10 @@ def simulate(build: JatBuild,
 def run_trials(option: str,
                trials: int = 300,
                base_seed: int = 20261027,
-               combo_multiplier: Optional[float] = 1.0,
+               combo_multiplier: float | None = 1.0,
                galv_stacks: int = 0,
                combo_recovery: bool = False,
-               riven_option: Optional[str] = None,
+               riven_option: str | None = None,
                factory=steel_path_dummy_factory) -> dict:
     """Summarize observed kills and report attempted and timed-out trials."""
     if trials < 1:

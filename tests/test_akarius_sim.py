@@ -6,20 +6,20 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from modules.crit import quantize_crit_multiplier
 from modules.akarius_sim import (
     BURST_DELAY,
     GALV_SHOT_CO,
     HORNET_STRIKE,
+    RELOAD_TIME,
     RIVEN_CORROSIVE,
     RIVEN_VIRAL,
-    RELOAD_TIME,
     AkariusTarget,
     build_akarius,
     corrosive_armor_factor,
     run_trials,
     simulate,
 )
+from modules.crit import quantize_crit_multiplier
 from modules.enemy_scaling import steel_path_eximus_heavy_gunner
 
 DUMMY = steel_path_eximus_heavy_gunner(150)

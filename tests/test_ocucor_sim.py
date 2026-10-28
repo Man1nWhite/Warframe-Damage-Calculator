@@ -5,10 +5,10 @@ import math
 import unittest
 from unittest.mock import patch
 
+import modules.ocucor_sim as ocucor
+from modules.crit import quantize_crit_multiplier
 from modules.enemy_scaling import steel_path_eximus_heavy_gunner
 from modules.kuva_nukor_sim import DummyTarget
-from modules.crit import quantize_crit_multiplier
-import modules.ocucor_sim as ocucor
 from modules.ocucor_sim import (
     ARCANE_ENERVATE,
     ARCANE_FLARE,

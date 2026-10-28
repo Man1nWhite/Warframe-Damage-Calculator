@@ -112,7 +112,8 @@ def _summarize(outcomes: list, attempted: int, *, room: bool) -> dict:
 
 def _paired(old, new, *, room: bool) -> dict | None:
     attr = "clear_time" if room else "ttk"
-    pairs = [(getattr(a, attr), getattr(b, attr)) for a, b in zip(old, new)
+    pairs = [(getattr(a, attr), getattr(b, attr))
+             for a, b in zip(old, new, strict=True)
              if math.isfinite(getattr(a, attr)) and math.isfinite(getattr(b, attr))]
     if not pairs:
         return None
@@ -139,8 +140,9 @@ def compare(name: str, *, eximus: bool, arcane: str, initial_flare: int,
         raise ValueError("trials must be positive")
     if len({s.label for s in specs}) != len(specs):
         raise ValueError("Riven labels must be unique")
-    factory = lambda: target_factory(eximus, shared_heat_clock=shared_heat_clock,
-                                     preprimed_viral_stacks=preprimed_viral_stacks)
+    def factory():
+        return target_factory(eximus, shared_heat_clock=shared_heat_clock,
+                              preprimed_viral_stacks=preprimed_viral_stacks)
     outcomes = {}
     with patch.object(nukor, "route_enemy_hit", discard_overguard_overflow):
         for spec in specs:

@@ -12,7 +12,7 @@ import json
 import math
 
 from .jat_kittag_slam_analysis import BUILD_BY_KEY
-from .jat_kittag_slam_counts import Assumptions, BUILDS, TARGETS, Target, summarize
+from .jat_kittag_slam_counts import BUILDS, TARGETS, Assumptions, Target, summarize
 
 # Sample sizes per build/target.  A limited selection keeps the artifact small
 # and highlights the uncertain hypotheses rather than pretending to bound all

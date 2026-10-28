@@ -55,20 +55,26 @@ import math
 import random
 from dataclasses import dataclass, field
 
+from modules import status_damage
+from modules.constants import FACTION_MULTIPLIERS
+from modules.crit import quantize_crit_multiplier
+from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
+
 # Preserve the old simulator-level import for external callers.
 from modules.enemy_scaling import (
     enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
+)
+from modules.enemy_scaling import (
     steel_path_eximus_heavy_gunner,
 )
-from modules.constants import FACTION_MULTIPLIERS
-from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
-from modules.crit import quantize_crit_multiplier
-from modules.trial_statistics import sample_percentile
-from modules import status_damage
 from modules.status_damage import (
-    blast_stack_damage, heat_tick, magnetic_break_electric_tick, toxin_tick,
+    blast_stack_damage,
+    heat_tick,
+    magnetic_break_electric_tick,
+    toxin_tick,
     wiki_quantized_damage,
 )
+from modules.trial_statistics import sample_percentile
 
 # --- Weapon base -----------------------------------------------------------
 
@@ -423,7 +429,7 @@ class DummyTarget:
         return len(self.mag_expiries)
 
     def add_magnetic(self, when: float, duration: float,
-                     source: MagneticSource = MagneticSource()) -> None:
+                     source: MagneticSource | None = None) -> None:
         """Record a Magnetic stack and the applying source's modifiers.
 
         Each simulated fight currently uses one source; if several distinct
@@ -435,7 +441,7 @@ class DummyTarget:
         self.mag_stacks(when)
         self.mag_expiries.append(when + duration)
         self.mag_expiries = self.mag_expiries[-VIRAL_MAG_CAP:]
-        self.magnetic_source = source
+        self.magnetic_source = source or MagneticSource()
         self.record_status("MAG", when, duration)
 
     def add_heat(self, when: float, seed: float, crit_factor: float,
@@ -833,7 +839,7 @@ def simulate(build: NukorBuild,
     )
 
 
-def steel_path_dummy_factory() -> "DummyTarget":
+def steel_path_dummy_factory() -> DummyTarget:
     """Fresh dummy A (Eximus Heavy Gunner L150 Steel Path) for one trial."""
     dummy = steel_path_eximus_heavy_gunner(150)
     return DummyTarget(dummy.health, dummy.armor, dummy.overguard)

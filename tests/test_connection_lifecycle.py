@@ -1,14 +1,14 @@
 """SQLite connection context managers do not themselves close the connection."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
-import openpyxl
 from unittest.mock import patch
+
+import openpyxl
 
 from modules.database import ModRepository, WeaponRepository
 from modules.importer import ImportPayload, build_database, rows_from_spreadsheet

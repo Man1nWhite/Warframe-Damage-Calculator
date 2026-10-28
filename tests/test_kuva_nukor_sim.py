@@ -10,18 +10,19 @@ import math
 import unittest
 
 from modules.crit import quantize_crit_multiplier
+from modules.enemy_scaling import steel_path_eximus_heavy_gunner
 from modules.kuva_nukor_sim import (
     AMMO_PER_TICK,
     BASE_MAGNETIC,
     BASE_TOTAL,
     BLAST_RADIAL_COEF,
     BLAST_SINGLE_COEF,
-    DummyTarget,
     LAST_MODS,
     MAGAZINE,
     PISTOL_ELEMENTALIST_SD,
     RAMP_START,
     BlastProc,
+    DummyTarget,
     _heat_strip_fraction,
     build_nukor,
     enervate_afcc,
@@ -33,7 +34,6 @@ from modules.kuva_nukor_sim import (
     steel_path_dummy_factory,
     viral_magnetic_multiplier,
 )
-from modules.enemy_scaling import steel_path_eximus_heavy_gunner
 
 DUMMY = steel_path_eximus_heavy_gunner(150)
 

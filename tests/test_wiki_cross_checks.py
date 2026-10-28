@@ -29,7 +29,6 @@ import random
 import unittest
 
 from modules.akarius_sim import corrosive_armor_factor
-from modules.status_damage import blast_stack_damage
 from modules.kuva_nukor_sim import (
     BLAST_MAX_STACKS,
     BLAST_RADIAL_COEF,
@@ -42,6 +41,7 @@ from modules.kuva_nukor_sim import (
 )
 from modules.status_damage import (
     STATUS_PROCS,
+    blast_stack_damage,
     damaging_ticks,
     magnetic_break_electric_tick,
     total_ticks,
