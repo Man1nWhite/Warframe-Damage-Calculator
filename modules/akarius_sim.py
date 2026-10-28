@@ -52,6 +52,7 @@ from typing import Callable
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
 from modules.trial_statistics import sample_percentile
 from modules.crit import quantize_crit_multiplier
+from modules.status_damage import blast_stack_damage
 from modules.kuva_nukor_sim import (
     BLAST_MAX_STACKS,
     BLAST_SINGLE_COEF,
@@ -361,8 +362,9 @@ def simulate(build: AkariusBuild,
         for p in due:
             target.blast_stacks.remove(p)
             # Damage/Calculation: an expiring stack deals max(1, 0.3 x H).
-            amount = max(1.0, BLAST_SINGLE_COEF * p.seed
-                         * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+            amount = blast_stack_damage(
+                p.seed, BLAST_SINGLE_COEF, crit_factor=p.crit_factor,
+                status_damage_bonus=PISTOL_ELEMENTALIST_SD)
             route({"BLAST": amount}, when, "blast")
             if target.health <= 0:
                 break

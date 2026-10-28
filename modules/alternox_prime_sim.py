@@ -95,7 +95,10 @@ from modules.kuva_nukor_sim import (
     viral_magnetic_multiplier,
     wiki_quantized_damage,
 )
-from modules.status_damage import ELEMENTAL_DOT_COEFFICIENT, electricity_tick
+from modules import status_damage
+from modules.status_damage import (
+    ELEMENTAL_DOT_COEFFICIENT, blast_stack_damage, electricity_tick,
+)
 
 # --- Weapon base stats (wiki Alternox Prime, Normal Attack) -----------------
 
@@ -125,8 +128,9 @@ CHAMBER_PER_STACK = 0.30
 CHAMBER_STACK_CAP = 5
 RIFLE_ELEMENTALIST_SD = 0.90    # x1.9 Status Damage
 BLAST_FUSE = 1.5                # seconds until a Blast stack detonates
-BLAST_SINGLE_COEF = 0.30
-BLAST_STACK_CAP = 10
+# Shared with every other simulator; see modules/status_damage.py.
+BLAST_SINGLE_COEF = status_damage.BLAST_SINGLE_COEF
+BLAST_STACK_CAP = status_damage.BLAST_MAX_STACKS
 ELEC_TICK_COEF = ELEMENTAL_DOT_COEFFICIENT   # 0.5
 ELEC_PROC_TICKS = 6
 VIRAL_CAP = 10
@@ -591,8 +595,10 @@ def simulate(
                     target.blast_stacks.remove(proc)
                     detonations += 1
                     # Damage/Calculation: an expiring stack deals max(1, 0.3 x H).
-                    amount = max(1.0, BLAST_SINGLE_COEF * proc.seed
-                                 * proc.crit_factor * sd_mult)
+                    amount = blast_stack_damage(
+                        proc.seed, BLAST_SINGLE_COEF,
+                        crit_factor=proc.crit_factor,
+                        status_damage_bonus=sd_mult - 1.0)
                     route({"BLAST": amount}, event)
                     if target.health <= 0:
                         break

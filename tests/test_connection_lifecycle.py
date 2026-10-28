@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+import openpyxl
 from unittest.mock import patch
 
 from modules.database import ModRepository, WeaponRepository
@@ -129,6 +130,36 @@ class ConnectionLifecycleTests(unittest.TestCase):
                 rows_from_spreadsheet("missing-sheet.xlsx")
         self.assertTrue(workbook.closed)
 
+    def test_spreadsheet_rows_are_cached_but_never_stale(self):
+        import tempfile
+        from pathlib import Path
+
+        def write(path, name):
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "Weapon-Data"
+            sheet.append(["Weapon", "Total Damage"] + [""] * 19)
+            sheet.append(["header row"])
+            sheet.append([name, 100])
+            workbook.save(path)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp) / "weapons.xlsx"
+            write(book, "First Weapon")
+            first = rows_from_spreadsheet(book)
+            self.assertEqual([row["weapon"] for row in first if row["weapon"]],
+                             ["First Weapon"])
+            # Cached reads are equal but independent objects.
+            second = rows_from_spreadsheet(book)
+            self.assertEqual(first, second)
+            self.assertIsNot(first[0], second[0])
+            second[0]["weapon"] = "MUTATED"
+            self.assertEqual(rows_from_spreadsheet(book)[0]["weapon"],
+                             first[0]["weapon"])
+            # A rewritten workbook invalidates the cached parse.
+            write(book, "Renamed Weapon Two")
+            self.assertEqual([row["weapon"] for row in rows_from_spreadsheet(book)
+                              if row["weapon"]], ["Renamed Weapon Two"])
 
 if __name__ == "__main__":
     unittest.main()

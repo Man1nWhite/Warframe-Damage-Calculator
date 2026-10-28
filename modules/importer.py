@@ -6,6 +6,7 @@ import sqlite3
 import stat
 import zipfile
 from contextlib import closing
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List
@@ -163,7 +164,38 @@ def _empty_damage_row() -> Dict[str, float]:
     return {damage_type.lower(): 0.0 for damage_type in DAMAGE_TYPES}
 
 
+@lru_cache(maxsize=4)
+def _spreadsheet_rows_cached(
+    path: str, mtime_ns: int, size: int,
+) -> tuple[tuple[tuple[str, object], ...], ...]:
+    """Parse the workbook once per (path, mtime, size); values are hashable."""
+    rows = _read_spreadsheet(Path(path))
+    return tuple(tuple(row.items()) for row in rows)
+
+
 def rows_from_spreadsheet(xlsx_path: str | Path) -> List[Dict[str, float | str]]:
+    """Rows of the ``Weapon-Data`` sheet.
+
+    Reading the workbook with openpyxl is the most expensive single step of a
+    rebuild (about 0.18 s for the bundled file, against ~0.1 s for the ZIP
+    exports), and callers routinely parse the same unchanged file several
+    times in one process. The parse is therefore memoized on the file's
+    identity: changing the workbook (its mtime or size) invalidates the entry,
+    and each call returns fresh dicts so a caller cannot corrupt the cached
+    rows.
+    """
+    resolved = Path(xlsx_path).resolve()
+    try:
+        stat_result = resolved.stat()
+    except OSError:
+        # Let openpyxl raise its own error for a missing/inaccessible file.
+        return _read_spreadsheet(resolved)
+    cached = _spreadsheet_rows_cached(
+        str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
+    return [dict(items) for items in cached]
+
+
+def _read_spreadsheet(xlsx_path: Path) -> List[Dict[str, float | str]]:
     with closing(openpyxl.load_workbook(xlsx_path, data_only=True)) as workbook:
         sheet = workbook["Weapon-Data"]
         output: List[Dict[str, float | str]] = []
@@ -237,11 +269,53 @@ def rows_from_cleaned_json(zip_path: str | Path) -> List[Dict[str, float | str]]
     return order_export_weapons(output)
 
 
+@lru_cache(maxsize=4)
+def _mods_cached(
+    path: str, mtime_ns: int, size: int,
+) -> tuple[tuple[tuple[str, object], ...], ...]:
+    """Memoized parse of the upgrade export; see ``mods_from_cleaned_json``."""
+    mods, effects, stats = _read_mods(Path(path))
+    return (
+        tuple(tuple(row.items()) for row in mods),
+        tuple(tuple(row.items()) for row in effects),
+        tuple(stats.items()),
+    )
+
+
 def mods_from_cleaned_json(
     zip_path: str | Path,
     *,
     source_stats: dict[tuple[str, int], tuple[str, ...]] | None = None,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """Parsed mod rows and effect rows from the upgrade export.
+
+    Parsing the export re-runs the effect parser over every rank line of every
+    mod (about 0.12 s for the bundled file). The result depends only on the
+    file, so it is memoized on (path, mtime, size) exactly like
+    ``rows_from_spreadsheet``; callers still receive fresh dicts and their own
+    ``source_stats`` copy.
+    """
+    resolved = Path(zip_path).resolve()
+    try:
+        stat_result = resolved.stat()
+    except OSError:
+        mods, effects, stats = _read_mods(resolved)
+    else:
+        cached_mods, cached_effects, cached_stats = _mods_cached(
+            str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
+        mods = [dict(items) for items in cached_mods]
+        effects = [dict(items) for items in cached_effects]
+        stats = dict(cached_stats)
+    if source_stats is not None:
+        source_stats.update(stats)
+    return mods, effects
+
+
+def _read_mods(
+    zip_path: Path,
+) -> tuple[List[Dict[str, object]], List[Dict[str, object]],
+          dict[tuple[str, int], tuple[str, ...]]]:
+    source_stats: dict[tuple[str, int], tuple[str, ...]] = {}
     with zipfile.ZipFile(zip_path) as archive:
         payload = json.loads(archive.read("ExportUpgrades_en_Cleaned.json"))
 
@@ -304,7 +378,7 @@ def mods_from_cleaned_json(
             }
         )
 
-    return mod_rows, effect_rows
+    return mod_rows, effect_rows, source_stats
 
 
 def _slot_group_from_category(category: str) -> str:

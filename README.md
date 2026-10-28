@@ -349,6 +349,11 @@ Install `requirements.txt`, then run:
 python -m unittest discover -s tests -q
 ```
 
+The suite is fully offline and takes roughly 13 seconds on a laptop; each
+migration or rebuild test parses the same bundled exports, so the workbook and
+mod-export parsers in `modules/importer.py` are memoized on the source file's
+identity (path, mtime, size) and invalidate themselves when the file changes.
+
 The Qt integration tests exercise real widgets, ordered mod selection,
 save/load/compare, offline rebuild, and migration startup. They run with Qt's
 `offscreen` platform, not a physical display or GPU. They skip if PyQt6 or its

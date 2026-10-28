@@ -49,6 +49,8 @@ DEFAULT_TICK_RATE = 1.0  # status DoTs tick once per second
 # Stack caps.
 GAS_MAX_STACKS = 10
 BLAST_MAX_STACKS = 10
+BLAST_SINGLE_COEF = 0.30  # 30% of modded base per stack
+BLAST_RADIAL_COEF = 3.0   # 300% of modded base per stack, 5 m
 
 
 def modded_base_damage(base_damage: float,
@@ -181,6 +183,25 @@ def damaging_ticks(duration: float = PROC_DURATION,
             and math.isclose(span, round(span), rel_tol=0.0, abs_tol=1e-12)):
         ticks -= 1
     return ticks
+
+
+def blast_stack_damage(seed: float, coefficient: float = BLAST_SINGLE_COEF,
+                       *, crit_factor: float = 1.0,
+                       status_damage_bonus: float = 0.0,
+                       floor: float = 1.0) -> float:
+    """Blast damage of one stack: ``coefficient x H x crit x status damage``.
+
+    ``H`` is the damage the inducing hit recorded for the stack. The
+    ``Damage/Calculation`` and ``Damage/Blast_Damage`` pages give
+    ``max(1, 0.3 x H)`` for a stack settled on its own and ``3 x H`` per stack
+    for the 5 m radial; both forms go through this helper so the coefficients
+    and the death/cap floor cannot drift between simulators.
+
+    ``floor=0`` disables the minimum, which is how the wiki presents the radial
+    and the 10-stack settlement (all stacks summed into one instance).
+    """
+    return max(floor, coefficient * seed * crit_factor
+               * (1.0 + status_damage_bonus))
 
 
 def proc_type_chances(damage_distribution: Mapping[str, float]) -> dict[str, float]:

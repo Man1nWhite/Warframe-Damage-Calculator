@@ -29,6 +29,7 @@ import random
 import unittest
 
 from modules.akarius_sim import corrosive_armor_factor
+from modules.status_damage import blast_stack_damage
 from modules.kuva_nukor_sim import (
     BLAST_MAX_STACKS,
     BLAST_RADIAL_COEF,
@@ -181,6 +182,31 @@ class VulnerabilityTests(unittest.TestCase):
 
 
 class MultishotTests(unittest.TestCase):
+    def test_expiring_stack_has_the_documented_minimum(self) -> None:
+        # Damage/Calculation: an expiring stack deals max(1, 0.3 x H).
+        self.assertAlmostEqual(blast_stack_damage(100.0), 30.0)
+        self.assertAlmostEqual(blast_stack_damage(1.0), 1.0)
+        self.assertAlmostEqual(blast_stack_damage(0.0), 1.0)
+        # Status Damage and the inducing hit's crit multiplier both apply.
+        self.assertAlmostEqual(
+            blast_stack_damage(100.0, crit_factor=2.0, status_damage_bonus=0.9),
+            114.0)
+        # The 5 m radial is 300% per stack and carries no minimum.
+        self.assertAlmostEqual(
+            blast_stack_damage(100.0, BLAST_RADIAL_COEF, floor=0.0), 300.0)
+
+    def test_simulators_share_one_blast_definition(self) -> None:
+        from modules import alternox_prime_sim, kuva_nukor_sim, status_damage
+        for module in (alternox_prime_sim, kuva_nukor_sim):
+            self.assertEqual(module.BLAST_SINGLE_COEF,
+                             status_damage.BLAST_SINGLE_COEF)
+        self.assertEqual(kuva_nukor_sim.BLAST_RADIAL_COEF,
+                         status_damage.BLAST_RADIAL_COEF)
+        self.assertEqual(kuva_nukor_sim.BLAST_MAX_STACKS,
+                         status_damage.BLAST_MAX_STACKS)
+        self.assertEqual(alternox_prime_sim.BLAST_STACK_CAP,
+                         status_damage.BLAST_MAX_STACKS)
+
     def test_integer_beams_plus_a_fractional_roll(self) -> None:
         self.assertEqual(roll_multishot(random.Random(1), 1.0), 1)
         self.assertEqual(roll_multishot(random.Random(1), 2.0), 2)

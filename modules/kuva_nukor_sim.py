@@ -64,8 +64,10 @@ from modules.constants import FACTION_MULTIPLIERS
 from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
 from modules.crit import quantize_crit_multiplier
 from modules.trial_statistics import sample_percentile
+from modules import status_damage
 from modules.status_damage import (
-    heat_tick, magnetic_break_electric_tick, toxin_tick, wiki_quantized_damage,
+    blast_stack_damage, heat_tick, magnetic_break_electric_tick, toxin_tick,
+    wiki_quantized_damage,
 )
 
 # --- Weapon base -----------------------------------------------------------
@@ -85,9 +87,10 @@ RELOAD_TIME = BASE_RELOAD_TIME / 1.6  # Pistol Elementalist: +60% reload speed
 RAMP_TIME = 0.6
 RAMP_START = 0.3                 # Nukor ramps 30% -> 100%, not the generic 20%
 BLAST_FUSE_BASE = 1.5            # seconds per Blast stack, scaled by status duration
-BLAST_MAX_STACKS = 10
-BLAST_SINGLE_COEF = 0.3          # 30% of modded base per stack to the proc target
-BLAST_RADIAL_COEF = 3.0          # 300% of modded base per stack in the 5 m explosion
+# Coefficients live in status_damage so every simulator shares one definition.
+BLAST_MAX_STACKS = status_damage.BLAST_MAX_STACKS
+BLAST_SINGLE_COEF = status_damage.BLAST_SINGLE_COEF  # 30% per stack, proc target
+BLAST_RADIAL_COEF = status_damage.BLAST_RADIAL_COEF  # 300% per stack, 5 m radial
 
 # --- Fixed mods in the build ----------------------------------------------
 
@@ -566,14 +569,16 @@ class DummyTarget:
 
     def blast_single_damage(self, status_damage_bonus: float) -> float:
         """Sum of per-stack 30% detonations against the proc target itself."""
-        return sum(BLAST_SINGLE_COEF * p.seed
-                   * (1.0 + status_damage_bonus) * p.crit_factor
+        return sum(blast_stack_damage(p.seed, BLAST_SINGLE_COEF, floor=0.0,
+                                      crit_factor=p.crit_factor,
+                                      status_damage_bonus=status_damage_bonus)
                    for p in self.blast_stacks)
 
     def blast_radial_damage(self, status_damage_bonus: float) -> float:
         """Combined 5 m radial: 300% modded base per stack, crit snapshots."""
-        return sum(BLAST_RADIAL_COEF * p.seed
-                   * (1.0 + status_damage_bonus) * p.crit_factor
+        return sum(blast_stack_damage(p.seed, BLAST_RADIAL_COEF, floor=0.0,
+                                      crit_factor=p.crit_factor,
+                                      status_damage_bonus=status_damage_bonus)
                    for p in self.blast_stacks)
 
 
@@ -671,10 +676,10 @@ def simulate(build: NukorBuild,
         for p in due:
             target.blast_stacks.remove(p)
             # Damage/Blast_Damage and Damage/Calculation: an expiring stack
-            # deals max(1, 0.3 x H).  The floor is unreachable for the bundled
-            # builds (seeds are far above 3.33) but is part of the formula.
-            amount = max(1.0, BLAST_SINGLE_COEF * p.seed
-                         * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+            # deals max(1, 0.3 x H).
+            amount = blast_stack_damage(
+                p.seed, BLAST_SINGLE_COEF, crit_factor=p.crit_factor,
+                status_damage_bonus=PISTOL_ELEMENTALIST_SD)
             route({"BLAST": amount}, when, "blast")
             if target.health <= 0:
                 break
@@ -1010,8 +1015,9 @@ def simulate_room(build: NukorBuild,
                 continue
             for p in [p for p in t.blast_stacks if p.fuse_end <= when]:
                 t.blast_stacks.remove(p)
-                amount = (BLAST_SINGLE_COEF * p.seed
-                          * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+                amount = blast_stack_damage(
+                    p.seed, BLAST_SINGLE_COEF, crit_factor=p.crit_factor,
+                    status_damage_bonus=PISTOL_ELEMENTALIST_SD)
                 absorb_target(t, {"BLAST": amount}, when, "dot")
                 if t.health <= 0:
                     break
