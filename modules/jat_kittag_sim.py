@@ -54,6 +54,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
+from functools import cached_property
 
 from modules.akarius_sim import corrosive_armor_factor
 from modules.crit import crit_multiplier_for_tier, quantize_crit_multiplier
@@ -210,6 +211,19 @@ class JatBuild:
     toxin_elemental_bonus: float
     status_damage_bonus: float
     proc_duration: float
+
+    @cached_property
+    def quantized_type_damage(self) -> dict[str, float]:
+        """Per-type direct damage after the 1/32 quantization.
+
+        ``Damage/Calculation`` quantizes each type against the modded base
+        damage, and both of those are properties of the build, not of the
+        slam, so the value is computed once per build instead of once per
+        slam per type. The critical, combo, Seismic Wave and faction brackets
+        are applied to it per hit, in the same order as before.
+        """
+        return {name: wiki_quantized_damage(single, self.modded_base)
+                for name, single in self.type_damage.items()}
 
     def describe(self) -> str:
         return (
@@ -428,15 +442,23 @@ def _next_status_tick(target: JatTarget) -> float:
 def _process_status_ticks(target: JatTarget, build: JatBuild, when: float,
                           route) -> None:
     """Resolve same-time Gas pulses together and Toxin ticks independently."""
-    gas = [p for p in target.gas_procs
-           if p.next_tick == when and p.next_tick < p.start + PROC_DURATION]
-    if gas:
-        seeds = sum(p.seed * p.crit_factor for p in gas)
-        for gas_proc in gas:
+    # Single pass per status type: the Gas seeds are accumulated in list order
+    # (so the sum is identical to building a list of due procs first) and each
+    # due proc advances its own clock as it is visited.
+    gas_seed = 0.0
+    gas_due = 0
+    for gas_proc in target.gas_procs:
+        if gas_proc.next_tick == when and gas_proc.next_tick < gas_proc.start + PROC_DURATION:
+            gas_seed += gas_proc.seed * gas_proc.crit_factor
             gas_proc.next_tick += 1.0
-        route({"GAS": gas_tick(seeds,
+            gas_due += 1
+    if gas_due:
+        route({"GAS": gas_tick(gas_seed,
               status_damage_bonus=build.status_damage_bonus,
               faction_bonus=build.faction_bracket - 1.0)}, when)
+    toxin_elemental_bonus = build.toxin_elemental_bonus
+    status_damage_bonus = build.status_damage_bonus
+    faction_bonus = build.faction_bracket - 1.0
     for toxin_proc in target.toxin_procs:
         if target.health <= 0:
             break
@@ -444,9 +466,9 @@ def _process_status_ticks(target: JatTarget, build: JatBuild, when: float,
                 and toxin_proc.next_tick <= toxin_proc.start + PROC_DURATION):
             toxin_proc.next_tick += 1.0
             route({"TOXIN": toxin_tick(toxin_proc.seed * toxin_proc.crit_factor,
-                  elemental_bonus=build.toxin_elemental_bonus,
-                  status_damage_bonus=build.status_damage_bonus,
-                  faction_bonus=build.faction_bracket - 1.0)}, when)
+                  elemental_bonus=toxin_elemental_bonus,
+                  status_damage_bonus=status_damage_bonus,
+                  faction_bonus=faction_bonus)}, when)
 
 
 def plain_heavy_gunner_factory() -> JatTarget:
@@ -494,21 +516,40 @@ def apply_melee_afflictions(target: JatTarget, when: float,
     Damage scaling are intentionally not modeled (conservative).
     """
     target.affliction_triggers += 1
-    live_gas = [p for p in target.gas_procs
-                if when < p.start + PROC_DURATION]
-    target.gas_procs = live_gas
+    # One pass counts the live stacks and accumulates their weighted seeds in
+    # list order; the expired ones are only rebuilt into a new list when at
+    # least one has actually expired. Both the average seed and the retained
+    # stack order are unchanged.
+    gas_procs = target.gas_procs
+    live_gas = 0
+    gas_weighted = 0.0
+    for proc in gas_procs:
+        if when < proc.start + PROC_DURATION:
+            live_gas += 1
+            gas_weighted += proc.seed * proc.crit_factor
+    if live_gas != len(gas_procs):
+        gas_procs = [p for p in gas_procs if when < p.start + PROC_DURATION]
+        target.gas_procs = gas_procs
     if live_gas:
-        avg_weighted_seed = sum(p.seed * p.crit_factor for p in live_gas) / len(live_gas)
+        avg_weighted_seed = gas_weighted / live_gas
         for _ in range(stacks):
-            target.gas_procs.append(GasProc(when, avg_weighted_seed, 1.0))
-        target.gas_procs = target.gas_procs[-GAS_CAP:]
-    live_toxin = [p for p in target.toxin_procs
-                  if when < p.start + PROC_DURATION]
-    target.toxin_procs = live_toxin
+            gas_procs.append(GasProc(when, avg_weighted_seed, 1.0))
+        if len(gas_procs) > GAS_CAP:
+            target.gas_procs = gas_procs[-GAS_CAP:]
+    toxin_procs = target.toxin_procs
+    live_toxin = 0
+    toxin_weighted = 0.0
+    for toxin_proc in toxin_procs:
+        if when < toxin_proc.start + PROC_DURATION:
+            live_toxin += 1
+            toxin_weighted += toxin_proc.seed * toxin_proc.crit_factor
+    if live_toxin != len(toxin_procs):
+        toxin_procs = [p for p in toxin_procs if when < p.start + PROC_DURATION]
+        target.toxin_procs = toxin_procs
     if live_toxin:
-        avg_weighted_seed = sum(p.seed * p.crit_factor for p in live_toxin) / len(live_toxin)
+        avg_weighted_seed = toxin_weighted / live_toxin
         for _ in range(stacks):
-            target.toxin_procs.append(ToxinProc(when, avg_weighted_seed, 1.0))
+            toxin_procs.append(ToxinProc(when, avg_weighted_seed, 1.0))
     # Stack-only effects: only extend status types already on the target.
     if target.viral_stacks(when):
         target.viral_expiries = (
@@ -613,6 +654,12 @@ def simulate(build: JatBuild,
         return None
 
     interval = build.slam_interval
+    # ``random.choices`` copies both sequences into cumulative weights on every
+    # call; the candidate list and its weights never change, so build them once
+    # per trial instead of once per slam. The sampler and the draws are
+    # untouched.
+    proc_types = list(build.proc_weights)
+    proc_weights = list(build.proc_weights.values())
     while now < max_time and target.health > 0:
         death_time = advance_events(now)
         if death_time is not None:
@@ -627,9 +674,9 @@ def simulate(build: JatBuild,
             tier_mult = float(combo_multiplier if combo_multiplier is not None else 1.0)
         tier_log.append(int(tier_mult))
         cf = _crit_factor(rng, build.crit_chance, build.crit_multiplier)
-        direct = {name: wiki_quantized_damage(single, build.modded_base)
+        direct = {name: quantized
                   * build.seismic_bracket * tier_mult * cf * build.faction_bracket
-                  for name, single in build.type_damage.items()}
+                  for name, quantized in build.quantized_type_damage.items()}
         route(direct, now, is_dot=False)
         slams += 1
         if target.health <= 0:
@@ -640,9 +687,7 @@ def simulate(build: JatBuild,
                               if now < p.start + PROC_DURATION]
 
         n_rolls = _status_rolls(rng, build.status_per_slam)
-        for ptype in rng.choices(list(build.proc_weights),
-                                 weights=list(build.proc_weights.values()),
-                                 k=n_rolls):
+        for ptype in rng.choices(proc_types, weights=proc_weights, k=n_rolls):
             # Heavy-attack proc seeds inherit combo, as in the wiki's melee
             # status example. The 3x heavy-slam multiplier is already in
             # modded_base; faction enters here and again on each tick.
@@ -867,6 +912,8 @@ def simulate_room(option: str,
                 return event
         return None
 
+    proc_types = list(build.proc_weights)
+    proc_weights = list(build.proc_weights.values())
     while now < max_time and alive():
         death_time = advance_events(now)
         if death_time is not None:
@@ -883,9 +930,9 @@ def simulate_room(option: str,
 
         for t in alive():
             cf = _crit_factor(rng, build.crit_chance, cm)
-            direct = {name: wiki_quantized_damage(single, build.modded_base)
+            direct = {name: quantized
                       * build.seismic_bracket * combo_multiplier * cf * build.faction_bracket
-                      for name, single in build.type_damage.items()}
+                      for name, quantized in build.quantized_type_damage.items()}
             route(t, direct, now)
             if t.health <= 0:
                 continue
@@ -893,10 +940,8 @@ def simulate_room(option: str,
                            if now < p.start + PROC_DURATION]
             t.toxin_procs = [p for p in t.toxin_procs
                              if now < p.start + PROC_DURATION]
-            for ptype in rng.choices(
-                    list(build.proc_weights),
-                    weights=list(build.proc_weights.values()),
-                    k=_status_rolls(rng, status_chance)):
+            for ptype in rng.choices(proc_types, weights=proc_weights,
+                                     k=_status_rolls(rng, status_chance)):
                 if ptype == "GAS":
                     t.gas_procs.append(GasProc(
                         now, build.modded_base * build.faction_bracket

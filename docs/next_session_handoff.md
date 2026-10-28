@@ -12,6 +12,44 @@ and filter-refresh measurements — is in git history at
 - HEAD at handoff: `470e9dd` (pushed)
 - Base of this branch's work: `30b5a9f` (merge of PR #2)
 
+## 2026-10-28 late-evening pass (branch `arena/923b33f6-warframe-damage-calculator`)
+
+- Formula re-check with the wiki open while optimising: `Armor`,
+  `Damage/Calculation` (quantization, armored DM, the DoT accumulator, average
+  shot), `Damage_over_Time`, `Critical_Hit`, `Damage/Heat_Damage` (tick, strip
+  ramp, inherit), `Damage/Viral_Damage`, `Damage/Magnetic_Damage` and
+  `Overguard` were fetched again and compared term by term. No drift; one
+  unresolved *source conflict* is now recorded in
+  `wiki_formula_verification.md` §7 (the `+1` DoT accumulator is on
+  `Damage/Calculation` and absent from the per-type pages' own example).
+- Optimisation, second pass: §7 of `docs/optimization_review.md`. Interleaved
+  re-measurement against a worktree of the pre-change commit: Jat slam
+  6.65 → 5.53 ms/trial (−17%), Ocucor 2.94 → 2.36 (−20%), Kuva Nukor
+  0.91 → 0.82 (−10%), Akarius 0.86 → 0.76 (−12%), Alternox 1.17 → 1.19
+  (within the ±10% run-to-run noise), digest `sha256 476ec4f75e018a89…`
+  identical before and after. Quote the ranges, not single digits.
+- `tools/bench_models.py` now hashes **six** models: the five simulators plus
+  `jat_kittag_slam_counts`, which generates
+  `docs/jat_kittag_expected_slams_results.jsonl` and had no equivalence check
+  before.
+- Correction to an earlier estimate: that 170,000-trial sweep runs the scalar
+  slam-count model, not `jat_kittag_sim`, and the whole suite measures
+  ≈ 55–60 s of single-core CPU — not the "~36 min" quoted in
+  `optimization_review.md` §2 (see §7.4).
+- Finding, **fixed**: the committed `docs/jat_kittag_expected_slams_results.jsonl`
+  had gone stale — it predated the critical-damage quantization, so 34/44 rows
+  no longer reproduced (≤ 0.04 slams, no median/percentile change; confirmed by
+  disabling `crit.quantize_crit_multiplier` and reproducing the old artifact
+  exactly). It was regenerated with the documented command (seed `20261028`,
+  170,000 trials, ~50 s, byte-identical across two runs) and the new SHA-256 is
+  `7c584c34…`; seven sensitivity cells moved in the second decimal and were
+  taken from the new file. Record: `docs/jat_kittag_expected_slams.md`.
+- New guard: `tests/test_slam_results_artifact.py` re-simulates the cheapest
+  artifact row (1,000 trials, ~0.3 s) and requires exact equality with the
+  committed record, plus structural checks over all 44 records.
+- Gates on this pass: `ruff check .` clean, `mypy` clean (35 files),
+  630 tests OK (one GUI skip), digest `--check` exit 0.
+
 ## 2026-10-28 evening pass (branch `arena/e06d059d-warframe-damage-calculator`)
 
 - Formula re-check: the core pages were fetched live again and compared
@@ -195,7 +233,12 @@ python -m modules.jat_kittag_slam_count_sweep --sample-scale 0.01 > jat-smoke.js
 Delivered artifacts must not be regenerated casually: the full Jat sweep uses
 seed `20261028`, 170,000 trials over 44 JSONL records, and
 `docs/jat_kittag_expected_slams_results.jsonl` has SHA-256
-`94422cf20a535c30d58e32fd584bdca1672ae37c8a0edd4232cc22112218c982`.
+`7c584c3454239dbd6be79a83fe2a695f4bbcc389fdbfff0beef62146f091000e`
+(regenerated 2026-10-28; the previous hash was
+`94422cf20a535c30d58e32fd584bdca1672ae37c8a0edd4232cc22112218c982` — see the
+regeneration record in `docs/jat_kittag_expected_slams.md`). The sweep is
+deterministic: two consecutive runs are byte-identical, so a mismatch means a
+real change.
 Simulated numbers are model output, not measurements; keep seeds, trial counts
 and timeouts with any new result, and check attempted-versus-killed trials.
 

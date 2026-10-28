@@ -100,16 +100,16 @@ target. These examples do **not** bracket all possible real behaviors.
 
 | Mechanical hypothesis | SP 150 Eximus A / B | Icebind 1000 six-player Eximus A / B |
 | --- | ---: | ---: |
-| One +6 pass, shared AoE pulses, 0.65 s (main table) | 6.00 / 4.59 | 9.33 / 9.45 |
-| One +12 pass instead of +6 | 5.29 / 4.11 | 8.20 / 8.10 |
-| Two **sequential** +6 passes per eligible slam | 4.65 / 3.61 | 6.76 / 6.77 |
-| Per-proc AoE clocks rather than the shared-pulse approximation | 5.80 / 4.29 | 8.99 / 8.99 |
+| One +6 pass, shared AoE pulses, 0.65 s (main table) | 6.00 / 4.59 | 9.33 / 9.41 |
+| One +12 pass instead of +6 | 5.29 / 4.11 | 8.20 / 8.07 |
+| Two **sequential** +6 passes per eligible slam | 4.65 / 3.60 | 6.76 / 6.72 |
+| Per-proc AoE clocks rather than the shared-pulse approximation | 5.80 / 4.29 | 8.99 / 8.98 |
 | Seismic's 3x slam bracket also multiplies status seeds | 5.02 / 3.82 | 7.80 / 7.28 |
-| Magnetic-break Electricity also contributes its inferred seed to Afflictions | 5.97 / 4.58 | 8.56 / 9.44 |
+| Magnetic-break Electricity also contributes its inferred seed to Afflictions | 5.97 / 4.58 | 8.56 / 9.40 |
 | Lifted can trigger on the **direct** hit that breaks Overguard | 5.52 / 4.39 | 8.49 / 8.71 |
-| Literal Gas bonus also applies to Afflictions-created Gas stacks | 5.78 / 4.44 | 9.12 / 9.02 |
+| Literal Gas bonus also applies to Afflictions-created Gas stacks | 5.78 / 4.44 | 9.12 / 8.98 |
 | 0.40 s between landings | 6.64 / 4.98 | 10.19 / 10.14 |
-| 1.00 s between landings | 5.11 / 4.28 | 8.21 / 8.68 |
+| 1.00 s between landings | 5.10 / 4.28 | 8.21 / 8.68 |
 
 Faster spam can require **more slams** because there is less elapsed time for
 ticks between attacks; this does not imply it takes longer in seconds. One
@@ -202,13 +202,69 @@ as a room-clear ranking.
 # Main model on SP150 Eximus; add e.g. --affliction-passes 2,
 # --stacks 12, --seed-slam-factor 3, or --per-proc-aoe-ticks for alternatives.
 .venv/bin/python -m modules.jat_kittag_slam_counts --target sp150_eximus --trials 10000
-.venv/bin/python -m unittest tests.test_jat_kittag_slam_analysis tests.test_jat_kittag_slam_counts
+.venv/bin/python -m unittest tests.test_jat_kittag_slam_analysis \
+    tests.test_jat_kittag_slam_counts tests.test_slam_results_artifact
 ```
 
 The [raw results](jat_kittag_expected_slams_results.jsonl) contain scenario
 parameters, seed, counts, distributions, standard errors and timeout counts.
 Passing tests establishes internal consistency, not game accuracy. The model
 is independent of the invalidated `modules/jat_kittag_sim.py`.
+
+### Regeneration record (2026-10-28)
+
+The artifact was regenerated from the current tree on 2026-10-28. It had gone
+stale: the copy committed before that date predated the 12-bit base
+critical-damage quantization (`Critical_Hit`; see `formula_audit.md`,
+2026-10-28), so 34 of its 44 records no longer reproduced. The cause was
+established before anything was overwritten, not assumed:
+
+- Jat Kittag's base multiplier is now the decoded `2.0004884` rather than `2.0`.
+  Build B (`focus_gas_cc_cd`) is the crit-damage build, so its means move in the
+  second decimal; build A's records move only in the third decimal or beyond;
+- with `crit.quantize_crit_multiplier` replaced by the identity, the current
+  model reproduced the old artifact **exactly** — every mean, trigger mean and
+  histogram bucket — so nothing else had drifted;
+- the quantization is the wiki's rule and is correct, so the artifact, not the
+  code, was the stale half.
+
+Scope of the change:
+
+- command unchanged: `python -m modules.jat_kittag_slam_count_sweep`, seed
+  `20261028`, 170,000 trials over 44 records, ~50 s;
+- the run is deterministic: two consecutive runs produced byte-identical files
+  (SHA-256 `7c584c3454239dbd6be79a83fe2a695f4bbcc389fdbfff0beef62146f091000e`,
+  which replaces `94422cf20a535c30d58e32fd584bdca1672ae37c8a0edd4232cc22112218c982`);
+- `attempted`, `kills` (all trials killed), `timeouts` (zero everywhere),
+  `median_slams`, `p10_slams` and `p90_slams` are unchanged in **every** record,
+  so the distributions and the main table above are untouched;
+- the largest mean shift is 0.041 slams (`two_sequential_six_stack_passes`,
+  Icebind, build B: 6.7650 → 6.7243).
+
+Seven cells of the sensitivity table moved in the second decimal and were
+updated from the new file rather than by hand. Five are shifts caused by this
+regeneration; two more (`3.61`, `5.11`) were already 0.01 high against the
+previous file as well (`3.6047`, `5.1047`) and are corrected here:
+
+| Sensitivity row | Icebind A / B, previous → regenerated |
+| --- | --- |
+| One +6 pass, shared AoE pulses (main table) | 9.33 / **9.45 → 9.41** |
+| One +12 pass instead of +6 | 8.20 / **8.10 → 8.07** |
+| Two sequential +6 passes | 6.76 / **6.77 → 6.72** (SP 150 B: **3.61 → 3.60**) |
+| Per-proc AoE clocks | 8.99 / **8.99 → 8.98** |
+| Magnetic-break Electricity seeds Afflictions | 8.56 / **9.44 → 9.40** |
+| Literal Gas bonus on Afflictions stacks | 9.12 / **9.02 → 8.98** |
+| 1.00 s between landings | 8.21 / 8.68 (SP 150 A: **5.11 → 5.10**) |
+
+No conclusion in this document depends on the changed digits: build B remains
+favoured against both SP 150 targets, and the Icebind row is still effectively
+a tie. Treat the JSONL as reproducible only against the tree that carries this
+note; if a later change moves any of these numbers, the cause belongs in a new
+entry here, not in a silent overwrite. `tests/test_slam_results_artifact.py`
+now enforces that for the cheapest row: it re-simulates the 1,000-trial
+`normal_status_no_afflictions` scenario (~0.3 s) and requires the computed
+summary to equal the committed record exactly, so a formula change that is not
+mirrored into this file fails the suite instead of passing silently.
 
 Sources: [Jat Kittag](https://wiki.warframe.com/w/Jat_Kittag),
 [Melee](https://wiki.warframe.com/w/Melee),
