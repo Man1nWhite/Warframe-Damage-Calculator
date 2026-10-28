@@ -1,7 +1,9 @@
 # Optimisation review: damage models and the calculation path
 
 Reviewed **2026-10-28** on the repository at
-`ac627f9` plus this branch's changes. This file records what was measured
+`ac627f9` plus this branch's changes. A **second pass** the same evening (§7)
+re-measured all five simulators and took four more wins; the tables in §2
+describe the first pass only. This file records what was measured
 before changing anything, what was changed, what the change cost in
 readability, and which further opportunities exist but were **not** taken.
 It is not a claim that the simulators are fast in absolute terms: they are
@@ -51,6 +53,8 @@ Consequences at the scales this repository actually runs:
 - the documented Jat slam-count sweep (170,000 trials, seed `20261028`) is a
   single-process job; at 9.54 ms/trial it is ~45 min of CPU, at 7.71 ms/trial
   ~36 min. Re-running it is still a lunch break, not a command.
+  **Corrected in §7.4:** the sweep runs `jat_kittag_slam_counts`, not the model
+  timed above, and the complete suite measures ≈ 55–60 s.
 - the whole unit-test suite is ~9 s (614 tests before this pass added its
   own) either way, so the change is not visible there.
 - the desktop calculator's per-keystroke path was measured separately and is
@@ -110,6 +114,7 @@ total after the changes above). Each is a deliberate "no" or "not yet".
    rebuilt on every slam in three simulators. Hoisting them out of the loop is
    behaviour-neutral and mechanical; it was left alone because it touches three
    simulators for a single-digit win once (1) and (2) are the real targets.
+   **Taken in §7.3 item 4.**
    The pre-computed cumulative weights that `random.choices` builds internally
    are *not* a safe hand-optimisation: reproducing them means re-implementing
    the sampler, which is exactly the kind of change that silently shifts seeds.
@@ -164,8 +169,185 @@ python tools/bench_models.py --snapshot /tmp/before.json    # reference
 #   ... edit modules/ ...
 python tools/bench_models.py --check /tmp/before.json       # must match
 python tools/bench_models.py --trials 20 --repeats 3        # ms/trial table
-python -m unittest discover -s tests -q                     # 626 tests, one skip
+python -m unittest discover -s tests -q                     # 627 tests, one skip
 python -m ruff check . && python -m mypy
 ```
 
 Results are machine-dependent; the *digest* is not.
+
+---
+
+## 7. Second pass, 2026-10-28 (late evening): the per-hit path
+
+The first pass took the two cheapest structural wins (single-pass routing, a
+hand-written status-tick scan) and stopped. This pass went back to the profile
+with the wiki open: every formula inside a hot loop was re-read before it was
+touched, so a "faster" expression cannot quietly become a different formula.
+The per-page verdicts are in
+[`wiki_formula_verification.md`](wiki_formula_verification.md) §7; this section
+records the measurements and the changes.
+
+### 7.1 Procedure
+
+1. `python tools/bench_models.py --snapshot /tmp/before.json` on the
+   unmodified tree. The harness now covers **all five** simulators (Jat slam,
+   Kuva Nukor, Ocucor, Akarius Prime, Alternox Prime) plus the scalar
+   slam-count model that generates the 44-record JSONL artifact, instead of the
+   original three models, so a change to any of them is digest-checked.
+2. Optimise, then `python tools/bench_models.py --check /tmp/before.json`.
+   Exit 0 means the complete trial records — every field except the free-text
+   trace — hash to the same SHA-256.
+3. Timing: `--trials 20 --repeats 5`, best of three runs, on one core.
+   Baseline re-measured in a `git worktree` of the pre-change commit with the
+   same harness, so the two columns are the same measurement.
+
+### 7.2 Measurements
+
+`ms/trial`, best of three runs of best-of-five repeats.
+
+| Model | Before | After | Change |
+| --- | --- | --- | --- |
+| `jat_kittag_sim.simulate` | 6.76 | 5.39 | **−20%** |
+| `kuva_nukor_sim.simulate` | 0.95 | 0.77 | **−19%** |
+| `ocucor_sim.simulate` | 2.98 | 2.33 | **−22%** |
+| `akarius_sim.simulate` | 0.81 | 0.72 | −11% |
+| `alternox_prime_sim.simulate` | 1.25 | 1.11 | −11% |
+| `jat_kittag_slam_counts` (per 100-trial summary, untouched model) | 24.84 | 25.23 | noise |
+
+The digest is identical before and after (`sha256 476ec4f75e018a89…`), so every
+figure in `docs/` that was produced by these models still reproduces. The suite
+stays at ~8.5 s (627 tests, one GUI skip). The Jat and Ocucor rows matter most:
+those are the two models the research reports run in bulk.
+
+Two of the changes — the router and the shared `DummyTarget` methods — reach
+models that were previously outside the digest, which is why the harness was
+widened first.
+
+### 7.3 What changed
+
+1. **`damage_routing.route_enemy_hit` builds no intermediate dictionary.** The
+   first pass collapsed two dictionaries into one; this pass removed it
+   entirely. Overguard only needs the starting amounts, and the health
+   components only need their faction-modified values once the absorbed
+   fraction is known, so the function now scans `damage_by_type` twice instead
+   of building `{type: modified value}` and walking it. Both scans visit the
+   keys in the same order and perform the same multiplications
+   (`amount * modifier * fraction`, left to right), so `health_damage`
+   accumulates bit-identically. The armor factor is also skipped when the
+   target has no armor, where it was multiplied by zero terms anyway.
+   This is the only change that reaches the Akarius/Alternox models, which is
+   why their improvement is smaller: they mostly do direct hits.
+2. **`DummyTarget.prune` stops rebuilding live lists.** It is called once per
+   simulated damage instance, and it allocated a fresh copy of the Heat stack
+   list (up to ~90 proc objects in a 6 s Ocucor fight) on every call. It now
+   scans first and only rebuilds when a proc has actually expired. The
+   `_heat_ended_at` / `_next_heat_tick` bookkeeping runs in exactly the cases
+   it ran in before, because "nothing expired" implies the pruned list is
+   non-empty.
+3. **`current_armor`, `next_heat_tick`, `next_toxin_tick` and
+   `next_magnetic_electric_tick` scan with loops instead of
+   `min`/`max(generator)`.** The values are identical (`min` over `start`,
+   `max` over `refreshed`, `min` over `next_tick` with the same `<` versus
+   `<=` expiry asymmetry), but a generator expression costs a resume per
+   element, and `current_armor` is on the per-hit path. This is the same trade
+   the first pass made for `_next_status_tick`.
+4. **`random.choices` candidate lists are hoisted out of the loops** (the third
+   item of §4.1, now taken). The candidate list and weight list are fixed for a
+   build, so they are built once per trial in `jat_kittag_sim` (single-target
+   and room), `kuva_nukor_sim` (single-target and room) and `ocucor_sim`
+   (single-target and room). `random.choices` itself, and therefore every
+   draw, is untouched — the sampler still builds its own cumulative weights.
+5. **`JatBuild.quantized_type_damage` caches the per-type 1/32 quantization.**
+   `wiki_quantized_damage(single, modded_base)` depends only on the build, but
+   it ran once per type per slam (~3 × 180 = 540 calls per trial). It is now a
+   `cached_property`, so a `dataclasses.replace` on the build recomputes it and
+   a test pins that (`tests/test_jat_kittag_sim.py`). The per-hit brackets are
+   still applied in the original order — `quantized * seismic * combo * crit *
+   faction` — because re-associating float products would change the last bits.
+6. **`_process_status_ticks` and `apply_melee_afflictions` are single-pass.**
+   The tick resolver accumulates Gas seeds and advances each due proc in one
+   walk instead of building a "due" list first, and the Afflictions trigger
+   counts live stacks and sums their weighted seeds in one walk, rebuilding a
+   list only when something has expired. Seed sums keep list order, the
+   averaging and the 10-stack cap are unchanged.
+7. **`tools/bench_models.py` now hashes six models** — the five simulators plus
+   the slam-count model behind the JSONL artifact. Widening the harness was a
+   prerequisite, not a side effect: without it the Akarius/Alternox changes in
+   (1) would have been unprotected by any digest, and the artifact's model had
+   no equivalence check at all. `tests/test_bench_models.py` pins the model
+   list.
+
+### 7.4 A correction to §2: the 170,000-trial sweep is not a lunch break
+
+The harness widening turned up a wrong statement in §2. That bullet says the
+documented slam-count sweep costs "~45 min / ~36 min of CPU". The sweep
+(`modules.jat_kittag_slam_count_sweep`) does **not** call
+`jat_kittag_sim.simulate`: it drives `modules.jat_kittag_slam_counts`, an
+independent scalar model — the repository says so in
+`docs/jat_kittag_expected_slams.md` ("the model is independent of the
+invalidated `modules/jat_kittag_sim.py`"). Measured per-trial costs of
+`summarize` (100-trial samples, this machine):
+
+| Scenario target | ms/trial |
+| --- | --- |
+| `sp150_eximus` | 0.19 – 0.26 |
+| `sp150_normal` | 0.13 |
+| `icebind1000_eximus_6p` | 0.36 – 0.49 |
+| `normal_status_no_afflictions` (no afflictions, longest fights) | 1.14 |
+
+Weighted by the scenario table in `jat_kittag_slam_count_sweep.SCENARIOS`
+(170,000 trials over 44 records), the whole suite is **48 s of single-core CPU**
+— measured by running it, not estimated. Consequences:
+
+- Re-running the sweep to reproduce its JSONL is a coffee, not a lunch break;
+  the "needs an ordered map and eight workers" argument in §4.4 was solving a
+  problem that does not exist. Parallelising it would save ~40 s.
+- The expensive model is the *other* one: `jat_kittag_sim.simulate` at
+  5–7 ms/trial is what a large exploratory sweep would spend minutes on, and it
+  is the one this pass optimised. Any future report that runs
+  `jat_kittag_sim` at scale should scale its cost from the §7.2 row.
+- No published number is affected — only the estimate of how long it takes to
+  reproduce one.
+- Running it also turned up a **stale artifact**: the committed
+  `docs/jat_kittag_expected_slams_results.jsonl` predates the critical-damage
+  quantization, so 34 of its 44 records no longer reproduce (by ≤ 0.04 slams;
+  no median or percentile moves). The evidence, the affected table cells and
+  the repair are written up in
+  [`jat_kittag_expected_slams.md`](jat_kittag_expected_slams.md#known-reproducibility-gap-found-2026-10-28-not-yet-repaired).
+  It is recorded, not fixed: regenerating the artifact is a research decision.
+
+### 7.5 Opportunities identified but **not** taken, again
+
+1. **The Heat stack list is still unbounded and scanned per hit.** `prune` and
+   `current_armor` are O(stack count), and the count grows with fight length
+   (~90 procs after 6 s of Ocucor fire), so a long fight is still quadratic in
+   the number of applications. Fixing it properly means a running sum over
+   "procs that have been alive for at least 1 s" instead of the list — i.e.
+   changing what `heat_procs` *is*, which tests and the comparison modules
+   inspect. Not worth it for the ~10% of the Ocucor model it would buy.
+2. **`route_enemy_hit` is still the top entry in the Jat profile (~10%).** A
+   single-damage-type fast path would remove one dict iteration for the
+   dominant `{"GAS": …}` / `{"TOXIN": …}` calls, but it duplicates the health
+   accumulation for one special case; the duplication is a bigger correctness
+   risk than the ~3% it buys.
+3. **The remaining linear scans over status lists** (§4.1) are unchanged: the
+   ordering constraints on same-time Gas pulses and on Toxin routing order are
+   the reason, and nothing measured this pass changes that conclusion.
+4. **Binary32 emulation, parallelising the sweep, GUI read batching** — all
+   still rejected for the reasons in §4.
+
+The three simulator tables in `docs/` that quote timings (`optimization_review`
+§2, `next_session_handoff.md`) describe the *first* pass; the numbers above
+supersede them for the models they name.
+
+### 7.6 Reproducing this pass
+
+```bash
+git worktree add /tmp/baseline fed4507        # the pre-change tree
+cp tools/bench_models.py /tmp/baseline/tools/ # same harness, five models
+(cd /tmp/baseline && python tools/bench_models.py --trials 20 --repeats 5)
+python tools/bench_models.py --check /tmp/before.json        # must match
+python tools/bench_models.py --trials 20 --repeats 5        # after
+python -m unittest discover -s tests -q                     # 627 tests
+python -m ruff check . && python -m mypy
+```

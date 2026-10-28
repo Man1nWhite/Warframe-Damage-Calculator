@@ -60,18 +60,17 @@ def route_enemy_hit(
     *original* hit not consumed by that layer proceeds to health; Magnetic's
     Overguard-only multiplier does not carry over.
     """
-    modifiers = faction_type_modifiers or {}
-    # One pass builds both the faction-modified health components and the
-    # Overguard total. The route is called once per simulated damage instance,
-    # so the two dictionaries and the second scan the obvious spelling needs
-    # were the hottest allocation site in the tick simulators; the sums below
-    # keep the original per-type order, which makes this a pure refactor.
-    typed: dict[str, float] = {}
+    modifiers = faction_type_modifiers or None
+    # The Overguard total only needs the starting amounts, and the health
+    # components only need their faction-modified values once the absorbed
+    # fraction is known, so the two scans below replace the intermediate
+    # ``{type: modified value}`` dictionary. Both scans visit the types in the
+    # same order and perform the same multiplications, so the accumulated
+    # health damage is bit-identical to building the dictionary first.
     overguard_total = 0.0
     for kind, amount in damage_by_type.items():
         if amount <= 0:
             continue
-        typed[kind] = amount * max(0.0, modifiers.get(kind, 1.0))
         if kind == "VOID":
             overguard_total += amount * VOID_OVERGUARD_MULTIPLIER
         else:
@@ -88,15 +87,23 @@ def route_enemy_hit(
         broke = False
 
     health_mult = status_vulnerability(viral_stacks)
-    armor_mult = 1.0 - enemy_armor_damage_reduction(armor)
+    armored = armor > 0
+    armor_mult = (1.0 - enemy_armor_damage_reduction(armor)) if armored else 1.0
     health_damage = 0.0
-    for kind, amount in typed.items():
-        remaining = amount * fraction_for_health
+    for kind, amount in damage_by_type.items():
+        if amount <= 0:
+            continue
+        # max(0.0, modifier): a negative faction modifier cannot heal, and a
+        # missing entry means the neutral 1.0 multiplier.
+        modifier = 1.0 if modifiers is None else modifiers.get(kind, 1.0)
+        if modifier < 0.0:
+            modifier = 0.0
+        remaining = amount * modifier * fraction_for_health
         if remaining <= 0:
             continue
         bypass = armor_bypass or kind in {"TRUE", "CINEMATIC"}
         dealt = remaining * health_mult
-        if armor > 0 and not bypass:
+        if armored and not bypass:
             dealt = max(1.0, dealt * armor_mult)
         health_damage += dealt
     return RoutedDamage(absorbed, health_damage, broke)

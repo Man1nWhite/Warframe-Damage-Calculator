@@ -371,9 +371,14 @@ def simulate(build: OcucorBuild,
         tier = full + (1 if rng.random() < (cc - full) else 0)
         return crit_multiplier_for_tier(build.crit_multiplier, tier)
 
+    # ``random.choices`` rebuilds cumulative weights on every call; the
+    # candidate list and weights are fixed for the build, so they are built
+    # once per trial. The sampler and the drawn values are unchanged.
+    proc_types = list(build.proc_weights)
+    proc_weights = list(build.proc_weights.values())
+
     def roll(k: int) -> list[str]:
-        return rng.choices(list(build.proc_weights),
-                           weights=list(build.proc_weights.values()), k=k)
+        return rng.choices(proc_types, weights=proc_weights, k=k)
 
     faction_types = FACTION_MULTIPLIERS["Grineer"]
 
@@ -659,6 +664,8 @@ def simulate_room(arcane: str,
     last_hit: list[float | None] = [None] * n_enemies
     ticks = 0
     tendril_tick_sum = 0
+    proc_types = list(build.proc_weights)
+    proc_weights = list(build.proc_weights.values())
     faction_types = FACTION_MULTIPLIERS["Grineer"]
 
     def alive() -> list[int]:
@@ -732,9 +739,7 @@ def simulate_room(arcane: str,
         n_procs = guaranteed + (1 if rng.random()
                                 < merged_status - guaranteed else 0)
         heat = False
-        for ptype in rng.choices(list(build.proc_weights),
-                                 weights=list(build.proc_weights.values()),
-                                 k=n_procs):
+        for ptype in rng.choices(proc_types, weights=proc_weights, k=n_procs):
             if ptype == "HEAT":
                 heat = True  # Fatal applications also count for Flare.
             if killed_by_direct:

@@ -210,6 +210,44 @@ parameters, seed, counts, distributions, standard errors and timeout counts.
 Passing tests establishes internal consistency, not game accuracy. The model
 is independent of the invalidated `modules/jat_kittag_sim.py`.
 
+### Known reproducibility gap (found 2026-10-28, not yet repaired)
+
+The committed JSONL **does not reproduce** from the current tree: running the
+command above takes ~48 s and yields records that differ from the committed
+ones on 34 of 44 rows. The cause is identified and is not float noise:
+
+- the artifact was generated **before** the 12-bit base critical-damage
+  quantization landed (`Critical_Hit`; see `formula_audit.md`, 2026-10-28).
+  Jat Kittag's base multiplier is now the decoded `2.0004884` instead of `2.0`.
+  Build B (`focus_gas_cc_cd`) is the crit-damage build, so its means move in
+  the second decimal; build A's records move only in the third decimal or
+  beyond, which is why they do not show up in any table here;
+- verified by construction: with `crit.quantize_crit_multiplier` replaced by the
+  identity, the current model reproduces the committed artifact **exactly**
+  (mean slams, trigger means and every histogram bucket), so nothing else has
+  drifted;
+- the quantization is the wiki's rule and is correct, so the artifact — not the
+  code — is stale.
+
+Magnitude: at most **0.04 slams** (record `two_sequential_six_stack_passes` /
+Icebind / B: 6.77 → 6.72). Every median, p10 and p90 in the file is unchanged,
+and the means in the table above round to the same one decimal, so no conclusion
+in this document changes. Six cells of the sensitivity table move in the second
+decimal:
+
+| Sensitivity row | Icebind A / B: committed → current |
+| --- | --- |
+| One +6 pass, shared AoE pulses (main table) | 9.33 / **9.45 → 9.41** |
+| One +12 pass instead of +6 | 8.20 / **8.10 → 8.07** |
+| Two sequential +6 passes | 6.76 / **6.77 → 6.72** |
+| Per-proc AoE clocks | 8.99 / **8.99 → 8.98** |
+| Magnetic-break Electricity seeds Afflictions | 8.56 / **9.44 → 9.40** |
+| Literal Gas bonus on Afflictions stacks | 9.12 / **9.02 → 8.98** |
+
+Repairing it is one command plus those six cells, but it rewrites a committed
+research artifact, so it is left as an explicit decision rather than done
+silently. Until then, treat the JSONL's exact means as pre-quantization values.
+
 Sources: [Jat Kittag](https://wiki.warframe.com/w/Jat_Kittag),
 [Melee](https://wiki.warframe.com/w/Melee),
 [Melee Afflictions](https://wiki.warframe.com/w/Melee_Afflictions),

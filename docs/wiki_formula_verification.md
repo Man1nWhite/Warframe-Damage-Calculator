@@ -388,3 +388,49 @@ Two things came out of this pass:
    is behaviour-neutral by construction and was verified with
    `tools/bench_models.py`: the complete trial records hash identically before
    and after (see [`optimization_review.md`](optimization_review.md)).
+
+---
+
+## 7. Fourth pass, 2026-10-28 (late evening): the pages behind the hot loops
+
+This pass re-read the pages whose formulas sit inside the code paths an
+optimisation pass touches, so that "the numbers did not move" is not confused
+with "the numbers are right". Pages were fetched from `wiki.warframe.com` and
+the expressions below were compared term by term with the code.
+
+| Page (read this pass) | What was compared | Code | Verdict |
+| --- | --- | --- | --- |
+| `Armor` §Enemy Damage Reduction | `90% × √(Net Armor / 2700)` at ≤2,700, `Net Armor / (Net Armor + 300)` above, clamp to [200, 2700] on level scaling, minimum 1 damage per damage type | `enemy_scaling.enemy_armor_damage_reduction`, `calculator`, `damage_routing.route_enemy_hit` | match (the two branches agree at 2,700: `0.9` = `2700/3000`) |
+| `Damage/Calculation` §Armored Enemies | `DM = 1 − 0.9·√(AR/2700)`, `AR` = armor after all debuffs | `calculator._build_armor_modifiers`, `route_enemy_hit` | match |
+| `Damage/Calculation` §Quantization | `Scale = Modded Base / 32`, `Quantized(x) = sign(x)·⌊|x|·32 + 0.5⌋/32`, multipliers apply **after** quantization | `status_damage.wiki_quantized_damage`; `JatBuild.quantized_type_damage` now caches exactly this per-build value | match |
+| `Damage/Calculation` §Damage Over Time | `Unrounded Tick = (Σ Sᵢ + 1) × C × M`, accumulator shared by a tick group, `C = 0.5` (Heat/Electricity/Toxin/Gas) or `0.35` (Slash), DoT not re-quantized, binary32 intermediates | `status_damage.proc_tick_damage`, `proc_tick_damage(accumulator=…)` | match (binary64, as §4.9 records) |
+| `Damage/Calculation` §Average Shot / §Melee DPS | `Normal = Total × [1 + ⌊CC⌋(CDM−1)]`, `Critical = Total × [1 + ⌈CC⌉(CDM−1)]`, `Average = Total × (1 + CC(CDM−1))` | `crit.normal_shot`, `crit.critical_shot`, `crit.average_shot`, `crit.crit_tiers` | match |
+| `Critical_Hit` §Critical Chance / §Critical Damage | relative `Base × (1 + ΣRel)`, absolute `+ ΣAbs` applied afterwards | `crit.modded_crit_chance`, `crit.modded_crit_multiplier` | match (simulators roll `⌊CC⌋` + one fractional draw) |
+| `Damage_over_Time` §Status Effects | 6 s for Slash/Heat/Toxin/Electricity/Gas; 1 s delay for Slash/Heat/Toxin; Electricity/Gas have no delay and their final tick deals no damage; Blast is a 1.5 s fuse whose tick **does** damage, 10 stacks | `status_damage.STATUS_PROCS`, `total_ticks`, `damaging_ticks(last_tick_empty=True)`, `BLAST_*` | match |
+| `Damage_over_Time` §Calculating | `Total Ticks = ⌊Tick Rate × (Duration − Delay)⌋ + 1`, first tick at t = 0 for no-delay effects | `status_damage.total_ticks` | match |
+| `Damage/Heat_Damage` §Damage Over Time | `0.5 × Modded Base × (1 + Heat) × (1 + Faction) × (1 + Status Damage) × Additional`, faction applied twice | `status_damage.heat_tick` via `proc_tick_damage` | match, **except** the accumulator `+1` (see the conflict below) |
+| `Damage/Heat_Damage` §Armor Stripping | 15 / 30 / 40 / 50% every 0.5 s after the proc (2 s to cap, not accelerated by more procs), restore 50 / 40 / 30 / 15 / 0% every 1.5 s | `kuva_nukor_sim._heat_strip_fraction`, `DummyTarget.current_armor` | match |
+| `Damage/Heat_Damage` §Heat Inherit | one consolidated pulse per second; new procs refresh **all** stacks; the first proc's elemental/faction modifiers govern later stacks | `DummyTarget.add_heat` / `consume_heat_tick` / `next_heat_tick` | match within one weapon (§4.8: cross-source inherit not modelled) |
+| `Damage/Viral_Damage` §General | `Modded Damage × [2 + 0.25 × (stacks − 1)]`, cap 325% at 10 stacks, health only, applied to DoT ticks live at the tick | `damage_routing.status_vulnerability`, `route_enemy_hit` | match |
+| `Damage/Magnetic_Damage` §General | same `[2 + 0.25 × (stacks − 1)]` for Shields/Overguard; break deals `3%` of max defense per stack (max 30%) as Electricity over 6 s | `status_vulnerability`, `status_damage.magnetic_break_electric_tick` | match |
+| `Overguard` §Mechanics | neutral to every type except Void `+50%`; no armor mitigation; Magnetic amplifies it; break Electric seed as above | `damage_routing` (`VOID_OVERGUARD_MULTIPLIER`, faction type table skipped on the layer) | match |
+
+### One source conflict recorded (not a code change)
+
+`Damage/Calculation` states that a tick group's accumulator starts at **1**
+rather than 0 (`(Σ Sᵢ + 1) × C × M`, with Supra Vandal examples `(40+1)×0.5×1.6
+= 32.8`), while the per-type pages (`Damage/Heat_Damage` and siblings) write the
+same tick without the accumulator and their worked example,
+`0.5 × 344.5 × 2.47 × 1.9 = 808.3692`, only reproduces without it. The two
+statements cannot both hold. `status_damage.proc_tick_damage` keeps
+`accumulator=True` because `Damage/Calculation`'s DoT section is the dedicated
+derivation and every published number in `docs/` was produced with it;
+`accumulator=False` reproduces the per-type forms and both are pinned in
+`tests/test_status_damage.py`. The term is one damage point per tick group, so
+it is invisible at the scales the bundled builds reach, but it is a real
+ambiguity in the source, not a modelling choice this repository invented.
+
+Nothing else changed: every expression above already matched the code, so no
+pinned expectation moved. The optimisation work that motivated this re-read is
+recorded in [`optimization_review.md`](optimization_review.md) §7, including
+the digest that proves it left every trial record bit-identical.

@@ -130,6 +130,24 @@ class BuildStatTests(unittest.TestCase):
         status = build_jat_kittag("Riven MD+Status")
         self.assertAlmostEqual(status.status_per_slam, 1 + 1.337)
 
+    def test_quantized_direct_damage_matches_the_wiki_rule(self) -> None:
+        # The per-slam direct damage is quantized against the build's modded
+        # base (Damage/Calculation), and that pair is fixed for a build, so it
+        # is cached on the build. A replaced build must recompute it.
+        from dataclasses import replace
+
+        from modules.status_damage import wiki_quantized_damage
+
+        build = build_jat_kittag("Gas (Molten Impact)")
+        expected = {name: wiki_quantized_damage(value, build.modded_base)
+                    for name, value in build.type_damage.items()}
+        self.assertEqual(build.quantized_type_damage, expected)
+        self.assertEqual(set(build.quantized_type_damage), {"BLAST", "GAS"})
+        narrowed = replace(build, type_damage={"BLAST": SLAM_BASE})
+        self.assertEqual(
+            narrowed.quantized_type_damage,
+            {"BLAST": wiki_quantized_damage(SLAM_BASE, narrowed.modded_base)})
+
     def test_invalid_option_rejected(self) -> None:
         with self.assertRaises(ValueError):
             build_jat_kittag("Primed Fury")

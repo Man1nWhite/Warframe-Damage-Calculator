@@ -502,11 +502,17 @@ class DummyTarget:
         """Next consolidated Heat pulse, anchored to the first application."""
         if not self.heat_procs:
             return math.inf
+        procs = self.heat_procs
         if self._next_heat_tick is None:
             # Also support callers that pre-populate heat_procs directly.
-            first = min(p.start for p in self.heat_procs) + 1.0
+            first = min(p.start for p in procs) + 1.0
             self._next_heat_tick = first + max(0, math.ceil(-first))
-        expiry = max(p.refreshed for p in self.heat_procs) + duration
+        # Latest refresh wins: every application refreshes the whole group.
+        latest = procs[0].refreshed
+        for proc in procs:
+            if proc.refreshed > latest:
+                latest = proc.refreshed
+        expiry = latest + duration
         return self._next_heat_tick if self._next_heat_tick <= expiry else math.inf
 
     def consume_heat_tick(self, when: float, duration: float) -> list[HeatProc]:
@@ -518,13 +524,26 @@ class DummyTarget:
         return [p for p in self.heat_procs if when >= p.start + 1.0]
 
     def next_toxin_tick(self, duration: float) -> float:
-        """The next independent Toxin pulse, including one exactly at expiry."""
-        return min((p.next_tick for p in self.toxin_procs
-                    if p.next_tick <= p.start + duration), default=math.inf)
+        """The next independent Toxin pulse, including one exactly at expiry.
+
+        A hand-written loop keeps the ``<=`` expiry comparison (the last Toxin
+        tick is damaging) without a generator and ``min`` call per simulated
+        event, the same trade the Jat model's status scan makes.
+        """
+        best = math.inf
+        for proc in self.toxin_procs:
+            tick = proc.next_tick
+            if tick <= proc.start + duration and tick < best:
+                best = tick
+        return best
 
     def next_magnetic_electric_tick(self) -> float:
-        return min((p.next_tick for p in self.magnetic_break_procs
-                    if p.next_tick < p.end), default=math.inf)
+        best = math.inf
+        for proc in self.magnetic_break_procs:
+            tick = proc.next_tick
+            if tick < proc.end and tick < best:
+                best = tick
+        return best
 
     def process_magnetic_electric_until(
             self, when: float, heat_ramp_interval: float, *,
@@ -551,7 +570,11 @@ class DummyTarget:
 
     def current_armor(self, now: float, ramp_interval: float) -> float:
         if self.heat_procs:
-            start = min(proc.start for proc in self.heat_procs)
+            # The strip ramps from the first application of the group.
+            start = self.heat_procs[0].start
+            for proc in self.heat_procs:
+                if proc.start < start:
+                    start = proc.start
             strip = _heat_strip_fraction(now - start, ramp_interval)
         elif self._heat_ended_at is not None:
             # After expiry Heat restores armor at 1.5s intervals (scaled by
@@ -563,14 +586,31 @@ class DummyTarget:
         return float(self.max_armor) * (1.0 - strip)
 
     def prune(self, now: float, proc_duration: float) -> None:
+        """Drop expired Heat and Toxin procs.
+
+        Called once per simulated damage instance, so the common case -- every
+        stored proc is still live -- now only scans and leaves the list object
+        in place instead of allocating a copy of it.
+        """
         old_heat = self.heat_procs
-        self.heat_procs = [p for p in old_heat
-                           if now <= p.refreshed + proc_duration]
-        if old_heat and not self.heat_procs:
-            self._heat_ended_at = max(p.refreshed for p in old_heat) + proc_duration
-            self._next_heat_tick = None
-        self.toxin_procs = [p for p in self.toxin_procs
-                            if now <= p.start + proc_duration]
+        expired = False
+        for proc in old_heat:
+            if now > proc.refreshed + proc_duration:
+                expired = True
+                break
+        if expired:
+            self.heat_procs = [p for p in old_heat
+                               if now <= p.refreshed + proc_duration]
+            if not self.heat_procs:
+                self._heat_ended_at = (max(p.refreshed for p in old_heat)
+                                       + proc_duration)
+                self._next_heat_tick = None
+        toxin = self.toxin_procs
+        for toxin_proc in toxin:
+            if now > toxin_proc.start + proc_duration:
+                self.toxin_procs = [p for p in toxin
+                                    if now <= p.start + proc_duration]
+                break
 
     def absorb(self, amount: float | dict[str, float], when: float,
                heat_ramp_interval: float, *,
@@ -653,6 +693,11 @@ def simulate(build: NukorBuild,
     buckets = {"direct_og": 0.0, "dot_og": 0.0, "direct_hp": 0.0,
                "dot_hp": 0.0, "break": 0.0, "blast_hp": 0.0,
                "blast_og": 0.0}
+    # ``random.choices`` rebuilds cumulative weights on every call; the
+    # candidate list and weights are fixed for the build, so they are built
+    # once per trial. The sampler and the drawn values are unchanged.
+    proc_types = list(build.proc_weights)
+    proc_weights = list(build.proc_weights.values())
 
     def crit_factor() -> float:
         # Cold (Freeze) stacks raise Critical Damage for this target.
@@ -665,9 +710,7 @@ def simulate(build: NukorBuild,
         return crit_multiplier_for_tier(crit_multiplier, tier)
 
     def roll_proc_types(k: int) -> list[str]:
-        types = list(build.proc_weights)
-        weights = list(build.proc_weights.values())
-        return rng.choices(types, weights=weights, k=k)
+        return rng.choices(proc_types, weights=proc_weights, k=k)
 
     faction_types = FACTION_MULTIPLIERS["Grineer"]
     magnetic_source = MagneticSource(
@@ -938,6 +981,8 @@ def simulate_room(build: NukorBuild,
     totals = {"direct": 0.0, "dot": 0.0, "radial": 0.0}
     kill_times: list[tuple[int, float]] = []
     log: list[str] = []
+    proc_types = list(build.proc_weights)
+    proc_weights = list(build.proc_weights.values())
 
     faction_types = FACTION_MULTIPLIERS["Grineer"]
     magnetic_source = MagneticSource(
@@ -1000,8 +1045,7 @@ def simulate_room(build: NukorBuild,
         return full + (1 if rng.random() < (cc - full) else 0)
 
     def roll_proc_types(k: int) -> list[str]:
-        return rng.choices(list(build.proc_weights),
-                           weights=list(build.proc_weights.values()), k=k)
+        return rng.choices(proc_types, weights=proc_weights, k=k)
 
     def rolled_proc_types(beams: int) -> list[str]:
         """One status roll for a merged beam instance."""

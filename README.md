@@ -28,7 +28,7 @@ itself needs network access:
 - **A behaviour-neutral optimisation gate.** The simulators are the slowest
   part of the tree, and every published figure is seeded model output.
   `tools/bench_models.py --snapshot` / `--check` hashes the complete trial
-  records of three models, so a speed change can be shown to leave results
+  records of all five simulators, so a speed change can be shown to leave results
   bit-identical; [`docs/optimization_review.md`](docs/optimization_review.md)
   records the timings and the opportunities that were deliberately left.
 - **Exact numbers under test.** The suite pins worked examples and regressions

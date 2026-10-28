@@ -12,6 +12,38 @@ and filter-refresh measurements — is in git history at
 - HEAD at handoff: `470e9dd` (pushed)
 - Base of this branch's work: `30b5a9f` (merge of PR #2)
 
+## 2026-10-28 late-evening pass (branch `arena/923b33f6-warframe-damage-calculator`)
+
+- Formula re-check with the wiki open while optimising: `Armor`,
+  `Damage/Calculation` (quantization, armored DM, the DoT accumulator, average
+  shot), `Damage_over_Time`, `Critical_Hit`, `Damage/Heat_Damage` (tick, strip
+  ramp, inherit), `Damage/Viral_Damage`, `Damage/Magnetic_Damage` and
+  `Overguard` were fetched again and compared term by term. No drift; one
+  unresolved *source conflict* is now recorded in
+  `wiki_formula_verification.md` §7 (the `+1` DoT accumulator is on
+  `Damage/Calculation` and absent from the per-type pages' own example).
+- Optimisation, second pass: §7 of `docs/optimization_review.md`. Jat slam
+  6.76 → 5.39 ms/trial (−20%), Ocucor 2.98 → 2.33 (−22%), Kuva Nukor
+  0.93 → 0.77 (−19%), Akarius 0.81 → 0.72, Alternox 1.25 → 1.11, digest
+  `sha256 476ec4f75e018a89…` identical before and after.
+- `tools/bench_models.py` now hashes **six** models: the five simulators plus
+  `jat_kittag_slam_counts`, which generates
+  `docs/jat_kittag_expected_slams_results.jsonl` and had no equivalence check
+  before.
+- Correction to an earlier estimate: that 170,000-trial sweep runs the scalar
+  slam-count model, not `jat_kittag_sim`, and the whole suite measures
+  ≈ 55–60 s of single-core CPU — not the "~36 min" quoted in
+  `optimization_review.md` §2 (see §7.4).
+- New finding, **open**: `docs/jat_kittag_expected_slams_results.jsonl` no
+  longer reproduces (34/44 rows, ≤ 0.04 slams, no median/percentile change)
+  because it predates the critical-damage quantization. Confirmed by disabling
+  `crit.quantize_crit_multiplier` and reproducing the artifact exactly. The
+  write-up, the six affected sensitivity cells and the one-command repair are in
+  the "Known reproducibility gap" section of
+  `docs/jat_kittag_expected_slams.md`. Decide whether to regenerate.
+- Gates on this pass: `ruff check .` clean, `mypy` clean (35 files),
+  627 tests OK (one GUI skip), digest `--check` exit 0.
+
 ## 2026-10-28 evening pass (branch `arena/e06d059d-warframe-damage-calculator`)
 
 - Formula re-check: the core pages were fetched live again and compared
