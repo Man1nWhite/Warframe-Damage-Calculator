@@ -59,7 +59,7 @@ class ModAggregator:
     """
 
     def aggregate(self, equipped_mods: Iterable[EquippedMod], faction: str) -> dict[str, float]:
-        totals = defaultdict(float)
+        totals: defaultdict[str, float] = defaultdict(float)
         # Uncombined base element groups, keyed by element in first-occurrence order.
         pending: OrderedDict[str, float] = OrderedDict()
         # Base element -> secondary element code it was combined into.

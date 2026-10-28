@@ -362,11 +362,11 @@ class GasProc:
     start: float
     seed: float
     crit_factor: float
-    next_tick: float | None = None
+    # Always set: Gas ticks on the application tick, Toxin one second later.
+    next_tick: float = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.next_tick is None:
-            self.next_tick = self.start
+        self.next_tick = self.start
 
 
 class JatTarget(DummyTarget):
@@ -378,6 +378,9 @@ class JatTarget(DummyTarget):
         self.corrosive_expiries: list[float] = []
         self.lifted = False
         self.affliction_triggers = 0
+        # Set by the room simulator so a chained Vulcan blast kills each
+        # target once; single-target trials never look at it.
+        self._dead = False
 
     def corrosive_stacks(self, now: float) -> int:
         self.corrosive_expiries = [t for t in self.corrosive_expiries
@@ -416,17 +419,18 @@ def _process_status_ticks(target: JatTarget, build: JatBuild, when: float,
            if p.next_tick == when and p.next_tick < p.start + PROC_DURATION]
     if gas:
         seeds = sum(p.seed * p.crit_factor for p in gas)
-        for proc in gas:
-            proc.next_tick += 1.0
+        for gas_proc in gas:
+            gas_proc.next_tick += 1.0
         route({"GAS": gas_tick(seeds,
               status_damage_bonus=build.status_damage_bonus,
               faction_bonus=build.faction_bracket - 1.0)}, when)
-    for proc in target.toxin_procs:
+    for toxin_proc in target.toxin_procs:
         if target.health <= 0:
             break
-        if proc.next_tick == when and proc.next_tick <= proc.start + PROC_DURATION:
-            proc.next_tick += 1.0
-            route({"TOXIN": toxin_tick(proc.seed * proc.crit_factor,
+        if (toxin_proc.next_tick == when
+                and toxin_proc.next_tick <= toxin_proc.start + PROC_DURATION):
+            toxin_proc.next_tick += 1.0
+            route({"TOXIN": toxin_tick(toxin_proc.seed * toxin_proc.crit_factor,
                   elemental_bonus=build.toxin_elemental_bonus,
                   status_damage_bonus=build.status_damage_bonus,
                   faction_bonus=build.faction_bracket - 1.0)}, when)
@@ -605,7 +609,9 @@ def simulate(build: JatBuild,
         if combo_recovery:
             tier_mult = float(combo_tier(points))
         else:
-            tier_mult = float(combo_multiplier)
+            # Without recovery the tier comes from the caller; None only means
+            # "unused" when the simulated combo counter drives it instead.
+            tier_mult = float(combo_multiplier if combo_multiplier is not None else 1.0)
         tier_log.append(int(tier_mult))
         cf = _crit_factor(rng, build.crit_chance, build.crit_multiplier)
         direct = {name: wiki_quantized_damage(single, build.modded_base)
@@ -627,13 +633,13 @@ def simulate(build: JatBuild,
             # Heavy-attack proc seeds inherit combo, as in the wiki's melee
             # status example. The 3x heavy-slam multiplier is already in
             # modded_base; faction enters here and again on each tick.
-            seed = build.modded_base * build.faction_bracket * tier_mult
+            proc_seed = build.modded_base * build.faction_bracket * tier_mult
             if ptype == "GAS":
-                target.gas_procs.append(GasProc(now, seed, cf))
+                target.gas_procs.append(GasProc(now, proc_seed, cf))
                 target.gas_procs = target.gas_procs[-GAS_CAP:]
                 counts["GAS"] += 1
             elif ptype == "TOXIN":
-                target.toxin_procs.append(ToxinProc(now, seed, cf))
+                target.toxin_procs.append(ToxinProc(now, proc_seed, cf))
                 counts["TOXIN"] += 1
             elif ptype == "CORR":
                 target.corrosive_expiries.append(now + CORROSIVE_DURATION)
@@ -813,8 +819,7 @@ def simulate_room(option: str,
         # death then chains another explosion in the same pass.
         nonlocal vulcan
         while True:
-            pending = [t for t in targets
-                       if t.health <= 0 and not getattr(t, "_dead", False)]
+            pending = [t for t in targets if t.health <= 0 and not t._dead]
             if not pending:
                 return
             for t in pending:
@@ -855,7 +860,7 @@ def simulate_room(option: str,
             now = death_time
             break
 
-        kills = sum(1 for t in targets if getattr(t, "_dead", False))
+        kills = sum(1 for t in targets if t._dead)
         steel_stacks = max(galv_stacks, min(4, kills))
         elem_stacks = max(galv_stacks, min(4, kills))
         cm = build.crit_multiplier * (1.0 + GALV_STEEL_KILL_CD * steel_stacks)

@@ -12,6 +12,7 @@ import json
 import math
 import statistics
 from dataclasses import dataclass
+from typing import Any, TypedDict
 from unittest.mock import patch
 
 import modules.kuva_nukor_sim as nukor
@@ -130,6 +131,14 @@ def _paired(old, new, *, room: bool) -> dict | None:
             "equal_pct": 100 * sum(b == a for a, b in pairs) / len(pairs)}
 
 
+class _StartSettings(TypedDict):
+    """Start-of-shot settings shared by the single-target and room models."""
+
+    starting_tendrils: int
+    starting_flare_stacks: int
+    heat_seed_mode: str
+
+
 def compare(name: str, *, eximus: bool, arcane: str, initial_flare: int,
             tendrils: int, trials: int, seed: int, room: bool = False,
             n_enemies: int = 10, specs: tuple[RivenSpec, ...] = ALL_SPECS,
@@ -143,13 +152,17 @@ def compare(name: str, *, eximus: bool, arcane: str, initial_flare: int,
     def factory():
         return target_factory(eximus, shared_heat_clock=shared_heat_clock,
                               preprimed_viral_stacks=preprimed_viral_stacks)
-    outcomes = {}
+    # Room runs yield RoomResult, single-target runs OcucorTrial; both carry
+    # the timing attribute that _summarize and _paired read.
+    outcomes: dict[str, list[Any]] = {}
     with patch.object(nukor, "route_enemy_hit", discard_overguard_overflow):
         for spec in specs:
             build = spec.build(arcane)
-            kwargs = dict(starting_tendrils=tendrils,
-                          starting_flare_stacks=initial_flare,
-                          heat_seed_mode=heat_seed_mode)
+            kwargs: _StartSettings = {
+                "starting_tendrils": tendrils,
+                "starting_flare_stacks": initial_flare,
+                "heat_seed_mode": heat_seed_mode,
+            }
             if room:
                 outcomes[spec.label] = [
                     simulate_room(arcane, "Multishot", n_enemies, seed=seed + i,

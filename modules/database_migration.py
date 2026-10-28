@@ -59,6 +59,19 @@ def _backup_database(connection: sqlite3.Connection, db_path: Path,
         raise DatabaseMigrationError(str(exc)) from exc
 
 
+def _effect_rank(row: dict[str, object]) -> int:
+    """The rank of a parsed effect row, validated rather than coerced.
+
+    Payload rows are heterogeneous dictionaries, so the column type is only
+    known by convention; a wrong value should fail loudly here instead of
+    silently importing a mis-ranked effect.
+    """
+    rank = row["rank"]
+    if isinstance(rank, bool) or not isinstance(rank, int):
+        raise TypeError(f"effect rank must be an int, not {type(rank).__name__}")
+    return rank
+
+
 def _validate_legacy_coverage(connection: sqlite3.Connection, payload: ImportPayload,
                               *, include_weapons: bool = True) -> None:
     # An old or partial export must not mark official-looking rows as fixed
@@ -77,7 +90,7 @@ def _validate_legacy_coverage(connection: sqlite3.Connection, payload: ImportPay
     missing_mods = [str(name) for unique, name in connection.execute(
         "SELECT unique_name, name FROM mods")
         if str(unique or "").startswith("/Lotus/") and str(unique) not in mod_ids]
-    parsed_texts = {(str(row["unique_name"]), int(row["rank"]), str(row["effect_text"]))
+    parsed_texts = {(str(row["unique_name"]), _effect_rank(row), str(row["effect_text"]))
                     for row in payload.effects}
     # An effect can legitimately disappear when the new parser rejects an
     # old false positive (e.g. "Blast Range"). Check every removed fragment,

@@ -371,6 +371,21 @@ pip install -r requirements-dev.txt
 python -m ruff check .
 ```
 
+### Type checking
+
+`mypy.ini` type-checks `modules/` (every formula, the mod engine, the importer
+and the migration pipeline) with `--check-untyped-defs`, so the body of a
+function is checked even where its signature is still unannotated. This is
+deliberately a partial gate: it catches recorded mistakes such as a float
+written into an integer counter, an `Optional` used without a guard, or a loop
+variable reused for a different record type, without demanding a full
+annotation campaign. `gui/`, `tests/` and `tools/` are out of scope; CI runs the
+same command, so a local run is authoritative:
+
+```bash
+python -m mypy
+```
+
 ### GUI test prerequisites
 
 The Qt integration tests exercise real widgets, ordered mod selection,

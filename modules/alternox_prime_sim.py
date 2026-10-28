@@ -473,11 +473,11 @@ class ElectricProc:
     start: float
     seed: float
     crit_factor: float
-    next_tick: float | None = None
+    # Always set: the first Electricity tick lands on the application tick.
+    next_tick: float = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.next_tick is None:
-            self.next_tick = self.start
+        self.next_tick = self.start
 
 
 class AlternoxTarget(DummyTarget):
@@ -592,14 +592,14 @@ def simulate(
                     status_damage_bonus=elementalist)
                 route({"ELEC": tick}, event)
             else:
-                due = [p for p in target.blast_stacks if p.fuse_end <= event]
-                for proc in due:
-                    target.blast_stacks.remove(proc)
+                expiring = [p for p in target.blast_stacks if p.fuse_end <= event]
+                for stack in expiring:
+                    target.blast_stacks.remove(stack)
                     detonations += 1
                     # Damage/Calculation: an expiring stack deals max(1, 0.3 x H).
                     amount = blast_stack_damage(
-                        proc.seed, BLAST_SINGLE_COEF,
-                        crit_factor=proc.crit_factor,
+                        stack.seed, BLAST_SINGLE_COEF,
+                        crit_factor=stack.crit_factor,
                         status_damage_bonus=sd_mult - 1.0)
                     route({"BLAST": amount}, event)
                     if target.health <= 0:

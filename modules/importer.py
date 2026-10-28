@@ -5,12 +5,12 @@ import math
 import sqlite3
 import stat
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import closing
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TypeVar
+from typing import NamedTuple, TypeVar, cast
 
 import openpyxl
 
@@ -161,35 +161,45 @@ def replace_mod_rows(connection: sqlite3.Connection, mod_rows: list[dict[str, ob
     )
 
 
-def _empty_damage_row() -> dict[str, float]:
+def _empty_damage_row() -> dict[str, float | str]:
+    """A weapon row with every damage type zeroed.
+
+    Rows mix numbers and text (``weapon``, ``unique_name``), so the value type
+    is the honest ``float | str`` even though this helper only seeds floats.
+    """
     return {damage_type.lower(): 0.0 for damage_type in DAMAGE_TYPES}
 
 
-_ParsedT = TypeVar("_ParsedT")
+_CachedT = TypeVar("_CachedT")
 
 
 def _cached_source_parse(path: str | Path,
-                         reader: Callable[[Path], _ParsedT],
-                         cache: Callable[..., _ParsedT]) -> _ParsedT:
+                         reader: Callable[[Path], object],
+                         cache: Callable[..., _CachedT]) -> _CachedT:
     """Parse a source file once per (resolved path, mtime_ns, size).
 
-    Callers re-parse the same bundled exports every time they rebuild or
-    migrate a database; this keeps that to one parse per unchanged file. A
-    missing file is handed straight to ``reader`` so the reader raises its own
-    error rather than this helper inventing one.
+    ``reader`` produces the fresh parse and ``cache`` is the memoized wrapper
+    around it, which flattens the result into hashable tuples. Callers re-parse
+    the same bundled exports every time they rebuild or migrate a database;
+    this keeps that to one parse per unchanged file. A missing file is handed
+    straight to ``reader`` so the reader raises its own error rather than this
+    helper inventing one.
     """
     resolved = Path(path).resolve()
     try:
         stat_result = resolved.stat()
     except OSError:
-        return reader(resolved)
+        # Nothing to memoize; let the reader raise its own (more specific)
+        # error for the missing file. The cast only satisfies the unflattened
+        # return type, which no caller ever sees on this path.
+        return cast(_CachedT, reader(resolved))
     return cache(str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
 
 
 @lru_cache(maxsize=4)
 def _spreadsheet_rows_cached(
     path: str, mtime_ns: int, size: int,
-) -> tuple[tuple[tuple[str, object], ...], ...]:
+) -> tuple[tuple[tuple[str, float | str], ...], ...]:
     """Parse the workbook once per (path, mtime, size); values are hashable."""
     rows = _read_spreadsheet(Path(path))
     return tuple(tuple(row.items()) for row in rows)
@@ -244,7 +254,7 @@ def _read_spreadsheet(xlsx_path: Path) -> list[dict[str, float | str]]:
 @lru_cache(maxsize=4)
 def _weapons_cached(
     path: str, mtime_ns: int, size: int,
-) -> tuple[tuple[tuple[str, object], ...], ...]:
+) -> tuple[tuple[tuple[str, float | str], ...], ...]:
     """Memoized parse of the weapon export; see ``rows_from_cleaned_json``."""
     return tuple(tuple(row.items()) for row in _read_weapons(Path(path)))
 
@@ -257,7 +267,7 @@ def rows_from_cleaned_json(zip_path: str | Path) -> list[dict[str, float | str]]
     call still returns independent dicts.
     """
     cached = _cached_source_parse(zip_path, _read_weapons, _weapons_cached)
-    return [dict(items) for items in cached]  # type: ignore[arg-type]
+    return [dict(items) for items in cached]
 
 
 def _read_weapons(zip_path: Path) -> list[dict[str, float | str]]:
@@ -304,13 +314,19 @@ def _read_weapons(zip_path: Path) -> list[dict[str, float | str]]:
     return order_export_weapons(output)
 
 
+class _CachedMods(NamedTuple):
+    """Hashable form of a parsed upgrade export; see ``_mods_cached``."""
+
+    mods: tuple[tuple[tuple[str, object], ...], ...]
+    effects: tuple[tuple[tuple[str, object], ...], ...]
+    stats: tuple[tuple[tuple[str, int], tuple[str, ...]], ...]
+
+
 @lru_cache(maxsize=4)
-def _mods_cached(
-    path: str, mtime_ns: int, size: int,
-) -> tuple[tuple[tuple[str, object], ...], ...]:
+def _mods_cached(path: str, mtime_ns: int, size: int) -> _CachedMods:
     """Memoized parse of the upgrade export; see ``mods_from_cleaned_json``."""
     mods, effects, stats = _read_mods(Path(path))
-    return (
+    return _CachedMods(
         tuple(tuple(row.items()) for row in mods),
         tuple(tuple(row.items()) for row in effects),
         tuple(stats.items()),
@@ -330,11 +346,10 @@ def mods_from_cleaned_json(
     ``rows_from_spreadsheet``; callers still receive fresh dicts and their own
     ``source_stats`` copy.
     """
-    cached_mods, cached_effects, cached_stats = _cached_source_parse(
-        zip_path, _read_mods, _mods_cached)
-    mods = [dict(items) for items in cached_mods]
-    effects = [dict(items) for items in cached_effects]
-    stats = dict(cached_stats)
+    cached = _cached_source_parse(zip_path, _read_mods, _mods_cached)
+    mods: list[dict[str, object]] = [dict(items) for items in cached.mods]
+    effects: list[dict[str, object]] = [dict(items) for items in cached.effects]
+    stats = dict(cached.stats)
     if source_stats is not None:
         source_stats.update(stats)
     return mods, effects
@@ -450,6 +465,14 @@ class ImportPayload:
     source_mod_stats: dict[tuple[str, int], tuple[str, ...]] = field(default_factory=dict)
 
 
+def _reject_non_finite(rows: Iterable[Mapping[str, object]]) -> None:
+    """Refuse NaN/inf values before they reach the database."""
+    for row in rows:
+        if any(isinstance(value, (int, float)) and not math.isfinite(value)
+               for value in row.values()):
+            raise ValueError("Export data contains a non-finite number.")
+
+
 def load_import_payload(
     cleaned_weapons_zip_path: str | Path,
     cleaned_upgrades_zip_path: str | Path,
@@ -465,10 +488,8 @@ def load_import_payload(
     mods, effects = mods_from_cleaned_json(cleaned_upgrades_zip_path, source_stats=source_mod_stats)
     if not weapons or not mods or not effects:
         raise ValueError("Export data is incomplete: weapons, mods and parsed mod effects are required.")
-    for row in (*spreadsheet, *weapons, *mods, *effects):
-        if any(isinstance(value, (int, float)) and not math.isfinite(value)
-               for value in row.values()):
-            raise ValueError("Export data contains a non-finite number.")
+    for parsed_rows in (spreadsheet, weapons, mods, effects):
+        _reject_non_finite(parsed_rows)
     return ImportPayload(spreadsheet, weapons, mods, effects, source_mod_stats)
 
 

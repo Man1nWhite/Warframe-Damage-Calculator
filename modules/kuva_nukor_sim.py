@@ -298,11 +298,11 @@ class ToxinProc:
     start: float
     seed: float
     crit_factor: float
-    next_tick: float | None = None
+    # Always set: Toxin ticks from one second after application.
+    next_tick: float = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.next_tick is None:
-            self.next_tick = self.start + 1.0
+        self.next_tick = self.start + 1.0
 
 
 @dataclass
@@ -599,7 +599,7 @@ def simulate(build: NukorBuild,
     rng = random.Random(seed)
     dt = build.tick_interval
     cc = build.afcc_pct / 100.0
-    ammo = MAGAZINE
+    ammo = float(MAGAZINE)  # each beam tick spends half a round
     now = 0.0
     beam_time = 0.0
     reloads = 0
@@ -879,7 +879,7 @@ def simulate_room(build: NukorBuild,
     dt = build.tick_interval
     cc = build.afcc_pct / 100.0
     targets = [factory() for _ in range(n_enemies)]
-    ammo = MAGAZINE
+    ammo = float(MAGAZINE)  # each beam tick spends half a round
     now = 0.0
     beam_time = 0.0
     reloads = 0

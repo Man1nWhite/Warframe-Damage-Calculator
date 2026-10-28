@@ -11,8 +11,9 @@ import argparse
 import json
 import math
 import statistics
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
+from typing import Any
 from unittest.mock import patch
 
 import modules.kuva_nukor_sim as nukor
@@ -138,14 +139,16 @@ def compare(name, target_factory, trials, seed, *, direct_hits=True,
     build_transform = build_transform or (lambda b: b)
     # Module globals are patched only within this serial sensitivity run.
     if neutral_og:
-        og_patch = patch.object(nukor, "route_enemy_hit", neutral_overguard_route)
+        og_patch: AbstractContextManager[Any] = patch.object(
+            nukor, "route_enemy_hit", neutral_overguard_route)
     elif discard_og_overflow:
         og_patch = patch.object(nukor, "route_enemy_hit", discard_overguard_overflow_route)
     else:
         og_patch = nullcontext()
     if blast_cap is not None:
         import modules.akarius_sim as akarius
-        cap_patch = patch.object(akarius, "BLAST_MAX_STACKS", blast_cap)
+        cap_patch: AbstractContextManager[Any] = patch.object(
+            akarius, "BLAST_MAX_STACKS", blast_cap)
     else:
         cap_patch = nullcontext()
     results = {}

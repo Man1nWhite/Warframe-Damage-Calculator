@@ -342,7 +342,7 @@ def _stat_entry(
 ) -> dict:
     tag = entry["tag"]
     name, unit, wdc_code = TAG_METADATA.get(tag, (tag, stat_unit(tag), None))
-    buffs = {}
+    buffs: dict[str, dict | None] = {}
     for layout_key, num_buffs, num_curses in BUFF_LAYOUTS:
         if tag in _NEGATIVE_ONLY_TAGS:
             buffs[layout_key] = None
@@ -351,7 +351,7 @@ def _stat_entry(
                 riven_type, tag, disposition, rank, num_buffs, num_curses, tables=tables
             )
             buffs[layout_key] = {"raw": raw, "display": display_value(tag, raw)}
-    curses = {}
+    curses: dict[str, dict | None] = {}
     for layout_key, num_buffs, num_curses in CURSE_LAYOUTS:
         if tag in _POSITIVE_ONLY_TAGS:
             curses[layout_key] = None
