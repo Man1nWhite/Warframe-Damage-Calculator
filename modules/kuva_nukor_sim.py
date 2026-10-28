@@ -909,6 +909,8 @@ class RoomResult:
     beam_ticks: int
     reloads: int
     radial_events: int
+    # Subset of radial_events triggered by a death rather than by the stack cap.
+    death_detonations: int
     radial_damage_total: float
     direct_damage_total: float
     dot_damage_total: float
@@ -933,6 +935,7 @@ def simulate_room(build: NukorBuild,
     reloads = 0
     beam_ticks = 0
     radial_events = 0
+    death_detonations = 0
     totals = {"direct": 0.0, "dot": 0.0, "radial": 0.0}
     kill_times: list[tuple[int, float]] = []
     log: list[str] = []
@@ -978,7 +981,7 @@ def simulate_room(build: NukorBuild,
                     radial(i, when, on_death=True)
 
     def radial(source_idx: int, when: float, *, on_death: bool = False) -> None:
-        nonlocal radial_events
+        nonlocal radial_events, death_detonations
         source = targets[source_idx]
         amount = source.blast_radial_damage(PISTOL_ELEMENTALIST_SD)
         source.blast_stacks.clear()
@@ -986,6 +989,8 @@ def simulate_room(build: NukorBuild,
         if amount <= 0:
             return
         radial_events += 1
+        if on_death:
+            death_detonations += 1
         for j, t in enumerate(targets):
             if j == source_idx or t.health <= 0:
                 continue
@@ -999,15 +1004,33 @@ def simulate_room(build: NukorBuild,
         return rng.choices(list(build.proc_weights),
                            weights=list(build.proc_weights.values()), k=k)
 
+    def rolled_proc_types(beams: int) -> list[str]:
+        """One status roll for a merged beam instance."""
+        merged_status = build.status_per_beam * beams
+        guaranteed = int(math.floor(merged_status))
+        n_procs = guaranteed + (1 if rng.random() < merged_status - guaranteed else 0)
+        return roll_proc_types(n_procs)
+
+    def record_killing_blow_blast(idx: int, when: float, cf: float,
+                                  beams: int, seed_value: float) -> None:
+        """Keep a Blast proc from a fatal hit so the death still explodes.
+
+        Damage/Blast_Damage: a killing blow that inflicts at least one Blast
+        proc activates the full explosion even though the target had no stacks
+        before it. Nothing else from the fatal hit is tracked, and the single
+        target settlement is skipped because the target is already dead.
+        """
+        if "BLAST" not in rolled_proc_types(beams):
+            return
+        t = targets[idx]
+        t.blast_stacks.append(
+            BlastProc(when, when + build.blast_fuse, seed_value, cf))
+
     def apply_procs(idx: int, when: float, cf: float,
                     beams: int, seed_value: float) -> None:
         t = targets[idx]
         t.record_status("MICROWAVE", when, math.inf)
-        merged_status = build.status_per_beam * beams
-        guaranteed = int(math.floor(merged_status))
-        n_procs = guaranteed + (1 if rng.random()
-                                < merged_status - guaranteed else 0)
-        for ptype in roll_proc_types(n_procs):
+        for ptype in rolled_proc_types(beams):
             duration = (build.blast_fuse if ptype == "BLAST" else
                         (12.0 * build.status_duration_mult if ptype == "RAD" else build.proc_duration))
             t.record_status(ptype, when, duration)
@@ -1145,6 +1168,9 @@ def simulate_room(build: NukorBuild,
             absorb_target(t, damage, now, "direct")
             if t.health > 0:
                 apply_procs(idx, now, cf, beams, seed_value * mult)
+            else:
+                record_killing_blow_blast(
+                    idx, now, cf, beams, seed_value * mult)
         record_deaths(now)
 
         ammo -= AMMO_PER_TICK
@@ -1169,6 +1195,7 @@ def simulate_room(build: NukorBuild,
         beam_ticks=beam_ticks,
         reloads=reloads,
         radial_events=radial_events,
+        death_detonations=death_detonations,
         radial_damage_total=totals["radial"],
         direct_damage_total=totals["direct"],
         dot_damage_total=totals["dot"],

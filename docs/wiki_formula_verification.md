@@ -99,6 +99,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
 | Blast is a 1.5 s fuse, 30% single-target, 300% per stack radial at 10 stacks/death, target excluded from the radial | Damage/Blast_Damage | `kuva_nukor_sim` (`BLAST_*`), `alternox_prime_sim` | match |
 | Blast detonations are "Status Damage" (Elementalist applies) | Status_Effect | sims pass `status_damage_bonus` | match |
 | Bosses and some Eximus detonate Blast at 4 stacks, everyone else at 10 | Damage/Blast_Damage | `status_damage.BLAST_MAX_STACKS_BOSS`, `DummyTarget.blast_cap_reached` | match (opt-in per target: `boss=True`) |
+| A dying target detonates every Blast stack, and a killing blow that inflicts at least one Blast proc still explodes | Damage/Blast_Damage | `kuva_nukor_sim.simulate_room` (`record_deaths`, `record_killing_blow_blast`) | match (room model; the single-target models have no other target to hit) |
 | A Blast stack that expires on its own (1.5 s) deals `max(1, 0.3 × H)`; detonation at the cap settles every stack instead | Damage/Calculation, Damage/Blast_Damage | `detonate_expired_blasts` in the three Blast simulators | fixed this pass (floor added) |
 | Gas cloud 3 m, +0.3 m per stack to 6 m at 10 stacks, 10-instance cap | Damage/Gas_Damage | constants only (`GAS_MAX_STACKS`) | partly implemented (radius growth is not simulated) |
 | Heat consolidates stacks into one pulse, refreshes all durations, strip does not accelerate | Damage/Heat_Damage | `DummyTarget.add_heat`, `consume_heat_tick` | match |
@@ -270,8 +271,10 @@ a place where "follow the wiki" is not a single instruction.
    (`BLAST_MAX_STACKS_BOSS`); every simulator asks the target for its cap. The
    wiki says *some* Eximus share the boss rule and does not say which, so the
    bundled reference targets stay at ten and the Akarius sensitivity runs the
-   four-stack variant explicitly. A Blast proc present when a target dies
-   still does not detonate.
+   four-stack variant explicitly. A death detonates that target's Blast stacks,
+   including a stack whose proc came from the killing blow itself; the radial
+   damages the other targets, since Damage/Blast_Damage excludes the proc
+   target from its own explosion.
 6. **Cold critical damage (modelled).** `DummyTarget.crit_damage_multiplier`
    adds `crit.cold_crit_damage_bonus` to the build's Critical Damage before the
    tier, and every simulator builds its crit factor from it. No bundled build

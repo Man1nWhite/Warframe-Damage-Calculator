@@ -195,6 +195,21 @@ class RoomClearTests(unittest.TestCase):
             self.assertEqual(r.radial_damage_total, 0.0)
             self.assertEqual(len(r.kill_times), 10)
 
+    def test_deaths_detonate_their_blast_stacks(self) -> None:
+        # Damage/Blast_Damage: ten stacks OR the target dying detonates every
+        # stack, and a killing blow that inflicts at least one Blast proc still
+        # explodes even when the target had none before it.
+        r = simulate_room(build_nukor("Frostbite"), 10, seed=7000)
+        self.assertGreater(r.death_detonations, 0)
+        self.assertLessEqual(r.death_detonations, r.radial_events)
+        self.assertEqual(len(r.kill_times), 10)
+
+    def test_builds_without_blast_procs_never_detonate(self) -> None:
+        for name in ("Scorch", "Hornet Strike"):
+            r = simulate_room(build_nukor(name), 10, seed=7000)
+            self.assertEqual(r.death_detonations, 0)
+            self.assertEqual(r.radial_events, 0)
+
     def test_room_is_reproducible_with_same_seed(self) -> None:
         build = build_nukor("Frostbite")
         first = simulate_room(build, 3, seed=9000)

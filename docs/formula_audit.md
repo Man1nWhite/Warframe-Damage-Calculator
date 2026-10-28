@@ -288,8 +288,10 @@ provenance. Do not assume arbitrary named Rivens are detected.
    quantized, and Cold's Freeze bonus is applied from the target's stacks). Beam ramp recovery/reloads are
    approximate; the Nukor model applies ramp to direct hits but not status
    seeds, whose ramp interaction is not established here. The Nukor room
-   simulation also skips procs on fatal direct hits, including Blast's
-   death-triggered radius, so it cannot support crowd-clear rankings.
+   simulation rolls status on a fatal direct hit only to apply the Blast
+   rule (a killing blow that procs Blast still detonates, and a death settles
+   the stacks the target already had); every other proc from a fatal hit is
+   discarded, and its room results still cannot support crowd-clear rankings.
 5. **Jat Kittag:** Melee Afflictions' immediate damage and full cross-status,
    faction and status-damage re-seeding are omitted; Blast procs, Gas damage
    to nearby room targets, exact Lifted timing, and Seismic Wave's effect on
