@@ -83,7 +83,7 @@ from pathlib import Path
 from modules import status_damage
 from modules.condition_overload import apply_co, resolve_co_behavior
 from modules.constants import FACTION_MULTIPLIERS
-from modules.crit import quantize_crit_multiplier
+from modules.crit import crit_multiplier_for_tier, quantize_crit_multiplier
 
 # Preserve the old simulator-level import for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
@@ -523,10 +523,21 @@ def _pellet_count(rng: random.Random, multishot: float) -> int:
     return whole + (1 if rng.random() < (multishot - whole) else 0)
 
 
-def _crit_factor(rng: random.Random, build: AlternoxBuild) -> float:
-    if rng.random() < min(build.crit_chance, 1.0):
-        return build.crit_multiplier
-    return 1.0
+def _crit_factor(rng: random.Random, build: AlternoxBuild,
+                 target: DummyTarget, when: float) -> float:
+    """Critical-damage factor for one pellet.
+
+    The multiplier comes from the *target*, so the flat Critical Damage of
+    live Freeze (Cold) stacks is included, exactly as in the Kuva Nukor and
+    Akarius models. The critical tier follows the wiki's
+    ``1 + tier x (CDM - 1)`` so a build above 100% crit chance keeps its extra
+    tiers.
+    """
+    crit_chance = max(build.crit_chance, 0.0)
+    full_tiers = int(math.floor(crit_chance))
+    tier = full_tiers + (1 if rng.random() < crit_chance - full_tiers else 0)
+    return crit_multiplier_for_tier(
+        target.crit_damage_multiplier(build.crit_multiplier, when), tier)
 
 
 def simulate(
@@ -633,7 +644,7 @@ def simulate(
             # a Magnetic break and statuses applied by preceding pellets.
             co_bonus = gunco_bonus(target.unique_status_count(now),
                                    build.galv_kill_stacks)
-            cf = _crit_factor(rng, build)
+            cf = _crit_factor(rng, build, target, now)
             direct = {}
             for kind, factor in build.mix.factors.items():
                 uncritted = apply_co(

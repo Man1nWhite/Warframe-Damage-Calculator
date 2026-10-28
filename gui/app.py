@@ -959,7 +959,10 @@ class DamageCalculatorWindow(QMainWindow):
                 self.recalculate()
 
     def refresh_weapon_list(self) -> None:
-        weapons = self.weapon_repository.search_weapons(self.search_edit.text())
+        # The sidebar is the catalogue browser, so it asks for every weapon: the
+        # default search cap would silently hide everything sorted after the
+        # first 250 names (Kuva/Tenet weapons, most Primes, ...).
+        weapons = self.weapon_repository.search_weapons(self.search_edit.text(), limit=None)
         current_name = self.weapon_list.currentItem().text() if self.weapon_list.currentItem() else None
 
         self.weapon_list.blockSignals(True)
