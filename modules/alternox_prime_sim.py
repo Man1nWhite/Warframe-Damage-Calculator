@@ -132,7 +132,6 @@ RIFLE_ELEMENTALIST_SD = 0.90    # x1.9 Status Damage
 BLAST_FUSE = 1.5                # seconds until a Blast stack detonates
 # Shared with every other simulator; see modules/status_damage.py.
 BLAST_SINGLE_COEF = status_damage.BLAST_SINGLE_COEF
-BLAST_STACK_CAP = status_damage.BLAST_MAX_STACKS
 ELEC_TICK_COEF = ELEMENTAL_DOT_COEFFICIENT   # 0.5
 ELEC_PROC_TICKS = 6
 VIRAL_CAP = 10
@@ -483,10 +482,10 @@ class ElectricProc:
 class AlternoxTarget(DummyTarget):
     """Plain SP150 Heavy Gunner plus Electric/Blast/Viral/Cold proc state."""
 
-    def __init__(self, health: float, armor: float, overguard: float = 0.0):
-        super().__init__(health, armor, overguard)
+    def __init__(self, health: float, armor: float, overguard: float = 0.0,
+                 *, boss: bool = False):
+        super().__init__(health, armor, overguard, boss=boss)
         self.electric_procs: list[ElectricProc] = []
-        self.cold_expiries: list[float] = []
 
     def live_electric(self, now: float) -> list[ElectricProc]:
         return [p for p in self.electric_procs
@@ -494,11 +493,6 @@ class AlternoxTarget(DummyTarget):
 
     def live_blast(self, now: float) -> list[BlastProc]:
         return [p for p in self.blast_stacks if p.fuse_end > now]
-
-    def cold_stacks(self, now: float) -> int:
-        self.cold_expiries = [t for t in self.cold_expiries if t > now]
-        return len(self.cold_expiries)
-
 
 @dataclass
 class AlternoxTrial:
@@ -514,10 +508,14 @@ class AlternoxTrial:
     trace: list = field(default_factory=list)
 
 
-def alternox_dummy_factory() -> AlternoxTarget:
-    """Plain non-Eximus SP150 Heavy Gunner (286,139.57 HP, 2,700 armor)."""
+def alternox_dummy_factory(*, boss: bool = False) -> AlternoxTarget:
+    """Plain non-Eximus SP150 Heavy Gunner (286,139.57 HP, 2,700 armor).
+
+    ``boss=True`` gives the target the four-stack Blast cap and the four-stack
+    cap on Cold's Critical Damage bonus.
+    """
     gunner = steel_path_heavy_gunner(150)
-    return AlternoxTarget(gunner.health, gunner.armor, gunner.overguard)
+    return AlternoxTarget(gunner.health, gunner.armor, gunner.overguard, boss=boss)
 
 
 def _pellet_count(rng: random.Random, multishot: float) -> int:
@@ -667,7 +665,7 @@ def simulate(
                     target.blast_stacks.append(
                         BlastProc(now, now + BLAST_FUSE, proc_seed, cf))
                     blast_procs += 1
-                    if len(target.blast_stacks) >= BLAST_STACK_CAP:
+                    if target.blast_cap_reached():
                         amount = sum(BLAST_SINGLE_COEF * p.seed * p.crit_factor
                                      for p in target.blast_stacks) * sd_mult
                         target.blast_stacks.clear()
@@ -682,14 +680,11 @@ def simulate(
                 elif ptype == "MAG":
                     target.add_magnetic(now, PROC_DURATION, source)
                 elif ptype == "COLD":
-                    # Kept for completeness: every bundled element mix folds
-                    # Cold into Viral/Blast/Magnetic, so this branch is not
-                    # reachable with the current Riven candidates. If a build
-                    # ever leaves Cold standalone, its +0.1x/+0.05x critical
-                    # damage bonus (modules.crit.cold_crit_damage_bonus) must
-                    # be added to the crit factor.
-                    target.record_status("COLD", now, PROC_DURATION)
-                    target.cold_expiries.append(now + PROC_DURATION)
+                    # Every bundled element mix folds Cold into Viral/Blast/
+                    # Magnetic, so no candidate build reaches this branch. The
+                    # stacks still feed the target's Critical Damage bonus, so
+                    # a Cold-only mix behaves correctly if one is added.
+                    target.add_cold(now, PROC_DURATION)
             if target.health > 0:
                 advance_events(now)  # Electricity's first tick is immediate.
             if target.health <= 0:

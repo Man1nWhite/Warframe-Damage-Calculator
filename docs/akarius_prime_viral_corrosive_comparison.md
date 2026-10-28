@@ -114,9 +114,11 @@ repository's enemy-scaling model:
 
 The infobox gadget and Wiki scaling article differ on Overguard's level
 formula; this model follows the gadget. Grineer's +50% modifier to Impact and
-Corrosive damage is modeled separately from Corrosive status armor strip.
-The default applies faction/type modifiers to Overguard too, an unresolved
-routing assumption. [8](https://wiki.warframe.com/w/Damage/Corrosive_Damage)
+Corrosive damage is modeled separately from Corrosive status armor strip, and
+now applies to the health bar only: the Overguard page states the layer is
+neutral to every type but Void. The measured rows below that predate that
+change are marked, because the "neutral faction/type modifiers" sensitivity is
+now the default and the baseline row no longer reproduces. [8](https://wiki.warframe.com/w/Damage/Corrosive_Damage)
 
 Unless a sensitivity explicitly says otherwise, each trial starts with **no
 target statuses**, no external primer, companion or ability buffs, no faction
@@ -190,10 +192,10 @@ the baseline; each later row changes only the stated assumption.
 
 | Eximus direct-hit scenario | Viral mean | Corrosive mean | What changed |
 | --- | ---: | ---: | --- |
-| Baseline subset | 2.1851 | 2.3168 | Default Heat, ten-stack Blast, default routing |
+| Baseline subset | 2.1851 | 2.3168 | Default Heat, ten-stack Blast, faction-type routing on both layers (now obsolete: the default applies them to health only, which is the row below) |
 | All live Heat stacks contribute at each group pulse | 1.9334 | 1.8904 | Alternative unverified Heat eligibility; **mean ordering reverses** |
 | Four-stack early Blast detonation | 2.2198 | 2.3457 | Hybrid: retain default single-target settlement |
-| Neutral faction/type modifiers on Overguard | 2.1874 | 2.3392 | Apply Grineer modifiers to health only |
+| Neutral faction/type modifiers on Overguard | 2.1874 | 2.3392 | Apply Grineer modifiers to health only (the current default) |
 | Discard the breaking hit's Overguard overflow | 2.1887 | 2.3274 | One-hit overflow discard only; no timed invulnerability |
 | Constant expected crit damage | 2.1798 | 2.3222 | Same expected crit multiplier, no tier variability |
 | Start with five external Viral stacks | 2.0305 | 0.5008 | Both targets pre-primed for six seconds |

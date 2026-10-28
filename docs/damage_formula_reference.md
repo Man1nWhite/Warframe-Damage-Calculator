@@ -128,7 +128,11 @@ not apply to AoE damage. Kunai with Primed Target Cracker at 9 Cold stacks:
 Implemented in `modules/crit.py` (`modded_crit_chance`,
 `quantize_crit_multiplier`, `modded_crit_multiplier`,
 `cold_crit_damage_bonus`, `crit_tiers`, `normal_shot`, `critical_shot`,
-`average_shot`, `direct_aoe_shot`, `weak_point_shot`).
+`average_shot`, `direct_aoe_shot`, `weak_point_shot`). The simulators reach the
+Freeze bonus through `DummyTarget.crit_damage_multiplier`, which adds it for
+that target's live Cold stacks before the tier; it is zero unless the target
+actually carries Freeze stacks, and the Akarius radial Blast instance opts out
+because the bonus does not apply to AoE damage.
 
 ### 1.5 DPS
 
@@ -317,7 +321,7 @@ as Saryn Spores excluded).
 | Viral (Virus) | 6 s, 10 stacks | health damage `2 + 0.25 x (stacks - 1)`, max 325%; not double-dipped on DoTs |
 | Magnetic (Disrupt) | 6 s, 10 stacks | shields/Overguard damage `2 + 0.25 x (stacks - 1)`; on break a forced Electricity proc worth 3% of max defense per stack over 6 s |
 | Radiation (Confusion) | 12 s, 10 stacks | friendly fire, +100% and +50% per stack to 550% |
-| Blast (Detonate) | 1.5 s fuse, 10 stacks (4 for bosses) | 30% of modded base per stack, or `max(1, 0.3 x H)` if the fuse expires unnoticed; at the cap or on death all stacks detonate for 300% per stack within 5 m to *other* enemies (the proc target keeps only the 30%-per-stack single-target damage) |
+| Blast (Detonate) | 1.5 s fuse, 10 stacks (4 for bosses and some Eximus) | 30% of modded base per stack, or `max(1, 0.3 x H)` if the fuse expires unnoticed; at the cap or on death all stacks detonate for 300% per stack within 5 m to *other* enemies (the proc target keeps only the 30%-per-stack single-target damage) |
 
 Heat's armor strip is 15/30/40/50% at 0.5 s intervals after the first proc and
 restores 50/40/30/15/0% every 1.5 s after it ends; armor reductions from Heat,

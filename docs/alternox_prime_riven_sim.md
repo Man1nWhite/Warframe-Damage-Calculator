@@ -103,9 +103,10 @@ separate Status Damage term.
   1.5 s and detonates for 0.3× modded base per stack; ten stacks detonate
   immediately for 3.0× modded base. The 5 m radial is excluded (single dummy;
   radii never receive GunCO).
-* **Magnetic** (Riven Electricity + Cryo Cold) and standalone **Cold** only
-  matter for shield disruption / slow and as GunCO status types; neither adds
-  single-target health damage.
+* **Magnetic** (Riven Electricity + Cryo Cold) matters for shield/Overguard
+  disruption and as a GunCO status type. No candidate leaves Cold standalone,
+  so Freeze never procs here; a cold-only mix would add up to +1.0x Critical
+  Damage from its stacks (`DummyTarget.crit_damage_multiplier`).
 
 ## Analytic results: all 20 candidate pairs
 

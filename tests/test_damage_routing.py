@@ -34,20 +34,33 @@ class DamageRoutingTests(unittest.TestCase):
 
     def test_mixed_instance_is_not_dependent_on_type_order(self):
         # This proportional split is an explicit model assumption, not a
-        # wiki-verified example of the engine's boundary calculation.
+        # wiki-verified example of the engine's boundary calculation. The
+        # faction type modifier reaches health only: Overguard is neutral to
+        # every type but Void, so the IMPACT half absorbs 50 of Overguard and
+        # then deals 25 x 1.5 to health alongside HEAT's 25.
         kwargs = dict(overguard=50, armor=0,
                       faction_type_modifiers={"IMPACT": 1.5})
         a = route_enemy_hit({"IMPACT": 50, "HEAT": 50}, **kwargs)
         b = route_enemy_hit({"HEAT": 50, "IMPACT": 50}, **kwargs)
         self.assertEqual(a, b)
         self.assertEqual(a.overguard, 50)
-        self.assertEqual(a.health, 75)
+        self.assertEqual(a.health, 62.5)
+
+    def test_faction_type_modifiers_do_not_touch_overguard(self):
+        # Overguard: "neutral to all damage types except for a 50% vulnerability
+        # from Void". A 1.5x Grineer IMPACT modifier therefore only multiplies
+        # the share that spills over into health.
+        result = route_enemy_hit({"IMPACT": 50}, overguard=25, armor=0,
+                                 faction_type_modifiers={"IMPACT": 1.5})
+        self.assertAlmostEqual(result.overguard, 25)
+        self.assertAlmostEqual(result.health, 37.5)
+        self.assertTrue(result.broke_overguard)
 
     def test_exact_break_does_not_create_health_damage(self):
-        result = route_enemy_hit({"IMPACT": 100}, overguard=150, armor=2700,
+        result = route_enemy_hit({"IMPACT": 100}, overguard=100, armor=2700,
                                  faction_type_modifiers={"IMPACT": 1.5})
         self.assertTrue(result.broke_overguard)
-        self.assertEqual(result.overguard, 150)
+        self.assertEqual(result.overguard, 100)
         self.assertEqual(result.health, 0)
 
     def test_no_damage_never_breaks_overguard(self):

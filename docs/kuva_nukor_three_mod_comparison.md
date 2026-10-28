@@ -183,8 +183,10 @@ for mod in ("Hornet Strike", "Scorch"):
     print(mod, result["ttk_mean"], result["ttk_median"], result["timed_out"])
 ```
 
-For the four-stack hybrid Blast sensitivity, in a fresh interpreter set
-`modules.kuva_nukor_sim.BLAST_MAX_STACKS = 4` before calling `run_trials` for
-Frostbite with 2,500 trials and seed 20261028. This deliberately changes the
-simulation globally for that process; it does not establish the correct game
-mechanic.
+For the four-stack Blast sensitivity, build the factory with a boss target
+(`kuva_nukor_sim.DummyTarget(health, armor, overguard, boss=True)`, or
+`steel_path_dummy_factory(boss=True)`) before calling `run_trials` for
+Frostbite with 2,500 trials and seed 20261028. `boss=True` lowers that target's
+early-detonation cap from ten stacks to four
+(`status_damage.BLAST_MAX_STACKS_BOSS`), the cap the wiki gives bosses and some
+Eximus; it does not establish which Eximus share the rule.

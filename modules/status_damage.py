@@ -49,6 +49,10 @@ DEFAULT_TICK_RATE = 1.0  # status DoTs tick once per second
 # Stack caps.
 GAS_MAX_STACKS = 10
 BLAST_MAX_STACKS = 10
+# Damage/Blast_Damage: bosses and some Eximus detonate at four stacks instead
+# of ten. It is a property of the target, so the simulators ask the target for
+# its cap rather than reading this constant directly.
+BLAST_MAX_STACKS_BOSS = 4
 BLAST_SINGLE_COEF = 0.30  # 30% of modded base per stack
 BLAST_RADIAL_COEF = 3.0   # 300% of modded base per stack, 5 m
 

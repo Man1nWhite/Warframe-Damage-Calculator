@@ -53,7 +53,6 @@ from modules.crit import quantize_crit_multiplier
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
 from modules.kuva_nukor_sim import (
-    BLAST_MAX_STACKS,
     BLAST_SINGLE_COEF,
     PISTOL_ELEMENTALIST_SD,
     BlastProc,
@@ -222,8 +221,9 @@ def build_akarius(riven: str = RIVEN_VIRAL) -> AkariusBuild:
 # --- Target with Corrosive state -------------------------------------------
 
 class AkariusTarget(DummyTarget):
-    def __init__(self, health: float, armor: float, overguard: float):
-        super().__init__(health, armor, overguard)
+    def __init__(self, health: float, armor: float, overguard: float,
+                 *, boss: bool = False):
+        super().__init__(health, armor, overguard, boss=boss)
         self.corrosive_expiries: list[float] = []
 
     def corrosive_stacks(self, now: float) -> int:
@@ -237,9 +237,10 @@ class AkariusTarget(DummyTarget):
             self.corrosive_stacks(now))
 
 
-def akarius_dummy_factory() -> AkariusTarget:
+def akarius_dummy_factory(*, boss: bool = False) -> AkariusTarget:
+    """Eximus Heavy Gunner L150 Steel Path; ``boss`` caps Blast at 4 stacks."""
     dummy = steel_path_eximus_heavy_gunner(150)
-    return AkariusTarget(dummy.health, dummy.armor, dummy.overguard)
+    return AkariusTarget(dummy.health, dummy.armor, dummy.overguard, boss=boss)
 
 
 # --- Simulation -------------------------------------------------------------
@@ -296,10 +297,15 @@ def simulate(build: AkariusBuild,
                "break": 0.0}
     riven_key = build.riven.upper()
 
-    def crit_factor() -> float:
+    def crit_factor(*, with_cold: bool = True) -> float:
+        # Damage/Cold_Damage: Freeze's flat Critical Damage is additive with
+        # Critical Damage mods and applies before the tier, but not to Area of
+        # Effect damage, so the radial Blast instance opts out.
+        crit_multiplier = (target.crit_damage_multiplier(build.crit_multiplier, when)
+                           if with_cold else build.crit_multiplier)
         full = int(math.floor(cc))
         tier = full + (1 if rng.random() < (cc - full) else 0)
-        return 1.0 + tier * (build.crit_multiplier - 1.0)
+        return 1.0 + tier * (crit_multiplier - 1.0)
 
     def roll(weights: dict) -> str:
         return rng.choices(list(weights), weights=list(weights.values()))[0]
@@ -347,7 +353,7 @@ def simulate(build: AkariusBuild,
         elif ptype == "BLAST":
             target.blast_stacks.append(
                 BlastProc(when, when + build.blast_fuse, seed_value, cf))
-            if len(target.blast_stacks) >= BLAST_MAX_STACKS:
+            if target.blast_cap_reached():
                 amount = target.blast_single_damage(PISTOL_ELEMENTALIST_SD)
                 target.blast_stacks.clear()
                 target.clear_status("BLAST")
@@ -461,7 +467,7 @@ def simulate(build: AkariusBuild,
                               build.impact_base_modded, shot_viral_stacks)
                 if target.health <= 0:
                     break
-            cf_aoe = crit_factor()
+            cf_aoe = crit_factor(with_cold=False)
             fire_instance(when, cf_aoe, build.blast_instance,
                           build.proc_weights_blast,
                           build.blast_base_modded, shot_viral_stacks)

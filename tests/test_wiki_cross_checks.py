@@ -204,8 +204,24 @@ class MultishotTests(unittest.TestCase):
                          status_damage.BLAST_RADIAL_COEF)
         self.assertEqual(kuva_nukor_sim.BLAST_MAX_STACKS,
                          status_damage.BLAST_MAX_STACKS)
-        self.assertEqual(alternox_prime_sim.BLAST_STACK_CAP,
-                         status_damage.BLAST_MAX_STACKS)
+        self.assertEqual(kuva_nukor_sim.BLAST_MAX_STACKS_BOSS,
+                         status_damage.BLAST_MAX_STACKS_BOSS)
+
+    def test_blast_cap_is_four_for_bosses_and_some_eximus(self) -> None:
+        # Damage/Blast_Damage: ten stacks for an ordinary enemy, four for a
+        # boss or one of the Eximus that share the rule.
+        from modules.kuva_nukor_sim import BlastProc, DummyTarget
+        normal = DummyTarget(1000.0, 0.0, 0.0)
+        boss = DummyTarget(1000.0, 0.0, 0.0, boss=True)
+        self.assertEqual((normal.blast_stack_cap, boss.blast_stack_cap), (10, 4))
+        for _ in range(4):
+            normal.blast_stacks.append(BlastProc(0.0, 1.5, 10.0, 1.0))
+        self.assertFalse(normal.blast_cap_reached())
+        boss.blast_stacks.extend(normal.blast_stacks)
+        self.assertTrue(boss.blast_cap_reached())
+        for _ in range(6):
+            normal.blast_stacks.append(BlastProc(0.0, 1.5, 10.0, 1.0))
+        self.assertTrue(normal.blast_cap_reached())
 
     def test_integer_beams_plus_a_fractional_roll(self) -> None:
         self.assertEqual(roll_multishot(random.Random(1), 1.0), 1)
@@ -215,6 +231,49 @@ class MultishotTests(unittest.TestCase):
         self.assertEqual(roll_multishot(random.Random(1), 2.999999), 3)
         for seed in range(20):
             self.assertIn(roll_multishot(random.Random(seed), 3.4), (3, 4))
+
+
+class ColdFreezeTests(unittest.TestCase):
+    """Damage/Cold_Damage: Freeze stacks add flat Critical Damage."""
+
+    def test_stacks_add_critical_damage_up_to_the_frozen_bonus(self) -> None:
+        target = DummyTarget(1000.0, 0.0, 0.0)
+        self.assertEqual(target.crit_damage_multiplier(2.0, 0.0), 2.0)
+        target.add_cold(0.0, 6.0)
+        self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 0.0), 2.10)
+        for _ in range(8):  # nine stacks: +0.50x
+            target.add_cold(0.0, 6.0)
+        self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 0.0), 2.50)
+        target.add_cold(0.0, 6.0)  # tenth stack freezes: +1.00x
+        self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 0.0), 3.00)
+        # A Freeze lasts six seconds.
+        self.assertEqual(target.crit_damage_multiplier(2.0, 7.0), 2.0)
+
+    def test_overguard_and_bosses_cap_the_bonus_at_four_stacks(self) -> None:
+        shielded = DummyTarget(1000.0, 0.0, 500.0)
+        boss = DummyTarget(1000.0, 0.0, 0.0, boss=True)
+        for _ in range(10):
+            shielded.add_cold(0.0, 6.0)
+            boss.add_cold(0.0, 6.0)
+        self.assertAlmostEqual(shielded.crit_damage_multiplier(2.0, 0.0), 2.25)
+        self.assertAlmostEqual(boss.crit_damage_multiplier(2.0, 0.0), 2.25)
+
+    def test_a_cold_primed_target_dies_faster(self) -> None:
+        from modules.kuva_nukor_sim import steel_path_dummy_factory
+        from modules.ocucor_sim import ARCANE_ENERVATE, build_ocucor, simulate
+        build = build_ocucor(ARCANE_ENERVATE, "Multishot")
+
+        def trial(cold_stacks: int) -> float:
+            target = steel_path_dummy_factory()
+            for _ in range(cold_stacks):
+                target.add_cold(0.0, 6.0)
+            return simulate(build, target, seed=7, max_time=60.0).ttk
+
+        plain = trial(0)
+        self.assertLess(trial(1), plain)
+        # The reference target carries Overguard, so stacks past four add
+        # nothing: four and ten produce the same run.
+        self.assertEqual(trial(10), trial(4))
 
 
 class EnervateTests(unittest.TestCase):

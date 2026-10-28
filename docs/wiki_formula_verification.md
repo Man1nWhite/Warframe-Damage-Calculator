@@ -98,6 +98,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
 | Literal-element bonus only (Heat for Ignite, Gas for Gas Cloud, none for Slash) | per-type pages | `slash_tick`, `heat_tick`, `gas_tick` | match |
 | Blast is a 1.5 s fuse, 30% single-target, 300% per stack radial at 10 stacks/death, target excluded from the radial | Damage/Blast_Damage | `kuva_nukor_sim` (`BLAST_*`), `alternox_prime_sim` | match |
 | Blast detonations are "Status Damage" (Elementalist applies) | Status_Effect | sims pass `status_damage_bonus` | match |
+| Bosses and some Eximus detonate Blast at 4 stacks, everyone else at 10 | Damage/Blast_Damage | `status_damage.BLAST_MAX_STACKS_BOSS`, `DummyTarget.blast_cap_reached` | match (opt-in per target: `boss=True`) |
 | A Blast stack that expires on its own (1.5 s) deals `max(1, 0.3 × H)`; detonation at the cap settles every stack instead | Damage/Calculation, Damage/Blast_Damage | `detonate_expired_blasts` in the three Blast simulators | fixed this pass (floor added) |
 | Gas cloud 3 m, +0.3 m per stack to 6 m at 10 stacks, 10-instance cap | Damage/Gas_Damage | constants only (`GAS_MAX_STACKS`) | partly implemented (radius growth is not simulated) |
 | Heat consolidates stacks into one pulse, refreshes all durations, strip does not accelerate | Damage/Heat_Damage | `DummyTarget.add_heat`, `consume_heat_tick` | match |
@@ -106,7 +107,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
 | Corrosive strip is **multiplicative** with Heat strip and Corrosive Projection: `(1 − 50%)·[1 − (20% + 6%·n)]·(1 − 18%·projections)` | Damage/Corrosive_Damage | `JatTarget.current_armor` (heat ramp × `corrosive_armor_factor`); Corrosive Projection is in no bundled build | match |
 | Puncture 10 s, 5 stacks, +5 flat critical chance per stack (max +25%), not on AoE | Damage/Puncture_Damage | `DummyTarget.add_puncture` | match |
 | Puncture's flat critical chance only matters where a build actually deals Puncture: the Jat Kittag slam build is Blast + Gas + Toxin and rolls no Puncture procs, so `jat_kittag_sim` needs no term for it | Damage/Puncture_Damage | `ocucor_sim`, `kuva_nukor_sim` (`add_puncture`) | match (n/a for the slam build) |
-| Cold +0.10x critical damage, +0.05x per stack, +1.0x frozen, 4-stack cap under Overguard | Damage/Cold_Damage | `crit.cold_crit_damage_bonus` | fixed this pass (helper added; no simulated build holds standalone Cold procs) |
+| Cold +0.10x critical damage, +0.05x per stack, +1.0x frozen, 4-stack cap under Overguard | Damage/Cold_Damage | `crit.cold_crit_damage_bonus`, `DummyTarget.add_cold` / `crit_damage_multiplier` | match (every simulator now reads the target's Cold stacks when it builds a crit factor) |
 | Viral/Magnetic `2 + 0.25·(stacks − 1)`, 10-stack cap | Damage/Viral_Damage, /Magnetic_Damage | `damage_routing.status_vulnerability` | match |
 | Magnetic break: 3% of max defense per stack over 6 s; Status Damage and faction twice, Electricity once | Damage/Magnetic_Damage | `status_damage.magnetic_break_electric_tick` | match |
 | DoT ticks are amplified by live Viral, not double-dipped | Damage/Viral_Damage | `damage_routing` (applies Viral once to health) | match |
@@ -125,7 +126,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
 | Grineer/Techrot/Corpus damage curve with ×2 faction factor | Enemy_Level_Scaling | `GRINEER_DAMAGE` | match |
 | `EHP = health/(1 − DR) + shields (+ Overguard)` | Armor | `ScaledEnemy.ehp` | match |
 | Overguard `q = level − 1` | Enemy_Level_Scaling | `enemy_scaling` uses `level − base_level` | match (documented deviation: the infobox gadget uses `level − base_level`, and that gadget is the chosen reference) |
-| Overguard neutral to every type except Void ×1.5, no armor DR, no enemy invulnerability gate | Overguard | `damage_routing` | match (Void ×1.5, no gate); the extra faction-type table is a documented deviation |
+| Overguard neutral to every type except Void ×1.5, no armor DR, no enemy invulnerability gate | Overguard | `damage_routing` | match (faction type modifiers now skip the Overguard layer) |
 | `f32` intermediate arithmetic for scaled stats | Enemy_Level_Scaling | Python binary64 + 2-decimal rounding | documented deviation |
 
 ### 1.5 Mods, Rivens, arcanes
@@ -253,28 +254,37 @@ a place where "follow the wiki" is not a single instruction.
    the per-instance seed (`modded_base_damage`) and the beam simulators build
    their seeds from the merged tick, which already contains multishot; the
    scalar helpers therefore do not multiply multishot a second time.
-3. **Faction type modifiers on Overguard.** `Overguard` lists its own modifier
-   table (neutral, Void ×1.5). `damage_routing.route_enemy_hit` additionally
-   applies the target faction's type table to both layers, an interpretation
-   the reviewed pages do not confirm; the docstring says so. Impact-heavy
-   Akarius builds are the case where this matters most.
+3. **Faction type modifiers on Overguard (resolved).** `Overguard` says the
+   layer is "neutral to all damage types except for a 50% vulnerability from
+   Void damage". `route_enemy_hit` therefore applies the faction *type* table
+   to the health layer only; the faction *damage* bonus of Bane-style mods is a
+   separate multiplier that the simulators apply before routing and still
+   reaches both layers. Earlier numbers in the comparison reports that assumed
+   otherwise are marked as such where they are quoted.
 4. **Overguard overflow split.** No reviewed page specifies what happens to a
    mixed damage instance that breaks Overguard. The model keeps the same
    fraction of every component for health and discards the Magnetic multiplier
    beyond the break.
-5. **Blast stack caps for bosses/Eximus.** With the current
-   `Damage/Blast_Damage` text, the 10-stack early detonation is modeled; the
-   4-stack cap that bosses and some Eximus use, and the "kill with a Blast
-   proc still detonates" case, are not.
-6. **Cold critical damage.** Implemented as `crit.cold_crit_damage_bonus` and
-   tested, but no bundled build leaves Cold as a standalone proc (cold always
-   merges into Viral/Blast/Magnetic), so the simulators do not apply it. The
-   `COLD` branch in `alternox_prime_sim` is currently unreachable for the same
-   reason.
-7. **Blast and Cold are excluded from AoE damage** on the wiki; the simulators
-   apply weapon-wide multipliers to radial Blast damage, which is the same
-   thing for a single-target radial but not for the penalty/benefit rules on
-   AoE critical additions.
+5. **Blast stack caps for bosses/Eximus (modelled).** `DummyTarget` takes
+   `boss=True`, which lowers the early-detonation threshold to four stacks
+   (`BLAST_MAX_STACKS_BOSS`); every simulator asks the target for its cap. The
+   wiki says *some* Eximus share the boss rule and does not say which, so the
+   bundled reference targets stay at ten and the Akarius sensitivity runs the
+   four-stack variant explicitly. A Blast proc present when a target dies
+   still does not detonate.
+6. **Cold critical damage (modelled).** `DummyTarget.crit_damage_multiplier`
+   adds `crit.cold_crit_damage_bonus` to the build's Critical Damage before the
+   tier, and every simulator builds its crit factor from it. No bundled build
+   leaves Cold as a standalone proc (cold always merges into
+   Viral/Blast/Magnetic), so the term is zero unless a target is primed with
+   Cold, which the `COLD` branch in `alternox_prime_sim` and the Cold tests
+   exercise. Freeze's bonus is deliberately not applied to the Akarius radial
+   Blast instance, matching the wiki's AoE exclusion.
+7. **Blast and Cold are excluded from AoE damage.** Cold's Freeze bonus is
+   opted out of the Akarius radial Blast instance, but the simulators still
+   apply weapon-wide multipliers to radial Blast damage. That is the same thing
+   for a single-target radial and not for the penalty/benefit rules on AoE
+   critical additions, which remain unmodelled.
 8. **Heat inherit across sources** (first-proc Heat percentage and faction
    modifiers applying to later stacks) is only partially modeled: each
    simulator uses one weapon, so cross-source inheritance cannot occur.
@@ -299,12 +309,12 @@ a place where "follow the wiki" is not a single instruction.
 | DoT tick formula, timing, proc weighting, beam merge | `tests/test_status_damage.py` |
 | Critical hits, tiers, CDM quantization, Cold | `tests/test_crit_wiki.py` |
 | Damage quantization reproduced end to end (Nagantaka Prime) | `tests/test_crit_wiki.py` |
-| Proc timing, Blast, Corrosive, Heat strip, Magnetic break, AFCC | `tests/test_wiki_cross_checks.py` |
+| Proc timing, Blast (incl. the 4-stack boss cap), Cold/Freeze, Corrosive, Heat strip, Magnetic break, AFCC | `tests/test_wiki_cross_checks.py` |
 | Enemy scaling and target dummies | `tests/test_enemy_scaling.py` |
 | Riven value formula | `tests/test_riven_wiki.py`, `tests/test_riven.py` |
 | Condition Overload behaviors | `tests/test_condition_overload.py` |
 | Cascadia Flare stacking (one stack per hit, cap, expiry) | `tests/test_ocucor_sim.py`, `tests/test_ocucor_comparison.py` |
-| Overguard/health routing | `tests/test_damage_routing.py` |
+| Overguard/health routing, incl. faction type modifiers skipping Overguard | `tests/test_damage_routing.py` |
 | Simulator invariants (crit, multishot, status, cutoffs) | `tests/test_*_sim*.py` |
 
 Run everything offline with:
@@ -313,7 +323,6 @@ Run everything offline with:
 python -m unittest discover -s tests -q
 ```
 
-CI additionally runs `ruff check --select F,E9` over `modules gui tests tools`
-and both top-level entry points, then `compileall`. Both were run by hand for
-this pass and are clean (no ruff config file exists in the repository, so the
-CI selection is the whole rule set that applies).
+CI runs `python -m ruff check .` (the rule set in `ruff.toml`) and
+`python -m mypy` (the `modules/` gate in `mypy.ini`) before the suite. All three
+were run by hand for this pass and are clean.
