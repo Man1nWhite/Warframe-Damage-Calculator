@@ -323,6 +323,11 @@ Run everything offline with:
 python -m unittest discover -s tests -q
 ```
 
+Re-run the wiki side of this audit with `tools/wiki_audit.py`; it reads the
+pages it names, extracts the numbers next to each claim's keyword and compares
+them with the code value, and `--save-snapshot` / `--baseline` turn two runs
+into a diff. README documents the modes and exit codes.
+
 CI runs `python -m ruff check .` (the rule set in `ruff.toml`) and
 `python -m mypy` (the `modules/` gate in `mypy.ini`) before the suite. All three
 were run by hand for this pass and are clean.

@@ -303,6 +303,30 @@ Mod filtering is **partial**, not a complete Arsenal legality check:
 - [Target dummy models](docs/target_dummy_models.md) — Heavy Gunner level
   scaling and the explicit article-versus-gadget Overguard disagreement.
 
+### Re-running the wiki audit
+
+`tools/wiki_audit.py` re-reads the audited wiki pages, extracts the numbers
+next to a keyword for each claim in its registry, and compares them with the
+value the code uses. It is a reporting tool: a number that moved is something
+to review, not something it changes for you.
+
+```bash
+# Read the pages (cached under wiki_pages/, which is not committed) and save
+# the extracted numbers so a later run can diff against them.
+python tools/wiki_audit.py --save-snapshot docs/wiki_numbers.json
+
+# After a game update, re-read (delete wiki_pages/ first for fresh text) and
+# show exactly which numbers appeared or disappeared.
+python tools/wiki_audit.py --baseline docs/wiki_numbers.json
+```
+
+`--topic TEXT` filters the claims (for example `--topic "Blast"`), `--json`
+prints a machine-readable report, and `--pages DIR` points at a different cache.
+Exit codes: `0` every audited number still matches the code, `1` a number moved
+or the code drifted from its audited value, `2` a page or keyword could not be
+read, so the audit is incomplete. `tests/test_wiki_audit.py` runs the whole
+thing offline against saved page text.
+
 The desktop calculator is limited to a non-critical direct hit on health; it
 is not a complete TTK, shield, Overguard, crit, or status simulator. The wiki's
 ordinary enemy armor reduction is `0.9*sqrt(armor/2700)` at or below 2700;

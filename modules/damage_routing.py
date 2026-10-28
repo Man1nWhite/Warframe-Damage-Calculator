@@ -23,6 +23,9 @@ from dataclasses import dataclass
 
 from .enemy_scaling import enemy_armor_damage_reduction
 
+# Overguard is neutral to every damage type except Void (Overguard page).
+VOID_OVERGUARD_MULTIPLIER = 1.5
+
 
 def status_vulnerability(stacks: int) -> float:
     """Magnetic-to-Overguard or Viral-to-health multiplier, capped at 10."""
@@ -65,7 +68,7 @@ def route_enemy_hit(
     }
     mag_mult = status_vulnerability(magnetic_stacks)
     potential_og = mag_mult * sum(
-        max(0.0, amount) * (1.5 if kind == "VOID" else 1.0)
+        max(0.0, amount) * (VOID_OVERGUARD_MULTIPLIER if kind == "VOID" else 1.0)
         for kind, amount in damage_by_type.items()
         if amount > 0
     )

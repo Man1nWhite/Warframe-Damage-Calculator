@@ -22,3 +22,6 @@ venv/
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+# Raw wiki pages fetched by tools/wiki_audit.py (large, not ours to commit)
+wiki_pages/
