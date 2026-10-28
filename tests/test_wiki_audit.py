@@ -112,6 +112,25 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(results[0].status, "unreadable")
         self.assertIn("AttributeError", results[0].code_error or "")
 
+    def test_an_optional_claim_is_unverified_not_unreadable(self) -> None:
+        # The Blast boss cap is stated in prose on a general page, so an
+        # unreadable page must not turn the whole audit into a failure.
+        results = wiki_audit.audit([claim("boss cap", optional=True)],
+                                   {"Damage/Blast_Damage": "!offline"})
+        self.assertEqual(results[0].status, "unverified")
+        self.assertIn("offline", results[0].wiki_error or "")
+
+    def test_an_optional_claim_still_reports_code_drift(self) -> None:
+        results = wiki_audit.audit(
+            [claim("boss cap", optional=True, expected=5)],
+            {"Damage/Blast_Damage": "!offline"})
+        self.assertEqual(results[0].status, "code-changed")
+
+    def test_a_required_claim_stays_unreadable(self) -> None:
+        results = wiki_audit.audit([claim("radial")],
+                                   {"Damage/Blast_Damage": "!offline"})
+        self.assertEqual(results[0].status, "unreadable")
+
     def test_cold_claims_read_the_freeze_page(self) -> None:
         claims = [c for c in wiki_audit.CLAIMS if c.page == "Damage/Cold_Damage"]
         self.assertTrue(claims)
@@ -173,6 +192,26 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("offline", output.lower() + err.lower())
 
+    def test_the_blast_topic_survives_an_unreadable_supporting_page(self) -> None:
+        # Only the Blast page is saved; Damage/Calculation is not available.
+        # The three readable claims must still decide the exit code.
+        with patch.object(wiki_audit, "fetch_page", return_value="!offline"):
+            code, output, _ = self.run_main("--topic", "Blast")
+        self.assertEqual(code, 0)
+        self.assertIn("[  unverified] Damage/Calculation :: Blast boss cap", output)
+        self.assertIn("[          ok] Damage/Blast_Damage :: Blast radial", output)
+
+    def test_the_json_report_marks_the_optional_claim(self) -> None:
+        # A run that only reaches the optional claim still exits 0, and the
+        # machine-readable payload says why the claim was not verified.
+        with patch.object(wiki_audit, "fetch_page", return_value="!offline"):
+            code, output, _ = self.run_main("--topic", "Blast boss cap", "--json")
+        self.assertEqual(code, 0)
+        entry, = json.loads(output)["claims"]
+        self.assertEqual(entry["topic"], "Blast boss cap")
+        self.assertEqual(entry["status"], "unverified")
+        self.assertTrue(entry["optional"])
+
     def test_save_snapshot_writes_the_extracted_numbers(self) -> None:
         target = Path(self.temp.name) / "snapshot.json"
         code, _, _ = self.run_main("--topic", "Blast radial", "--save-snapshot", str(target))
@@ -202,6 +241,13 @@ class RegistryTests(unittest.TestCase):
             with self.subTest(topic=entry.topic):
                 value = wiki_audit.resolve(entry)
                 self.assertIsInstance(value, (int, float))
+
+    def test_only_the_hand_checked_claim_is_optional(self) -> None:
+        optional = [entry.topic for entry in wiki_audit.CLAIMS if entry.optional]
+        self.assertEqual(optional, ["Blast boss cap"])
+        cap = next(e for e in wiki_audit.CLAIMS if e.topic == "Blast boss cap")
+        self.assertEqual(cap.page, "Damage/Calculation")
+        self.assertEqual(wiki_audit.resolve(cap), 4)
 
     def test_topics_are_unique(self) -> None:
         topics = [entry.topic for entry in wiki_audit.CLAIMS]

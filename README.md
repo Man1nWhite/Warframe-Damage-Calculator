@@ -324,8 +324,15 @@ python tools/wiki_audit.py --baseline docs/wiki_numbers.json
 prints a machine-readable report, and `--pages DIR` points at a different cache.
 Exit codes: `0` every audited number still matches the code, `1` a number moved
 or the code drifted from its audited value, `2` a page or keyword could not be
-read, so the audit is incomplete. `tests/test_wiki_audit.py` runs the whole
-thing offline against saved page text.
+read, so the audit is incomplete.
+
+One claim (the four-stack Blast cap on `Damage/Calculation`) is stated in prose
+next to no keyword, so its registry entry is `optional`. When that page cannot
+be read the claim is reported as `[unverified]` and the exit code is unchanged,
+which keeps a network-less run of the Blast topic at `0`; a drift in
+`BLAST_MAX_STACKS_BOSS` itself is still reported as `code-changed` (`1`) and the
+JSON payload carries `"optional": true`. `tests/test_wiki_audit.py` runs the
+whole thing offline against saved page text.
 
 The desktop calculator is limited to a non-critical direct hit on health; it
 is not a complete TTK, shield, Overguard, crit, or status simulator. The wiki's

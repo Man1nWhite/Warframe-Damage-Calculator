@@ -29,6 +29,12 @@ Exit codes
 1  at least one number next to a keyword no longer matches the code
 2  a page or keyword could not be read, so the audit is incomplete
 
+A claim marked ``optional`` is one whose wiki evidence cannot be extracted
+mechanically (the number is stated on a general page, away from the keyword).
+When such a page or keyword cannot be read the claim is reported as
+``unverified`` instead of ``unreadable`` and it does not change the exit code:
+the code value is still checked, so drift is still exit 1.
+
 The raw page text is not committed: it is large, it is not ours to
 redistribute, and the snapshot of extracted numbers is what a diff needs.
 """
@@ -73,6 +79,9 @@ class Claim:
     args: tuple[Any, ...] = ()
     # The wiki usually writes fractions as percentages (0.3 -> "30%").
     percent: bool = False
+    # Supporting evidence that cannot always be extracted by keyword: an
+    # unreadable page is reported as "unverified" rather than failing the run.
+    optional: bool = False
     note: str = ""
 
     def describe_code(self) -> str:
@@ -95,11 +104,14 @@ CLAIMS: tuple[Claim, ...] = (
           ("modules.status_damage", "BLAST_MAX_STACKS"), 10,
           note="ten stacks detonate early"),
     # The four-stack cap is on the general Damage/Calculation page, not the
-    # Blast page; when the report says the keyword moved, check that page by
-    # hand before changing the claim.
+    # Blast page, and the page states it in prose rather than next to both
+    # keywords, so it is checked by hand. The claim is ``optional``: an
+    # unreadable page reports "unverified" and leaves the exit code alone,
+    # while a drift in BLAST_MAX_STACKS_BOSS is still reported.
     Claim("Blast boss cap", "Damage/Calculation", ("blast", "eximus"),
           ("modules.status_damage", "BLAST_MAX_STACKS_BOSS"), 4,
-          note="bosses and some Eximus detonate at four stacks"),
+          optional=True,
+          note="bosses and some Eximus detonate at four stacks (hand-checked)"),
     Claim("Cold Freeze first stack", "Damage/Cold_Damage", ("critical damage",),
           ("modules.crit", "COLD_CRIT_DAMAGE_BY_STACK"), 0.10, key=1,
           note="+0.10x Critical Damage on the first Freeze stack"),
@@ -165,10 +177,14 @@ class ClaimResult:
 
     @property
     def status(self) -> str:
-        if self.wiki_error is not None or self.code_error is not None:
+        if self.code_error is not None:
             return "unreadable"
+        # Checked before the wiki so that drift in the code is never hidden
+        # behind an unreadable (or optional) page.
         if not self.code_ok:
             return "code-changed"
+        if self.wiki_error is not None:
+            return "unverified" if self.claim.optional else "unreadable"
         if not self.wiki_ok:
             return "wiki-changed"
         return "ok"
@@ -396,6 +412,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({
             "claims": [{"page": r.claim.page, "topic": r.claim.topic,
                         "status": r.status, "numbers": r.numbers,
+                        "optional": r.claim.optional,
                         "code": r.claim.describe_code(), "code_value": r.code_value,
                         "expected": r.claim.expected, "note": r.claim.note,
                         "error": r.wiki_error or r.code_error}
