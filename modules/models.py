@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 from .constants import DAMAGE_TYPES, MOD_STAT_ORDER
 
@@ -18,7 +17,7 @@ class Weapon:
     statchan: float
     firerate: float
     multi: float
-    damage: Dict[str, float] = field(default_factory=dict)
+    damage: dict[str, float] = field(default_factory=dict)
 
     def damage_for(self, damage_type: str) -> float:
         return float(self.damage.get(damage_type, 0.0))
@@ -51,7 +50,7 @@ class Mod:
 class EquippedMod:
     mod: Mod | None = None
     rank: int = 0
-    effects: List[ModEffect] = field(default_factory=list)
+    effects: list[ModEffect] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -61,12 +60,13 @@ class CalculationInputs:
     armor_value: float
     lich_element: str = ""
     valence_base: float = 0.0
-    mods: Dict[str, float] = field(default_factory=dict)
+    # Pre-aggregated per-stat bonuses, used only when `equipped_mods` is None.
+    # When the slots are also given the calculator aggregates them itself and
+    # ignores this dictionary, so a build cannot depend on whether the caller
+    # remembered to pre-compute `mods`.
+    mods: dict[str, float] = field(default_factory=dict)
     # Original slot order preserves which primary elements formed a pair.
-    equipped_mods: List[EquippedMod] | None = None
-
-    def mod_for(self, damage_type: str) -> float:
-        return float(self.mods.get(damage_type, 0.0))
+    equipped_mods: list[EquippedMod] | None = None
 
 
 @dataclass(slots=True)
@@ -75,22 +75,22 @@ class CalculationResults:
     quanta: float
     valence_multiplier: float
     weapon_total_damage: float
-    lich_damage: Dict[str, float]
-    faction_modifiers: Dict[str, float]
-    armor_modifiers: Dict[str, float]
-    hud_damage_by_type: Dict[str, float]
-    final_damage_by_type: Dict[str, float]
-    aggregated_mods: Dict[str, float]
+    lich_damage: dict[str, float]
+    faction_modifiers: dict[str, float]
+    armor_modifiers: dict[str, float]
+    hud_damage_by_type: dict[str, float]
+    final_damage_by_type: dict[str, float]
+    aggregated_mods: dict[str, float]
     hud_total: float
     hud_total_with_bane: float
     final_total: float
     final_total_with_bane: float
 
-    def rows_for_hud(self) -> List[tuple[str, float]]:
+    def rows_for_hud(self) -> list[tuple[str, float]]:
         return [(damage_type, self.hud_damage_by_type[damage_type]) for damage_type in DAMAGE_TYPES]
 
-    def rows_for_final(self) -> List[tuple[str, float]]:
+    def rows_for_final(self) -> list[tuple[str, float]]:
         return [(damage_type, self.final_damage_by_type[damage_type]) for damage_type in DAMAGE_TYPES]
 
-    def rows_for_mods(self) -> List[tuple[str, float]]:
+    def rows_for_mods(self) -> list[tuple[str, float]]:
         return [(code, self.aggregated_mods.get(code, 0.0)) for code in MOD_STAT_ORDER]

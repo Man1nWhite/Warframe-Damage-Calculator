@@ -1,12 +1,11 @@
 """Bounded mod-family filtering, grounded in offline snapshot and Wiki pages."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 

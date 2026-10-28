@@ -25,16 +25,22 @@ import math
 import random
 import statistics
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Callable
 
 from .damage_routing import status_vulnerability
 from .enemy_scaling import (
-    ScaledEnemy, icebind_eximus_heavy_gunner, steel_path_eximus_heavy_gunner,
+    ScaledEnemy,
+    icebind_eximus_heavy_gunner,
+    steel_path_eximus_heavy_gunner,
     steel_path_heavy_gunner,
 )
 from .jat_kittag_slam_analysis import (
-    SLAM_BASE, PRIMED_FEVER_STRIKE, BUILD_BY_KEY, Build, sustainable_interval,
+    BUILD_BY_KEY,
+    PRIMED_FEVER_STRIKE,
+    SLAM_BASE,
+    Build,
+    sustainable_interval,
 )
 from .status_damage import magnetic_break_electric_tick
 from .trial_statistics import sample_percentile
@@ -104,7 +110,7 @@ class Target:
     armor_dr: float
 
     @classmethod
-    def from_scaled(cls, enemy: ScaledEnemy) -> "Target":
+    def from_scaled(cls, enemy: ScaledEnemy) -> Target:
         if enemy.shields:
             raise ValueError("Shielded enemies are not modeled")
         if enemy.health <= 0 or enemy.overguard < 0 or not 0 <= enemy.armor_dr < 1:

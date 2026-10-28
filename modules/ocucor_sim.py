@@ -46,19 +46,25 @@ import random
 from dataclasses import dataclass, field
 
 from modules.constants import FACTION_MULTIPLIERS
+from modules.crit import quantize_crit_multiplier
+
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
-from modules.trial_statistics import sample_percentile
 from modules.kuva_nukor_sim import (
     DummyTarget,
-    HeatProc as HeatProc,
     enervate_afcc,
     heat_tick,
     roll_multishot,
     steel_path_dummy_factory,
-    viral_magnetic_multiplier as viral_magnetic_multiplier,
     wiki_quantized_damage,
 )
+from modules.kuva_nukor_sim import (
+    HeatProc as HeatProc,
+)
+from modules.kuva_nukor_sim import (
+    viral_magnetic_multiplier as viral_magnetic_multiplier,
+)
+from modules.trial_statistics import sample_percentile
 
 # --- Base weapon ------------------------------------------------------------
 
@@ -180,7 +186,8 @@ def build_ocucor(arcane: str = ARCANE_ENERVATE,
         + (riven if riven_stat == "Status Chance" else 0.0))
     crit_chance = BASE_CRIT_CHANCE * (
         1.0 + (riven if riven_stat == "Critical Chance" else 0.0))
-    crit_mult = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+    crit_mult = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + PRIMED_TARGET_CRACKER
         + (riven if riven_stat == "Critical Damage" else 0.0))
     bracket = 1.0 + GALV_SHOT_CO + (
@@ -340,7 +347,7 @@ def simulate(build: OcucorBuild,
                     enervate_extra_pct, heat_seed_mode, puncture_cap)
     rng = random.Random(seed)
     dt = build.tick_interval
-    ammo = MAGAZINE
+    ammo = float(MAGAZINE)  # each beam tick spends half a round
     now = 0.0
     beam_time = RAMP_TIME if full_beam_ramp else 0.0
     tendrils = starting_tendrils
@@ -634,7 +641,7 @@ def simulate_room(arcane: str,
                     enervate_extra_pct, heat_seed_mode, puncture_cap)
     rng = random.Random(seed)
     targets = [factory() for _ in range(n_enemies)]
-    ammo = MAGAZINE
+    ammo = float(MAGAZINE)  # each beam tick spends half a round
     now = 0.0
     reloads = 0
     tendrils = starting_tendrils
@@ -687,8 +694,9 @@ def simulate_room(arcane: str,
 
     def next_ramp(idx: int, when: float) -> float:
         progress = beam_progress[idx]
-        if last_hit[idx] is not None:
-            progress = _beam_progress_after_pause(progress, when - last_hit[idx])
+        previous_hit = last_hit[idx]
+        if previous_hit is not None:
+            progress = _beam_progress_after_pause(progress, when - previous_hit)
         ramp = min(1.0, RAMP_START + (1.0 - RAMP_START) * progress / RAMP_TIME)
         beam_progress[idx] = min(RAMP_TIME, progress + dt)
         last_hit[idx] = when

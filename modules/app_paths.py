@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import tempfile
@@ -10,7 +9,6 @@ from modules.constants import APP_NAME
 from modules.export_safety import UnfinishedExportPublication, require_complete_exports
 
 DB_NAME = "weapons.db"
-SETTINGS_NAME = "settings.json"
 EXPORT_FILES = ("ExportWeapons_en_Cleaned.zip", "ExportKeys_en_Cleaned.zip")
 SOURCE_FILES = [
     *EXPORT_FILES,
@@ -46,7 +44,6 @@ def ensure_app_dirs() -> dict[str, Path]:
         "temp": temp,
         "builds": builds,
         "db": data / DB_NAME,
-        "settings": root / SETTINGS_NAME,
     }
 
 
@@ -76,9 +73,10 @@ def seed_source_files(project_root: Path) -> None:
         stage = Path(tempfile.mkdtemp(prefix=".wdc-refresh-seed-", dir=source))
         try:
             staged = [stage / name for name in EXPORT_FILES]
-            for original, copy in zip(bundled_pair, staged):
+            for original, copy in zip(bundled_pair, staged, strict=True):
                 shutil.copy2(original, copy)
-            WarframeDataUpdater._publish_exports(tuple(zip(staged, targets)), stage)
+            WarframeDataUpdater._publish_exports(
+                tuple(zip(staged, targets, strict=True)), stage)
         finally:
             if not (stage / "PUBLISHING.json").exists():
                 shutil.rmtree(stage, ignore_errors=True)
@@ -91,25 +89,3 @@ def seed_source_files(project_root: Path) -> None:
         if source_file.exists() and not target_file.exists():
             shutil.copy2(source_file, target_file)
 
-
-def default_settings() -> dict[str, str]:
-    return {}
-
-
-def load_settings() -> dict[str, str]:
-    paths = ensure_app_dirs()
-    settings_path = paths["settings"]
-    settings = default_settings()
-    if settings_path.exists():
-        try:
-            saved = json.loads(settings_path.read_text(encoding="utf-8"))
-            if isinstance(saved, dict):
-                settings.update({k: str(v) for k, v in saved.items()})
-        except Exception:
-            pass
-    return settings
-
-
-def save_settings(settings: dict[str, str]) -> None:
-    paths = ensure_app_dirs()
-    paths["settings"].write_text(json.dumps(settings, indent=2), encoding="utf-8")

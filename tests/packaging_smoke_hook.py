@@ -12,7 +12,7 @@ import traceback
 from contextlib import closing
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 _original_exec = QApplication.exec

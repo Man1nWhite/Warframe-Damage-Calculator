@@ -11,15 +11,16 @@ import argparse
 import json
 import math
 import statistics
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
+from typing import Any
 from unittest.mock import patch
 
 import modules.kuva_nukor_sim as nukor
 from modules.akarius_sim import (
-    AkariusTarget,
     RIVEN_CORROSIVE,
     RIVEN_VIRAL,
+    AkariusTarget,
     akarius_dummy_factory,
     build_akarius,
     simulate,
@@ -129,7 +130,7 @@ def _summarize(results, attempted):
 
 def compare(name, target_factory, trials, seed, *, direct_hits=True,
             build_transform=None, neutral_og=False, discard_og_overflow=False,
-            blast_cap=None):
+            boss=False):
     """Run paired seeds and print one JSON record, with timeout counts."""
     if trials < 1:
         raise ValueError("trials must be positive")
@@ -138,26 +139,25 @@ def compare(name, target_factory, trials, seed, *, direct_hits=True,
     build_transform = build_transform or (lambda b: b)
     # Module globals are patched only within this serial sensitivity run.
     if neutral_og:
-        og_patch = patch.object(nukor, "route_enemy_hit", neutral_overguard_route)
+        og_patch: AbstractContextManager[Any] = patch.object(
+            nukor, "route_enemy_hit", neutral_overguard_route)
     elif discard_og_overflow:
         og_patch = patch.object(nukor, "route_enemy_hit", discard_overguard_overflow_route)
     else:
         og_patch = nullcontext()
-    if blast_cap is not None:
-        import modules.akarius_sim as akarius
-        cap_patch = patch.object(akarius, "BLAST_MAX_STACKS", blast_cap)
-    else:
-        cap_patch = nullcontext()
+    # A boss (or one of the Eximus that share the rule) detonates Blast at
+    # four stacks instead of ten; the target owns that cap.
+    factory = (lambda: target_factory(boss=True)) if boss else target_factory
     results = {}
-    with og_patch, cap_patch:
+    with og_patch:
         for riven in (RIVEN_VIRAL, RIVEN_CORROSIVE):
             build = build_transform(build_akarius(riven))
-            results[riven] = [simulate(build, target_factory(), seed=seed + i,
+            results[riven] = [simulate(build, factory(), seed=seed + i,
                                        direct_hits=direct_hits)
                               for i in range(trials)]
     viral = results[RIVEN_VIRAL]
     corrosive = results[RIVEN_CORROSIVE]
-    differences = [c.ttk - v.ttk for v, c in zip(viral, corrosive)
+    differences = [c.ttk - v.ttk for v, c in zip(viral, corrosive, strict=True)
                    if math.isfinite(v.ttk) and math.isfinite(c.ttk)]
     paired = None
     if differences:
@@ -202,7 +202,7 @@ def main(argv=None):
     n = args.sensitivity_trials
     compare("shared_heat_pulse_eximus",
             lambda: _copy_as(eximus(), SharedHeatClockTarget), n, args.seed)
-    compare("four_stack_blast_eximus", eximus, n, args.seed, blast_cap=4)
+    compare("four_stack_blast_eximus", eximus, n, args.seed, boss=True)
     compare("constant_average_crit_eximus", eximus, n, args.seed,
             build_transform=_constant_mean_crit)
     compare("neutral_overguard_eximus", eximus, n, args.seed, neutral_og=True)

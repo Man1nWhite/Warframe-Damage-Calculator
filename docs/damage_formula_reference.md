@@ -1,10 +1,13 @@
 # Warframe Damage & Status Formula Reference
 
-Compiled from the WARFRAME Wiki on **2026-10-27**. Several source pages carry
-an "actively being worked on" banner and disagree on some details. This is a
-reference, not a claim that the calculator or simulators implement every
-formula here. See [the formula audit](formula_audit.md) for tested scope,
-source conflicts and known simulation errors.
+Compiled from the WARFRAME Wiki on **2026-10-27** and re-verified page by page
+on **2026-10-28**. Several source pages carry an "actively being worked on"
+banner and disagree on some details. This is a reference, not a claim that the
+calculator or simulators implement every formula here. See
+[the formula audit](formula_audit.md) for tested scope, source conflicts and
+known simulation errors, and
+[the wiki verification report](wiki_formula_verification.md) for the per-formula
+verdicts and the pages each one was read from.
 
 ## Sources
 
@@ -15,7 +18,8 @@ source conflicts and known simulation errors.
 | Status chance, proc weighting, multishot, beams | https://wiki.warframe.com/w/Status_Effect |
 | Beam (continuous weapon) mechanics | https://wiki.warframe.com/w/Continuous_Weapon and https://wiki.warframe.com/w/Multishot |
 | Hit registration | https://wiki.warframe.com/w/Hitscan |
-| Per-type proc formulas | https://wiki.warframe.com/w/Damage/Slash_Damage, /Heat_Damage, /Toxin_Damage, /Electricity_Damage, /Gas_Damage |
+| Per-type proc formulas | https://wiki.warframe.com/w/Damage/Slash_Damage, /Heat_Damage, /Toxin_Damage, /Electricity_Damage, /Gas_Damage, /Blast_Damage, /Corrosive_Damage, /Cold_Damage, /Viral_Damage, /Magnetic_Damage, /Puncture_Damage |
+| Critical hits, tiers, base-multiplier quantization | https://wiki.warframe.com/w/Critical_Hit |
 
 ---
 
@@ -92,6 +96,43 @@ Direct-hit and AoE instances have independent stats; some bonuses (e.g.
 Condition Overload-type damage, see `source/gunco_mechanic.json`) affect only
 the direct instance. AoE cannot headshot; some weapons (e.g. Arca Plasmor) have
 no headshot multiplier at all.
+
+Critical chance and critical damage are built from relative and absolute
+bonuses, and the **base** critical multiplier is stored as a 12-bit code:
+
+```
+Modded Crit Chance     = Base Crit Chance x (1 + Relative Bonus) + Absolute Bonus
+Modded Crit Multiplier = Quantized Base x (1 + Relative Bonus) + Absolute Bonus
+Code(x)                = floor(clamp(x, 0, 32) x 4095 / 32 + 0.5)
+Quantized Base         = Code(x) x 32 / 4095
+```
+
+Relative bonuses (Point Strike, Riven Critical Damage, Vital Sense) scale the
+base; absolute bonuses (Arcane Avenger, Puncture's Weakened, Cold's Freeze
+bonus, Secondary Enervate) are added afterwards. Critical tiers follow
+`1 + tier x (Crit Multiplier - 1)`; above 100% the floor tier is the lowest
+guaranteed hit and the ceiling tier the next possible one (250% -> tiers 2 and
+3). A critical headshot doubles the critical term before the location
+multiplier:
+`Headshot Crit Tier = Headshot Multi x (1 + tier x (2 x Crit Multiplier - 1))`
+(not implemented: every bundled simulator assumes body shots). Example (Critical Hit page): `Code(1.6 + 0.4) = 256`, so the decoded base
+is `256 x 32/4095 = 2.0004884`.
+
+Cold is the only status that changes critical damage: **+0.10x** on the first
+Freeze stack, **+0.05x** per subsequent stack, and **+1.0x** while frozen at 10
+stacks (bosses and Overguard-carrying enemies cap at 4 stacks, +0.25x). It is
+additive with Critical Damage mods, applies before the tier is chosen, and does
+not apply to AoE damage. Kunai with Primed Target Cracker at 9 Cold stacks:
+`1.6 x (1 + 110%) + 0.50 = 3.86`.
+
+Implemented in `modules/crit.py` (`modded_crit_chance`,
+`quantize_crit_multiplier`, `modded_crit_multiplier`,
+`cold_crit_damage_bonus`, `crit_tiers`, `normal_shot`, `critical_shot`,
+`average_shot`, `direct_aoe_shot`, `weak_point_shot`). The simulators reach the
+Freeze bonus through `DummyTarget.crit_damage_multiplier`, which adds it for
+that target's live Cold stacks before the tier; it is zero unless the target
+actually carries Freeze stacks, and the Akarius radial Blast instance opts out
+because the bonus does not apply to AoE damage.
 
 ### 1.5 DPS
 
@@ -269,6 +310,24 @@ as Saryn Spores excluded).
 
 ---
 
+### 4.4 Non-damaging status effects (numbers used by the simulators)
+
+| Proc | Duration / stacks | Effect |
+| --- | --- | --- |
+| Impact (Stagger) | 1 s, 5 stacks | +8% Parazon Mercy threshold per proc |
+| Puncture (Weakened) | 10 s, 5 stacks | enemy damage -40%, then -10% per stack (max -80%); incoming weapon damage +5% flat critical chance per stack (max +25%), not on AoE |
+| Cold (Freeze) | 6 s, 10 stacks (4 under Overguard) | slow 50% -> 90%; +0.10x critical damage, +0.05x per stack, +1.0x frozen |
+| Corrosive (Corrosion) | 8 s, 10 stacks | armor `1 - (0.20 + 0.06 x stacks)`, i.e. 26% then +6% to 80% |
+| Viral (Virus) | 6 s, 10 stacks | health damage `2 + 0.25 x (stacks - 1)`, max 325%; not double-dipped on DoTs |
+| Magnetic (Disrupt) | 6 s, 10 stacks | shields/Overguard damage `2 + 0.25 x (stacks - 1)`; on break a forced Electricity proc worth 3% of max defense per stack over 6 s |
+| Radiation (Confusion) | 12 s, 10 stacks | friendly fire, +100% and +50% per stack to 550% |
+| Blast (Detonate) | 1.5 s fuse, 10 stacks (4 for bosses and some Eximus) | 30% of modded base per stack, or `max(1, 0.3 x H)` if the fuse expires unnoticed; at the cap or on death all stacks detonate for 300% per stack within 5 m to *other* enemies (the proc target keeps only the 30%-per-stack single-target damage) |
+
+Heat's armor strip is 15/30/40/50% at 0.5 s intervals after the first proc and
+restores 50/40/30/15/0% every 1.5 s after it ends; armor reductions from Heat,
+Corrosive and Corrosive Projection are multiplicative with one another
+(`(1 - heat) x (1 - corrosive) x (1 - 0.18 x projections)`).
+
 ## 5. Gas status — change history
 
 Current mechanics (2026): a Gas proc spawns a 3 m cloud dealing 50% of modded
@@ -314,4 +373,8 @@ dependency:
 - `proc_type_chances()`, `average_procs_per_shot()`,
   `average_procs_per_second()`, `beam_merged_status_chance()`
 - `wiki_quantized_damage()` — the 1/32 direct-hit quantization
+- `modules/crit.py` — critical chance/damage formulas: relative and absolute
+  bonuses, the 12-bit base critical-multiplier quantization, Cold's
+  critical-damage bonus, critical tiers, normal/critical/average shot,
+  direct + AoE sum and the weak-point form
 - `STATUS_PROCS` — coefficient/timing/stack reference table

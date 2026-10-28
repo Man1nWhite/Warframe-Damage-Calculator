@@ -13,9 +13,9 @@ import unittest
 
 from modules.calculator import DamageCalculator
 from modules.constants import DAMAGE_TYPES, FACTION_MULTIPLIERS
-from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from modules.mod_engine import ModAggregator, _bane_bonus
 from modules.mod_parser import parse_effects
+from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 
 
 def make_weapon(damage: dict[str, float], dmg: float | None = None, multi: float = 1.0) -> Weapon:
@@ -168,6 +168,83 @@ class ElementalCombinationTests(unittest.TestCase):
             self.assertAlmostEqual(result.aggregated_mods[code], bonuses[code], msg=code)
         self.assertEqual(result.aggregated_mods["RAD"], 0)
         self.assertEqual(result.aggregated_mods["VIRAL"], 0)
+
+
+class CalculationInputConsistencyTests(unittest.TestCase):
+    """A build must not depend on whether the caller pre-aggregated the mods.
+
+    ``CalculationInputs`` accepts either a resolved ``mods`` dictionary or the
+    equipped slots. The slots are authoritative, so passing them alone has to
+    produce the same numbers as passing them together with the totals the mod
+    engine computed from them -- otherwise base-damage and faction bonuses
+    silently vanish for callers that only have the slots.
+    """
+
+    def build(self, *effects: tuple[str, float]) -> tuple[Weapon, list[EquippedMod]]:
+        weapon = make_weapon({"IMPACT": 1.73, "PUNC": 15.57, "SLASH": 155.7})
+        return weapon, equipped(*effects)
+
+    def calculate(self, weapon: Weapon, slots: list[EquippedMod],
+                  mods: dict[str, float] | None = None,
+                  faction: str = "Grineer"):
+        return DamageCalculator().calculate(weapon, CalculationInputs(
+            weapon_name=weapon.weapon, faction=faction, armor_value=0,
+            mods={} if mods is None else mods, equipped_mods=slots))
+
+    def test_equipped_mods_alone_match_the_preaggregated_totals(self) -> None:
+        weapon, slots = self.build(("TRUE", 1.65), ("BANE_GRINEER", 0.55),
+                                   ("PUNC", 1.2), ("COLD", 0.9), ("TOXIN", 0.6),
+                                   ("HEAT", 0.9), ("GAS", 2.0))
+        totals = ModAggregator().aggregate(slots, "Grineer")
+        together = self.calculate(weapon, slots, totals)
+        slots_only = self.calculate(weapon, slots)
+        self.assertEqual(slots_only.hud_total, together.hud_total)
+        self.assertEqual(slots_only.final_total, together.final_total)
+        self.assertEqual(slots_only.hud_total_with_bane, together.hud_total_with_bane)
+        self.assertEqual(slots_only.final_total_with_bane, together.final_total_with_bane)
+        self.assertEqual(slots_only.quanta, together.quanta)
+        # The reported regression: the slots-only call used to drop +165%
+        # Damage (and the Bane multiplier), giving 934.2 instead of 2,525.14.
+        self.assertAlmostEqual(slots_only.quanta, 173 * 2.65 / 32)
+        self.assertAlmostEqual(slots_only.aggregated_mods["TRUE"], 1.65)
+        self.assertAlmostEqual(slots_only.aggregated_mods["BANE"], 0.55)
+        self.assertAlmostEqual(slots_only.final_total_with_bane, 3908.28625)
+
+    def test_equipped_slots_override_stale_preaggregated_totals(self) -> None:
+        weapon, slots = self.build(("TRUE", 1.65))
+        stale = {"TRUE": 9.0, "BANE": 5.0, "HEAT": 4.0}
+        result = self.calculate(weapon, slots, stale)
+        self.assertAlmostEqual(result.aggregated_mods["TRUE"], 1.65)
+        self.assertEqual(result.aggregated_mods["BANE"], 0.0)
+        self.assertEqual(result.aggregated_mods["HEAT"], 0.0)
+        self.assertAlmostEqual(result.quanta, 173 * 2.65 / 32)
+
+    def test_the_preaggregated_dictionary_still_works_without_slots(self) -> None:
+        weapon = make_weapon({"SLASH": 100})
+        result = DamageCalculator().calculate(weapon, CalculationInputs(
+            weapon_name=weapon.weapon, faction="Grineer", armor_value=0,
+            mods={"TRUE": 1.65, "BANE": 0.55}))
+        self.assertAlmostEqual(result.quanta, 265 / 32)
+        self.assertAlmostEqual(result.final_total_with_bane, 265 * 1.55)
+
+    def test_the_legacy_faction_alias_matches_its_canonical_name(self) -> None:
+        weapon, slots = self.build(("TRUE", 0.5), ("BANE_GRINEER", 0.55))
+        legacy = self.calculate(weapon, slots, faction="Zairman")
+        canonical = self.calculate(weapon, slots, faction="Zariman")
+        self.assertEqual(legacy.faction_modifiers, canonical.faction_modifiers)
+        self.assertEqual(legacy.final_total_with_bane, canonical.final_total_with_bane)
+        # The mod engine applies the same alias, so a caller that aggregates
+        # the slots itself cannot end up with a different Bane total.
+        aggregator = ModAggregator()
+        self.assertEqual(aggregator.aggregate(slots, "Zairman"),
+                         aggregator.aggregate(slots, "Zariman"))
+
+    def test_an_unknown_faction_names_the_problem(self) -> None:
+        weapon, slots = self.build(("TRUE", 0.5))
+        with self.assertRaises(ValueError) as caught:
+            self.calculate(weapon, slots, faction="Tenno")
+        self.assertIn("Unknown faction", str(caught.exception))
+        self.assertIn("Tenno", str(caught.exception))
 
 
 class DamageFixture:

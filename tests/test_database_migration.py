@@ -1,8 +1,6 @@
 """Offline, transactional migration of legacy AppData databases."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import contextlib
 import io
 import json
@@ -14,6 +12,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -369,8 +368,9 @@ migration.migrate_database(*sys.argv[1:])
             writer.execute("BEGIN EXCLUSIVE")
             writer.execute("UPDATE personal_notes SET note='uncommitted'")
         try:
+            # A short deadline keeps this fast; production uses five seconds.
             with patch.object(migration, "_validate_legacy_coverage", side_effect=lock_after_validation), \
-                 patch("modules.database_backup.time.monotonic", side_effect=[0.0] + [10.0] * 100):
+                 patch("modules.database_backup.BACKUP_LOCK_DEADLINE_SECONDS", 0.05):
                 with self.assertRaisesRegex(migration.DatabaseMigrationError, "stayed locked"):
                     self.migrate()
         finally:

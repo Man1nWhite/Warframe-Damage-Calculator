@@ -21,9 +21,10 @@ Run from the repository root:
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
+from modules.crit import quantize_crit_multiplier
 from modules.status_damage import PROC_DURATION, magnetic_break_electric_tick, wiki_quantized_damage
 
 # The current WARFRAME Wiki's weapon, mod and Riven values. Initial combo is
@@ -123,7 +124,8 @@ class Build:
 
     @property
     def crit_multiplier(self) -> float:
-        return BASE_CRIT_MULTIPLIER * (
+        # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+        return quantize_crit_multiplier(BASE_CRIT_MULTIPLIER) * (
             1.0 + GALV_CRIT_DAMAGE + self.crit_damage_bonus
         )
 

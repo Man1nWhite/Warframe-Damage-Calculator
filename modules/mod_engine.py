@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
-from typing import Dict, Iterable
+from collections.abc import Iterable
 
-from .constants import BASE_ELEMENT_TYPES, BANE_CODE_MAP, ELEMENT_COMBINATIONS, MOD_STAT_ORDER
+from .constants import (
+    BANE_CODE_MAP,
+    BASE_ELEMENT_TYPES,
+    ELEMENT_COMBINATIONS,
+    MOD_STAT_ORDER,
+    faction_key,
+)
 from .models import EquippedMod, ModEffect
 
 
@@ -58,14 +64,14 @@ class ModAggregator:
       feeding that secondary element when it appears again later.
     """
 
-    def aggregate(self, equipped_mods: Iterable[EquippedMod], faction: str) -> Dict[str, float]:
-        totals = defaultdict(float)
+    def aggregate(self, equipped_mods: Iterable[EquippedMod], faction: str) -> dict[str, float]:
+        totals: defaultdict[str, float] = defaultdict(float)
         # Uncombined base element groups, keyed by element in first-occurrence order.
-        pending: "OrderedDict[str, float]" = OrderedDict()
+        pending: OrderedDict[str, float] = OrderedDict()
         # Base element -> secondary element code it was combined into.
         combo_of: dict[str, str] = {}
 
-        bane_codes = BANE_CODE_MAP.get(faction, set())
+        bane_codes = BANE_CODE_MAP.get(faction_key(faction), set())
 
         for equipped in equipped_mods:
             if equipped.mod is None:

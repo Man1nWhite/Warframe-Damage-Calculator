@@ -18,6 +18,47 @@ from modules.damage_routing import route_enemy_hit
 from modules.status_damage import magnetic_break_electric_tick
 
 
+def capturing_absorb(target):
+    """Patch payload recording every hit routed to ``target``.
+
+    Kept out of the test body so the closure cannot accidentally capture a
+    loop variable (ruff B023) if the test grows another loop level.
+    """
+    captured = []
+    original = target.absorb
+
+    def capture(damage, when, ramp, **kwargs):
+        result = original(damage, when, ramp, **kwargs)
+        captured.append((damage, when, result))
+        return result
+
+    return capture, captured
+
+
+def break_proc_factory(made):
+    """Factory whose targets start with a pending Magnetic break proc."""
+    def factory():
+        target = nukor.DummyTarget(1000, 0, 0)
+        target.magnetic_break_procs.append(
+            nukor.MagneticBreakProc(0.5, 2.5, 100))
+        made.append(target)
+        return target
+
+    return factory
+
+
+def staggered_heat_factory(made):
+    """Factory whose first target burns at 0.25 s and later ones at 0.75 s."""
+    def factory():
+        target = nukor.DummyTarget(1000, 0, 0)
+        start = 0.25 if not made else 0.75
+        target.heat_procs.append(nukor.HeatProc(start, 40, 1, start))
+        made.append(target)
+        return target
+
+    return factory
+
+
 class SimulatorRoutingIntegrationTests(unittest.TestCase):
     @staticmethod
     def cases():
@@ -57,13 +98,7 @@ class SimulatorRoutingIntegrationTests(unittest.TestCase):
                     target.overguard = 1
                     target.add_magnetic(0, 6, source)
                     target.viral_expiries.append(0.5)  # expires before t=1
-                    captured = []
-                    original = target.absorb
-
-                    def capture(damage, when, ramp, **kwargs):
-                        result = original(damage, when, ramp, **kwargs)
-                        captured.append((damage, when, result))
-                        return result
+                    capture, captured = capturing_absorb(target)
 
                     with patch.object(target, "absorb", side_effect=capture):
                         trial = simulate(build, target, cutoff)
@@ -102,12 +137,7 @@ class SimulatorRoutingIntegrationTests(unittest.TestCase):
             for cutoff, expected_health in ((0.4, 1000), (0.75, 900)):
                 with self.subTest(module=module.__name__, cutoff=cutoff):
                     made = []
-                    def factory():
-                        target = nukor.DummyTarget(1000, 0, 0)
-                        target.magnetic_break_procs.append(
-                            nukor.MagneticBreakProc(0.5, 2.5, 100))
-                        made.append(target)
-                        return target
+                    factory = break_proc_factory(made)
                     if module is nukor:
                         result = module.simulate_room(build, 1, factory=factory,
                                                       max_time=cutoff)
@@ -275,12 +305,7 @@ class PerProcTimingTests(unittest.TestCase):
         ):
             with self.subTest(module=module.__name__):
                 made = []
-                def factory():
-                    target = nukor.DummyTarget(1000, 0, 0)
-                    start = 0.25 if not made else 0.75
-                    target.heat_procs.append(nukor.HeatProc(start, 40, 1, start))
-                    made.append(target)
-                    return target
+                factory = staggered_heat_factory(made)
                 if module is nukor:
                     nukor.simulate_room(build, 2, factory=factory, max_time=1.5)
                 else:

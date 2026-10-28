@@ -1,6 +1,70 @@
-# MAJOR NOTE!!
+# Warframe Damage Calculator — a fork kept to test the damage data
 
-## A Note on Development: This app's UI and structure were generated entirely using ChatGPT, but the underlying math is the result of countless hours of manual testing and coding.
+> **This repository is a fork.** The application is
+> [DeadxxSmile/Warframe-Damage-Calculator](https://github.com/DeadxxSmile/Warframe-Damage-Calculator),
+> the TenZeroGG calculator whose math DeadxxSmile (TenZeroGG) and Xadreus built.
+> `Man1nWhite/Warframe-Damage-Calculator` keeps that app and uses it as a test
+> bench for the damage data: every formula is re-read from the
+> [WARFRAME Wiki](https://wiki.warframe.com), pinned by a regression test, and
+> corrected where the code disagreed with the source. Upstream stays the place
+> to download the app, report app bugs and follow feature work.
+
+## What this fork tests
+
+The fork changes what the numbers *do*, not what the app looks like. Every
+check below runs against the bundled data snapshot; only re-reading the wiki
+itself needs network access:
+
+- **Every formula family against the Wiki.**
+  [`docs/wiki_formula_verification.md`](docs/wiki_formula_verification.md)
+  records, page by page (about thirty pages read as raw wikitext on 2026-10-28),
+  what the Wiki says, where the repository implements it and whether the two
+  agree; [`docs/formula_audit.md`](docs/formula_audit.md) holds the scope limits,
+  the source conflicts and the history of the corrections.
+- **A re-runnable check.** `tools/wiki_audit.py` re-reads the audited pages,
+  extracts the numbers next to each claim's keyword and compares them with the
+  code, with `--save-snapshot` / `--baseline` turning two runs into a diff of
+  exactly which numbers appeared or disappeared.
+- **Exact numbers under test.** The suite pins worked examples and regressions
+  (armor reduction, 32-quantization, DoT ticks, crit tiers, Cold/Blast stack
+  caps, Riven values, Condition Overload) instead of asserting that "something
+  changed"; it runs offline in about eight seconds.
+- **Corrections the testing found,** each committed on its own: the 12-bit
+  quantization of the base critical-damage multiplier, Cold's four-stack cap on
+  Overguard, Blast's boss cap and death-triggered detonation, Void's Overguard
+  bonus, the equipped slots being aggregated inside the calculator (callers that
+  passed only `equipped_mods` silently lost their +Damage and Bane bonuses), and
+  the legacy `Zairman` faction spelling.
+
+What the fork does **not** do: it ships no releases or installers, it may lag
+behind upstream, and it is not a support channel for the app. The GPL-3.0
+license and the disclaimer below are the upstream project's and cover this copy
+too; the added documents, tests and `tools/wiki_audit.py` fall under the same
+license.
+
+### Reproducing the damage tests
+
+```bash
+python -m unittest discover -s tests -q     # the whole suite, offline
+python -m ruff check . && python -m mypy    # the gates CI runs
+
+# Re-read the audited pages and record the numbers the code is pinned to.
+python tools/wiki_audit.py --save-snapshot docs/wiki_numbers.json
+# After a game update, show only the numbers that appeared or disappeared.
+python tools/wiki_audit.py --baseline docs/wiki_numbers.json
+```
+
+The snapshot is written by the first command and is not committed, since it
+needs the live pages. `--topic TEXT` narrows the audit to one area (for example
+`--topic "Blast"`) and `--pages DIR` reads saved page text, so a later run can
+be made without network access; the exit codes are documented under
+[Re-running the wiki audit](#re-running-the-wiki-audit).
+
+## A note from the upstream project
+
+*A note on development: this app's UI and structure were generated entirely
+using ChatGPT, but the underlying math is the result of countless hours of
+manual testing and coding.*
 
 Ages ago, I started the TenZero.GG project to make a better site to create and share Warframe builds. While I handled the bulk of the overarching project, my collaborator Xadreus and I teamed up heavily on the incredibly complex damage calculations and the underlying math. Together, we worked our tails off to accurately recreate the game's systems, matching not just the HUD stats, but the real-world values you actually see when using weapons in a mission. We honestly had the most accurate calculations of any model we could find online.
 
@@ -8,15 +72,19 @@ Unfortunately, life loves to get in the way of passion projects. Between college
 
 Instead of letting all the work Xadreus and I put into those accurate damage calculations go to waste, I figured: why not throw our spreadsheet at ChatGPT and see if I could vibe code out a Python app? I wanted to give something back to the amazing Warframe community so our work actually means something, even if the original site never gets built. I absolutely plan to get my hands dirty in the code later to add features and make it look better, but with real life pulling me away, using AI was the best way to get this tool into your hands now. I hope you understand, and I hope you enjoy it!
 
-# Warframe Damage Calculator by TenZeroGG v1.0.1
-
-Desktop Warframe damage calculator built around the calculator engine and packaged as a PyQt6 desktop app.
+**The application (upstream, TenZeroGG v1.0.1).** A desktop Warframe damage
+calculator built around the calculator engine and packaged as a PyQt6 desktop
+app. Everything from here down documents that application; the fork adds the
+verification layer described above and otherwise leaves the app as upstream has
+it.
 
 ## Current Features
 
 > **Scope:** results are estimates, not a complete combat model. See the
 > [formula audit](docs/formula_audit.md) for verified examples, wiki source
-> disagreements, unsupported mechanics and known simulation errors.
+> disagreements, unsupported mechanics and known simulation errors, and the
+> [wiki verification report](docs/wiki_formula_verification.md) for the
+> per-formula checks.
 
 - PyQt6 dark mode UI
 - SQLite database for weapons and mods
@@ -55,9 +123,14 @@ Inside that folder the app keeps:
 - `source/ExportKeys_en_Cleaned.zip`
 - `source/Warframe-Damage-Calculator_v2.xlsx`
 - `builds/*.json`
-- `settings.json`
+
+The app does not write a settings file; any other file in this folder (for
+example a `settings.json` left by an earlier build) is left untouched.
 
 ## Running
+
+Requires **Python 3.11 or newer** (CI covers 3.11 and 3.12; the code uses
+`datetime.UTC`, `zip(strict=...)` and PEP 604/585 annotations).
 
 ```bash
 pip install -r requirements.txt
@@ -289,11 +362,45 @@ Mod filtering is **partial**, not a complete Arsenal legality check:
 
 - [Formula audit](docs/formula_audit.md) — findings, source disagreements,
   tested scope and known limitations.
+- [Wiki verification report](docs/wiki_formula_verification.md) — every
+  formula family checked against the WARFRAME Wiki on 2026-10-28, with the page
+  it was read from, the code that implements it and any documented deviation.
 - [Damage and status reference](docs/damage_formula_reference.md) — the
   wiki's direct-hit, armor, trigger, status and DoT formulas. The Python DoT
   helpers use binary64, not exact in-game binary32 arithmetic.
 - [Target dummy models](docs/target_dummy_models.md) — Heavy Gunner level
   scaling and the explicit article-versus-gadget Overguard disagreement.
+
+### Re-running the wiki audit
+
+`tools/wiki_audit.py` re-reads the audited wiki pages, extracts the numbers
+next to a keyword for each claim in its registry, and compares them with the
+value the code uses. It is a reporting tool: a number that moved is something
+to review, not something it changes for you.
+
+```bash
+# Read the pages (cached under wiki_pages/, which is not committed) and save
+# the extracted numbers so a later run can diff against them.
+python tools/wiki_audit.py --save-snapshot docs/wiki_numbers.json
+
+# After a game update, re-read (delete wiki_pages/ first for fresh text) and
+# show exactly which numbers appeared or disappeared.
+python tools/wiki_audit.py --baseline docs/wiki_numbers.json
+```
+
+`--topic TEXT` filters the claims (for example `--topic "Blast"`), `--json`
+prints a machine-readable report, and `--pages DIR` points at a different cache.
+Exit codes: `0` every audited number still matches the code, `1` a number moved
+or the code drifted from its audited value, `2` a page or keyword could not be
+read, so the audit is incomplete.
+
+One claim (the four-stack Blast cap on `Damage/Calculation`) is stated in prose
+next to no keyword, so its registry entry is `optional`. When that page cannot
+be read the claim is reported as `[unverified]` and the exit code is unchanged,
+which keeps a network-less run of the Blast topic at `0`; a drift in
+`BLAST_MAX_STACKS_BOSS` itself is still reported as `code-changed` (`1`) and the
+JSON payload carries `"optional": true`. `tests/test_wiki_audit.py` runs the
+whole thing offline against saved page text.
 
 The desktop calculator is limited to a non-critical direct hit on health; it
 is not a complete TTK, shield, Overguard, crit, or status simulator. The wiki's
@@ -323,7 +430,9 @@ unverified Afflictions and status-timing hypotheses change the results.
 
 **Do not treat simulated TTKs or rankings as validated in-game results.**
 Historical reports predate corrected mechanics and are retained only as marked
-archives. Several simulations model Overguard overflow and Magnetic break ticks;
+archives; the crit multipliers quoted in them predate the
+[12-bit base-multiplier quantization](docs/damage_formula_reference.md#14-total-crit-aoe-and-weak-points)
+adopted on 2026-10-28, which moves those figures by at most 0.2%. Several simulations model Overguard overflow and Magnetic break ticks;
 the new Jat slam-count experiment instead assumes no overflow at the user's
 request. All still rely on unverified routing assumptions, simplified status timing and
 weapon-specific approximations; see the
@@ -341,6 +450,42 @@ Install `requirements.txt`, then run:
 ```bash
 python -m unittest discover -s tests -q
 ```
+
+The suite is fully offline and takes roughly eight seconds on a laptop. Each
+migration or rebuild test parses the same bundled exports, so the workbook and
+both JSON export parsers in `modules/importer.py` are memoized on the source
+file's identity (path, mtime, size) and invalidate themselves when the file
+changes. A locked-database test exercises the real backup path, so it shortens
+`modules.database_backup.BACKUP_LOCK_DEADLINE_SECONDS` instead of waiting out
+the production five seconds.
+
+### Code style
+
+Linting is enforced from `ruff.toml` (`E`, `W`, `F`, `I`, `UP`, `B`; `E501` is
+off because the UI tooltips, data tables and wiki URLs are deliberately long).
+CI runs exactly the same command, so a local run is authoritative:
+
+```bash
+pip install -r requirements-dev.txt
+python -m ruff check .
+```
+
+### Type checking
+
+`mypy.ini` type-checks `modules/` (every formula, the mod engine, the importer
+and the migration pipeline) with `--check-untyped-defs`, so the body of a
+function is checked even where its signature is still unannotated. This is
+deliberately a partial gate: it catches recorded mistakes such as a float
+written into an integer counter, an `Optional` used without a guard, or a loop
+variable reused for a different record type, without demanding a full
+annotation campaign. `gui/`, `tests/` and `tools/` are out of scope; CI runs the
+same command, so a local run is authoritative:
+
+```bash
+python -m mypy
+```
+
+### GUI test prerequisites
 
 The Qt integration tests exercise real widgets, ordered mod selection,
 save/load/compare, offline rebuild, and migration startup. They run with Qt's

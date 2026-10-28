@@ -1,8 +1,6 @@
 """Data refresh must never silently replace usable exports with broken ones."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import json
 import lzma
 import os
@@ -12,13 +10,17 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
 from modules.updater import (
-    DATA_URL, KEY_URL, DataRefreshError, DataRefreshRecoveryError, WarframeDataUpdater,
+    DATA_URL,
+    KEY_URL,
+    DataRefreshError,
+    DataRefreshRecoveryError,
+    WarframeDataUpdater,
 )
-
 
 WEAPONS = "ExportWeapons_en_Cleaned.zip"
 UPGRADES = "ExportKeys_en_Cleaned.zip"

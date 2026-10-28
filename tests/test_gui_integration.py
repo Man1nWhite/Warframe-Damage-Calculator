@@ -1,14 +1,13 @@
 """Real Qt widget/SQLite integration tests; no display or network required."""
 from __future__ import annotations
 
-from contextlib import closing
-
 import json
 import os
 import shutil
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +19,8 @@ except (ImportError, OSError) as exc:
     # CI sets this so a missing Qt installation cannot silently skip the suite.
     if os.environ.get("WDC_REQUIRE_GUI_TESTS") == "1":
         raise
-    raise unittest.SkipTest(f"Qt integration tests need PyQt6 and native Qt libraries: {exc}")
+    raise unittest.SkipTest(
+        f"Qt integration tests need PyQt6 and native Qt libraries: {exc}") from exc
 
 import main as startup
 from gui.app import CompareBuildDialog, DamageCalculatorWindow, SettingsDialog

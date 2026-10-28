@@ -1,8 +1,7 @@
 import unittest
 
 from modules.calculator import DamageCalculator
-from modules.mod_engine import ModAggregator
-from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
+from modules.crit import quantize_crit_multiplier
 from modules.jat_kittag_slam_analysis import (
     BUILD_BY_KEY,
     BUILDS,
@@ -21,6 +20,8 @@ from modules.jat_kittag_slam_analysis import (
     probability_three,
     sustainable_interval,
 )
+from modules.mod_engine import ModAggregator
+from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 
 
 class BuildTests(unittest.TestCase):
@@ -70,15 +71,16 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("Primed Fever Strike", b.weapon_mods)
         self.assertEqual(set(b.types), {"BLAST", "GAS", "ELECTRICITY"})
         self.assertAlmostEqual(b.crit_chance, 1.0875)
-        self.assertAlmostEqual(b.crit_multiplier, 6.425)
-        self.assertAlmostEqual(b.average_crit_multiplier, 6.8996875)
+        # Includes the Wiki's quantized base critical multiplier.
+        self.assertAlmostEqual(b.crit_multiplier, quantize_crit_multiplier(2.0) * 3.2125)
+        self.assertAlmostEqual(b.average_crit_multiplier, 6.901393772893773)
         self.assertAlmostEqual(b.efficiency, 0.9)
         self.assertAlmostEqual(b.probability_of("GAS"), 0.6539904302)
         self.assertAlmostEqual(b.probability_of("ELECTRICITY"), 0.4338414795)
         self.assertAlmostEqual(b.probability_of_both("GAS", "ELECTRICITY"), 0.21626194)
         a = BUILD_BY_KEY["focus_fever_gas_cold_damage"]
         self.assertAlmostEqual(b.direct_average(5) / a.direct_average(5),
-                               1.1958563838195186)
+                               1.195917770801871)
 
     def test_fever_focus_riven_damage_vs_crit_uses_no_pressure_for_either(self):
         damage = BUILD_BY_KEY["focus_fever_gas_cold_damage"]
@@ -87,10 +89,10 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(damage.types, crit.types)
         self.assertAlmostEqual(crit.crit_chance, 1.0875)
         self.assertAlmostEqual(damage.direct_average(5) / crit.direct_average(5),
-                               1.598530282064928)
+                               1.598445908727162)
         old_gas = BUILD_BY_KEY["gas_eff_cc"]
         self.assertAlmostEqual(damage.direct_average(5) / old_gas.direct_average(5),
-                               0.8713162963037343)
+                               0.8712703066437362)
 
     def test_focus_energy_combines_toxin_and_electricity(self):
         b = BUILD_BY_KEY["focus_energy"]
@@ -239,19 +241,21 @@ class BuildTests(unittest.TestCase):
         base = BUILD_BY_KEY["focus_energy"]
         crit = BUILD_BY_KEY["gas_eff_cc"]
         self.assertAlmostEqual(base.crit_chance, 0.48)
-        self.assertAlmostEqual(base.crit_multiplier, 4.4)
-        self.assertAlmostEqual(base.average_crit_multiplier, 2.632)
+        # Wiki Critical Hit: the base multiplier is quantized before mods.
+        self.assertAlmostEqual(base.crit_multiplier, quantize_crit_multiplier(2.0) * 2.2)
+        self.assertAlmostEqual(base.average_crit_multiplier, 2.6325157509157506)
         self.assertAlmostEqual(base.status_rolls, 2.2)
         self.assertAlmostEqual(crit.crit_chance, 1.0875)
-        self.assertAlmostEqual(crit.average_crit_multiplier, 4.6975)
+        self.assertAlmostEqual(crit.average_crit_multiplier, 4.698668498168498)
         self.assertAlmostEqual(crit.average_crit_multiplier / base.average_crit_multiplier,
-                               1.78476444, places=6)
+                               1.7848586457779076, places=6)
 
     def test_riven_crit_damage_vs_melee_damage_direct_only(self):
         crit_damage = BUILD_BY_KEY["normal_eff_cc_cd"]
         melee_damage = BUILD_BY_KEY["normal_eff_cc_damage"]
-        self.assertAlmostEqual(crit_damage.crit_multiplier, 6.425)
-        self.assertAlmostEqual(crit_damage.average_crit_multiplier, 6.8996875)
+        self.assertAlmostEqual(crit_damage.crit_multiplier,
+                               quantize_crit_multiplier(2.0) * 3.2125)
+        self.assertAlmostEqual(crit_damage.average_crit_multiplier, 6.901393772893773)
         self.assertGreater(melee_damage.direct_average(5), crit_damage.direct_average(5))
         self.assertEqual(melee_damage.types, crit_damage.types)
 
@@ -272,16 +276,16 @@ class BuildTests(unittest.TestCase):
         gas_toxin = BUILD_BY_KEY["gas_eff_cc"]
         gas_corrosive = BUILD_BY_KEY["gas_corrosive_cc"]
         self.assertAlmostEqual(gas_toxin.direct_average(5) / focus.direct_average(5),
-                               2.00786, places=4)
+                               2.00797, places=4)
         self.assertAlmostEqual(gas_corrosive.direct_average(5) / focus.direct_average(5),
-                               1.99070, places=4)
+                               1.99080, places=4)
         grineer = {"CORROSIVE": 1.5}
         self.assertAlmostEqual(gas_toxin.direct_average(5, faction_types=grineer)
                                / focus.direct_average(5, faction_types=grineer),
-                               1.49155, places=4)
+                               1.49163, places=4)
         self.assertAlmostEqual(gas_corrosive.direct_average(5, faction_types=grineer)
                                / focus.direct_average(5, faction_types=grineer),
-                               1.81026, places=4)
+                               1.81036, places=4)
         # Faction-type weakness changes direct damage, not proc weighting.
         self.assertAlmostEqual(gas_corrosive.probability_of("CORROSIVE"), 0.71920, places=5)
 

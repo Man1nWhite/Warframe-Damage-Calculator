@@ -129,7 +129,7 @@ class WarframeDataUpdater:
         with marker.open("x", encoding="utf-8") as handle:
             json.dump({"archives": [
                 {"destination": target.name,
-                 "previous_copy": backups[target].name if backups[target] is not None else None}
+                 "previous_copy": (prior.name if (prior := backups[target]) else None)}
                 for _, target in archives
             ]}, handle, indent=2)
             handle.flush()
@@ -146,14 +146,14 @@ class WarframeDataUpdater:
             failures = []
             for target in reversed(published):
                 try:
-                    backup = backups[target]
-                    if backup is None:
+                    prior = backups[target]
+                    if prior is None:
                         target.unlink(missing_ok=True)
                     else:
                         # Copy to a new file and atomically restore it while
                         # retaining the original backup if restoration fails.
                         restore = stage / ("restore-" + target.name)
-                        shutil.copy2(backup, restore)
+                        shutil.copy2(prior, restore)
                         os.replace(restore, target)
                 except OSError as rollback_error:
                     failures.append(f"{target}: {rollback_error}")

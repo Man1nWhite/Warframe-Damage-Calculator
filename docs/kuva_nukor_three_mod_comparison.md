@@ -33,8 +33,9 @@ archive and was not used for these results.
   simulate the arcane's actual ramp, reset cycle, or full tier distribution.
 - Max-rank Primed Target Cracker is **+110%**, not +120% [1](https://wiki.warframe.com/w/Primed_Target_Cracker).
   With the assumed Riven, the first-tier critical multiplier is
-  `5 × (1 + 1.10 + 1.013) = 15.565×`. This value was corrected in the Nukor,
-  Ocucor, and Akarius simulations before the runs below. Pistol Elementalist
+  `5.001221 × (1 + 1.10 + 1.013) = 15.5688×`, where `5.001221` is the decoded
+  12-bit base multiplier (`Code(5) = 640`, `640 × 32/4095`); the runs below
+  predate that quantization and used the nominal `5 × 3.113 = 15.565×`. Pistol Elementalist
   gives **+90% status damage and +60% reload speed**, not duration [2](https://wiki.warframe.com/w/Pistol_Elementalist).
 - Single target, body shots, uninterrupted beam until death, no faction mod,
   external buffs, companion, primer, headshots, or beam chains. Targets have
@@ -182,8 +183,10 @@ for mod in ("Hornet Strike", "Scorch"):
     print(mod, result["ttk_mean"], result["ttk_median"], result["timed_out"])
 ```
 
-For the four-stack hybrid Blast sensitivity, in a fresh interpreter set
-`modules.kuva_nukor_sim.BLAST_MAX_STACKS = 4` before calling `run_trials` for
-Frostbite with 2,500 trials and seed 20261028. This deliberately changes the
-simulation globally for that process; it does not establish the correct game
-mechanic.
+For the four-stack Blast sensitivity, build the factory with a boss target
+(`kuva_nukor_sim.DummyTarget(health, armor, overguard, boss=True)`, or
+`steel_path_dummy_factory(boss=True)`) before calling `run_trials` for
+Frostbite with 2,500 trials and seed 20261028. `boss=True` lowers that target's
+early-detonation cap from ten stacks to four
+(`status_damage.BLAST_MAX_STACKS_BOSS`), the cap the wiki gives bosses and some
+Eximus; it does not establish which Eximus share the rule.

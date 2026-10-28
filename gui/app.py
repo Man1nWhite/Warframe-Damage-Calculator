@@ -4,15 +4,17 @@ import json
 import math
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, List
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QCompleter,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -31,25 +33,29 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
-    QDialogButtonBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QCompleter,
 )
 
 from modules.app_paths import ensure_app_dirs
 from modules.calculator import DamageCalculator
-from modules.constants import APP_TITLE, APP_VERSION, DAMAGE_TYPES, DISPLAY_NAMES, FACTION_MULTIPLIERS, MOD_SLOT_COUNT, WINDOW_TITLE
+from modules.constants import (
+    APP_TITLE,
+    APP_VERSION,
+    DAMAGE_TYPES,
+    DISPLAY_NAMES,
+    FACTION_MULTIPLIERS,
+    MOD_SLOT_COUNT,
+    WINDOW_TITLE,
+)
 from modules.database import ModRepository, WeaponRepository
 from modules.importer import build_database
 from modules.mod_compatibility import ModCompatibility
-from modules.mod_engine import ModAggregator
 from modules.models import CalculationInputs, EquippedMod, Mod, Weapon
 from modules.updater import WarframeDataUpdater
-
 
 DARK_STYLESHEET = """
 QWidget {
@@ -387,7 +393,7 @@ class ModPickerDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent: "DamageCalculatorWindow") -> None:
+    def __init__(self, parent: DamageCalculatorWindow) -> None:
         super().__init__(parent)
         self.window = parent
         self.paths = ensure_app_dirs()
@@ -565,7 +571,7 @@ class ModSlotWidget(QGroupBox):
 
         self.browse_button.clicked.connect(self.open_picker)
 
-    def set_mod_options(self, mods: List[Mod]) -> bool:
+    def set_mod_options(self, mods: list[Mod]) -> bool:
         """Refresh the picker and report whether the selected build changed.
 
         Rebuilding the combo temporarily changes its index. Suppress those
@@ -661,7 +667,6 @@ class DamageCalculatorWindow(QMainWindow):
         self.mod_compatibility = ModCompatibility.from_file(project_root / "source" / "weapon_mod_classes.json")
         self.paths = ensure_app_dirs()
         self.calculator = DamageCalculator()
-        self.mod_aggregator = ModAggregator()
         self.selected_weapon: Weapon | None = None
         self.mod_slots: list[ModSlotWidget] = []
         self.available_mods: list[Mod] = []
@@ -1103,7 +1108,8 @@ class DamageCalculatorWindow(QMainWindow):
             for slot in self.mod_slots:
                 slot.clear_selection()
         finally:
-            for slot, (combo_blocked, rank_blocked) in zip(self.mod_slots, states):
+            for slot, (combo_blocked, rank_blocked) in zip(
+                    self.mod_slots, states, strict=True):
                 slot.mod_combo.blockSignals(combo_blocked)
                 slot.rank_spin.blockSignals(rank_blocked)
         self.recalculate()
@@ -1114,14 +1120,12 @@ class DamageCalculatorWindow(QMainWindow):
 
         try:
             equipped_mods = self._build_equipped_mods()
-            aggregated_mods = self.mod_aggregator.aggregate(equipped_mods, self.faction_combo.currentText())
             inputs = CalculationInputs(
                 weapon_name=self.selected_weapon.weapon,
                 faction=self.faction_combo.currentText() or "Grineer",
                 armor_value=self.safe_float(self.armor_edit.text()),
                 lich_element=self.lich_combo.currentText(),
                 valence_base=self.safe_float(self.valence_edit.text()),
-                mods=aggregated_mods,
                 equipped_mods=equipped_mods,
             )
             results = self.calculator.calculate(self.selected_weapon, inputs)
@@ -1376,14 +1380,12 @@ class DamageCalculatorWindow(QMainWindow):
             effects = effects_by_selection[(mod.unique_name, rank)]
             equipped_mods.append(EquippedMod(mod=mod, rank=rank, effects=effects))
 
-        aggregated_mods = self.mod_aggregator.aggregate(equipped_mods, inputs["faction"])
         compare_inputs = CalculationInputs(
             weapon_name=weapon.weapon,
             faction=inputs["faction"],
             armor_value=self.safe_float(inputs["armor"]),
             lich_element=inputs["lich_element"],
             valence_base=self.safe_float(inputs["valence_base"]),
-            mods=aggregated_mods,
             equipped_mods=equipped_mods,
         )
         compare_results = self.calculator.calculate(weapon, compare_inputs)

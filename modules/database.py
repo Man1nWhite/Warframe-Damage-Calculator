@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from contextlib import closing
 from pathlib import Path
-from typing import Iterable, List, Optional
 
 from .constants import DAMAGE_TYPES, SEARCH_LIMIT
 from .mod_effect_policy import usable_direct_effect
@@ -21,7 +21,7 @@ class DatabaseSession:
 
 
 class WeaponRepository(DatabaseSession):
-    def search_weapons(self, query: str, limit: int = SEARCH_LIMIT) -> List[str]:
+    def search_weapons(self, query: str, limit: int = SEARCH_LIMIT) -> list[str]:
         query = query.strip()
         sql = "SELECT weapon FROM weapons"
         params: list[object] = []
@@ -37,7 +37,7 @@ class WeaponRepository(DatabaseSession):
         except sqlite3.OperationalError:
             return []
 
-    def get_weapon(self, weapon_name: str) -> Optional[Weapon]:
+    def get_weapon(self, weapon_name: str) -> Weapon | None:
         try:
             with closing(self.connect()) as connection:
                 row = connection.execute("SELECT * FROM weapons WHERE weapon = ?", (weapon_name,)).fetchone()
@@ -63,7 +63,7 @@ class WeaponRepository(DatabaseSession):
 
 
 class ModRepository(DatabaseSession):
-    def search_mods(self, query: str, slot_group: str, limit: int = 250) -> List[Mod]:
+    def search_mods(self, query: str, slot_group: str, limit: int = 250) -> list[Mod]:
         query = query.strip()
         params: list[object] = [slot_group]
         sql = (
@@ -78,7 +78,7 @@ class ModRepository(DatabaseSession):
             rows = connection.execute(sql, params).fetchall()
             return self._visible_mods(connection, rows)
 
-    def list_mods_for_slot(self, slot_group: str, limit: int = 2000) -> List[Mod]:
+    def list_mods_for_slot(self, slot_group: str, limit: int = 2000) -> list[Mod]:
         try:
             with closing(self.connect()) as connection:
                 rows = connection.execute(
@@ -89,7 +89,7 @@ class ModRepository(DatabaseSession):
         except sqlite3.OperationalError:
             return []
 
-    def _visible_mods(self, connection: sqlite3.Connection, rows: Iterable[sqlite3.Row]) -> List[Mod]:
+    def _visible_mods(self, connection: sqlite3.Connection, rows: Iterable[sqlite3.Row]) -> list[Mod]:
         """Hide official rows whose only parsed effects are out of scope.
 
         Legacy exports may have marked e.g. Blast Range as supported damage.
@@ -103,7 +103,7 @@ class ModRepository(DatabaseSession):
         return [mod for mod in mods if not mod.unique_name.startswith('/Lotus/')
                 or effects[(mod.unique_name, mod.fusion_limit)]]
 
-    def get_mod(self, unique_name: str) -> Optional[Mod]:
+    def get_mod(self, unique_name: str) -> Mod | None:
         try:
             with closing(self.connect()) as connection:
                 row = connection.execute("SELECT * FROM mods WHERE unique_name = ?", (unique_name,)).fetchone()
@@ -111,7 +111,7 @@ class ModRepository(DatabaseSession):
         except sqlite3.OperationalError:
             return None
 
-    def fetch_ranked_effects(self, unique_name: str, rank: int) -> List[ModEffect]:
+    def fetch_ranked_effects(self, unique_name: str, rank: int) -> list[ModEffect]:
         try:
             with closing(self.connect()) as connection:
                 rows = connection.execute(
@@ -123,7 +123,7 @@ class ModRepository(DatabaseSession):
         effects = [self._row_to_effect(row) for row in rows]
         return [effect for effect in effects if usable_direct_effect(unique_name, effect)]
 
-    def fetch_ranked_effects_many(self, selections: Iterable[tuple[str, int]]) -> dict[tuple[str, int], List[ModEffect]]:
+    def fetch_ranked_effects_many(self, selections: Iterable[tuple[str, int]]) -> dict[tuple[str, int], list[ModEffect]]:
         """Fetch all equipped slot effects using one connection.
 
         Duplicate selections share a result, and chunks stay below SQLite's
@@ -139,8 +139,8 @@ class ModRepository(DatabaseSession):
             return {key: [] for key in keys}
 
     def _fetch_ranked_effects_many(self, connection: sqlite3.Connection,
-                                   keys: list[tuple[str, int]]) -> dict[tuple[str, int], List[ModEffect]]:
-        result: dict[tuple[str, int], List[ModEffect]] = {key: [] for key in keys}
+                                   keys: list[tuple[str, int]]) -> dict[tuple[str, int], list[ModEffect]]:
+        result: dict[tuple[str, int], list[ModEffect]] = {key: [] for key in keys}
         for start in range(0, len(keys), 400):
             chunk = keys[start:start + 400]
             # OR terms use the (unique_name, rank) index; SQLite's

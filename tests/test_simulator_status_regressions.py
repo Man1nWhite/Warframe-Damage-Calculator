@@ -7,11 +7,12 @@ from dataclasses import replace
 from unittest import TestCase
 from unittest.mock import patch
 
-import modules.kuva_nukor_sim as nukor
-import modules.ocucor_sim as ocucor
 import modules.akarius_sim as akarius
 import modules.jat_kittag_sim as jat
-from modules.akarius_sim import AkariusTarget, build_akarius, simulate as simulate_akarius
+import modules.kuva_nukor_sim as nukor
+import modules.ocucor_sim as ocucor
+from modules.akarius_sim import AkariusTarget, build_akarius
+from modules.akarius_sim import simulate as simulate_akarius
 
 
 class LiveGunCOTests(TestCase):

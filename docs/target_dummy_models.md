@@ -92,8 +92,10 @@ Stat assembly, in the exact order the wiki gadget applies it:
    exceptional branch, while normal level-scaled armor is clamped to 2700.
 6. **Overguard** scales on its own curve from base 12 and is **not**
    affected by Steel Path/Empowered/Icebind multipliers. It ignores armor
-   DR and has neutral intrinsic type multipliers except Void (x1.5); how
-   faction type modifiers interact with that neutrality remains unverified.
+   DR and has neutral intrinsic type multipliers except Void (x1.5). Faction
+   *type* modifiers (Impact/Corrosive x1.5 for Grineer, for example) therefore
+   apply to the health bar only; the faction *damage* bonus of Bane-style mods
+   is a separate multiplier and still applies to both layers.
 7. **EHP** = `round2(health / (1 - DR) + shields) + overguard`. Overguard
    is added as a raw, unarmored buffer.
 
@@ -149,9 +151,8 @@ fraction of total EHP here (~1.55% of dummy A, ~0.62% of dummy B).
   between damage types or statuses also depend on the attack and faction.
 - **Overguard must be burned first** and is unarmored. Its intrinsic damage
   table is neutral except for Void x1.5, and Magnetic procs amplify damage to
-  it. Whether faction type modifiers also apply to Overguard remains an
-  explicit simulation assumption; see the formula audit. Secondary Fortifier
-  (up to x8) is the dedicated Overguard lever.
+  it; faction type modifiers skip this layer and apply to the health bar only.
+  Secondary Fortifier (up to x8) is the dedicated Overguard lever.
 - Grineer faction modifiers apply on the health bar: **Impact and
   Corrosive x1.5**; headshots multiply health-bar damage by x3.
 - Scope note: the model covers the standard **Empowered Enemies**

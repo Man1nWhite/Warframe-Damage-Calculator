@@ -38,12 +38,15 @@ DISPLAY_NAMES = {
 
 MOD_STAT_ORDER = [*DAMAGE_TYPES, "TRUE", "BANE"]
 
-HUD_ROUNDING_PRECISION = {
-    "MAG": 3,
-}
+# Saved builds predate the spelling fix for this faction; the calculator and
+# the mod engine both normalise through ``faction_key``.
+FACTION_ALIASES = {"Zairman": "Zariman"}
 
-DEFAULT_HUD_DECIMALS = 4
-FINAL_DAMAGE_DECIMALS = 3
+
+def faction_key(faction: str) -> str:
+    """Canonical faction name used by the tables and the bane-code map."""
+    return FACTION_ALIASES.get(faction, faction)
+
 
 FACTION_MULTIPLIERS = {
     "Grineer": {"IMPACT": 1.5, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 1, "GAS": 1, "MAG": 1, "VIRAL": 1, "CORR": 1.5, "VOID": 1, "TRUE": 1},
@@ -98,7 +101,6 @@ BANE_CODE_MAP = {
     "Narmer": set(),
     "Murmur": {"BANE_MURMUR"},
     "Zariman": set(),
-    "Zairman": set(),  # old saved spelling
     "Scaldra": {"BANE_SCALDRA"},  # spliced Riven traits
     "Techrot": {"BANE_TECHROT"},  # spliced Riven traits
     "Anarchs": set(),

@@ -8,17 +8,23 @@ https://wiki.warframe.com/w/Damage/Calculation.
 
 The wiki does not specify the exact distribution of a mixed damage instance
 that breaks Overguard. This model assumes that the same fraction of each
-component remains for health. It also applies faction type modifiers to both
-layers, treating the Overguard-specific table as an additional modifier;
-that interpretation remains unverified by the reviewed sources. It does not model shields,
-other enemy defenses, or exact engine float/rounding order.
+component remains for health. Faction *type* modifiers (the Grineer table, for
+example) are applied to the health layer only: ``Overguard`` states the layer
+is neutral to all damage types except Void's +50%, and lists no per-faction
+table. The faction *damage* bonus of Bane-style mods is a separate multiplier
+that the simulators apply before routing, so it still reaches both layers. It
+does not model shields, other enemy defenses, or exact engine float/rounding
+order.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 from .enemy_scaling import enemy_armor_damage_reduction
+
+# Overguard is neutral to every damage type except Void (Overguard page).
+VOID_OVERGUARD_MULTIPLIER = 1.5
 
 
 def status_vulnerability(stacks: int) -> float:
@@ -48,9 +54,11 @@ def route_enemy_hit(
     """Route a single mixed hit through Overguard and health.
 
     Values in ``damage_by_type`` include the attack's own multipliers but not
-    target defenses or faction type modifiers. If the hit breaks Overguard,
-    the proportion of the *original* hit not consumed by that layer proceeds
-    to health; Magnetic's Overguard-only multiplier does not carry over.
+    target defenses or faction type modifiers. Faction type modifiers apply to
+    the health layer only, because ``Overguard`` is neutral to every type but
+    Void (which takes +50%). If the hit breaks Overguard, the proportion of the
+    *original* hit not consumed by that layer proceeds to health; Magnetic's
+    Overguard-only multiplier does not carry over.
     """
     modifiers = faction_type_modifiers or {}
     typed = {
@@ -60,8 +68,9 @@ def route_enemy_hit(
     }
     mag_mult = status_vulnerability(magnetic_stacks)
     potential_og = mag_mult * sum(
-        amount * (1.5 if kind == "VOID" else 1.0)
-        for kind, amount in typed.items()
+        max(0.0, amount) * (VOID_OVERGUARD_MULTIPLIER if kind == "VOID" else 1.0)
+        for kind, amount in damage_by_type.items()
+        if amount > 0
     )
     remaining_og = max(0.0, overguard)
     if remaining_og and potential_og:

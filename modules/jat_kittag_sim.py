@@ -54,19 +54,23 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Optional
 
 from modules.akarius_sim import corrosive_armor_factor
+from modules.crit import quantize_crit_multiplier
+
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import (
     enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
+)
+from modules.enemy_scaling import (
     steel_path_heavy_gunner,
 )
-from modules.trial_statistics import sample_percentile
 from modules.kuva_nukor_sim import (
     DummyTarget,
     ToxinProc,
     steel_path_dummy_factory,
+)
+from modules.kuva_nukor_sim import (
     viral_magnetic_multiplier as viral_magnetic_multiplier,
 )
 from modules.status_damage import (
@@ -74,6 +78,7 @@ from modules.status_damage import (
     toxin_tick,
     wiki_quantized_damage,
 )
+from modules.trial_statistics import sample_percentile
 
 # --- Weapon base stats -------------------------------------------------------
 
@@ -84,8 +89,6 @@ BASE_CRIT_CHANCE = 0.15
 BASE_CRIT_MULT = 2.0
 BASE_STATUS = 1.0                             # slams are 100% status
 SLAM_FIRE_RATE = 1.0                          # infobox attacks/sec
-SLAM_RADIUS = 10.0
-COMBO_DURATION = 5.0
 PROC_DURATION = 6.0
 CORROSIVE_DURATION = 8.0
 
@@ -123,8 +126,10 @@ R_ATTACK_SPEED = 0.815
 R_STATUS_CHANCE = 1.337
 R_ELEMENT = 1.337
 R_INITIAL_COMBO = 36.4
-R_EFFICIENCY = 1.091
-# 3 positives + 1 curse (god roll: CC + CD + Attack Speed).
+# 3 positives + 1 curse (god roll: CC + CD + Attack Speed). The 1.0125
+# midpoint of ``jat_kittag_slam_analysis`` is rounded to three decimals here;
+# the trials take an explicit combo multiplier, so the 5 s combo window is not
+# modeled.
 R3_CRIT_CHANCE = 2.025
 R3_CRIT_DAMAGE = 1.013
 R3_ATTACK_SPEED = 0.618
@@ -242,7 +247,7 @@ def _combine_elements(heat: float, cold: float, elec: float,
     return out
 
 
-def _merged_spec(mod_option: Optional[str], riven_option: Optional[str]) -> dict:
+def _merged_spec(mod_option: str | None, riven_option: str | None) -> dict:
     """Merge a last-slot mod spec and a Riven spec (disjoint stat keys)."""
     spec: dict = {}
     if mod_option is not None:
@@ -259,8 +264,8 @@ def _merged_spec(mod_option: Optional[str], riven_option: Optional[str]) -> dict
     return spec
 
 
-def build_loadout(mod_option: Optional[str],
-                  riven_option: Optional[str] = None,
+def build_loadout(mod_option: str | None,
+                  riven_option: str | None = None,
                   galv_stacks: int = 0) -> JatBuild:
     """Build a full loadout: fixed mods + last-slot mod + optional Riven."""
     if not 0 <= galv_stacks <= 4:
@@ -302,7 +307,8 @@ def _build_from_spec(spec: dict, label: str, is_riven: bool,
     crit_chance = BASE_CRIT_CHANCE * (
         1.0 + 2.0 * GALV_STEEL_CC
         + 2.0 * spec.get("crit_chance", 0.0))
-    crit_multiplier = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: quantized base multiplier, then relative bonuses.
+    crit_multiplier = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + spec.get("crit_damage", 0.0)
         + GALV_STEEL_KILL_CD * galv_stacks)
     attack_speed = 1.0 + spec.get("attack_speed", 0.0)
@@ -356,11 +362,11 @@ class GasProc:
     start: float
     seed: float
     crit_factor: float
-    next_tick: float | None = None
+    # Always set: Gas ticks on the application tick, Toxin one second later.
+    next_tick: float = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.next_tick is None:
-            self.next_tick = self.start
+        self.next_tick = self.start
 
 
 class JatTarget(DummyTarget):
@@ -372,6 +378,9 @@ class JatTarget(DummyTarget):
         self.corrosive_expiries: list[float] = []
         self.lifted = False
         self.affliction_triggers = 0
+        # Set by the room simulator so a chained Vulcan blast kills each
+        # target once; single-target trials never look at it.
+        self._dead = False
 
     def corrosive_stacks(self, now: float) -> int:
         self.corrosive_expiries = [t for t in self.corrosive_expiries
@@ -410,17 +419,18 @@ def _process_status_ticks(target: JatTarget, build: JatBuild, when: float,
            if p.next_tick == when and p.next_tick < p.start + PROC_DURATION]
     if gas:
         seeds = sum(p.seed * p.crit_factor for p in gas)
-        for proc in gas:
-            proc.next_tick += 1.0
+        for gas_proc in gas:
+            gas_proc.next_tick += 1.0
         route({"GAS": gas_tick(seeds,
               status_damage_bonus=build.status_damage_bonus,
               faction_bonus=build.faction_bracket - 1.0)}, when)
-    for proc in target.toxin_procs:
+    for toxin_proc in target.toxin_procs:
         if target.health <= 0:
             break
-        if proc.next_tick == when and proc.next_tick <= proc.start + PROC_DURATION:
-            proc.next_tick += 1.0
-            route({"TOXIN": toxin_tick(proc.seed * proc.crit_factor,
+        if (toxin_proc.next_tick == when
+                and toxin_proc.next_tick <= toxin_proc.start + PROC_DURATION):
+            toxin_proc.next_tick += 1.0
+            route({"TOXIN": toxin_tick(toxin_proc.seed * toxin_proc.crit_factor,
                   elemental_bonus=build.toxin_elemental_bonus,
                   status_damage_bonus=build.status_damage_bonus,
                   faction_bonus=build.faction_bracket - 1.0)}, when)
@@ -432,7 +442,7 @@ def plain_heavy_gunner_factory() -> JatTarget:
     return JatTarget(gunner.health, gunner.armor, gunner.overguard)
 
 
-def has_live_status(target: "JatTarget", when: float) -> bool:
+def has_live_status(target: JatTarget, when: float) -> bool:
     """True if at least one (un-expired) status stack is present."""
     if any(when < p.start + PROC_DURATION
            for p in target.gas_procs):
@@ -443,7 +453,7 @@ def has_live_status(target: "JatTarget", when: float) -> bool:
     return bool(target.viral_stacks(when) or target.corrosive_stacks(when))
 
 
-def has_live_dot(target: "JatTarget", when: float) -> bool:
+def has_live_dot(target: JatTarget, when: float) -> bool:
     """True if a damaging DoT status (Gas/Toxin) is live on the target.
 
     This helper only classifies the stored procs. Melee Afflictions may
@@ -456,7 +466,7 @@ def has_live_dot(target: "JatTarget", when: float) -> bool:
                for p in target.toxin_procs)
 
 
-def apply_melee_afflictions(target: "JatTarget", when: float,
+def apply_melee_afflictions(target: JatTarget, when: float,
                             stacks: int = LIFTED_AFFLICTION_STACKS) -> None:
     """Melee Afflictions: add stacks of every status already live on target.
 
@@ -535,7 +545,7 @@ def simulate(build: JatBuild,
              target: JatTarget,
              *,
              seed: int = 1,
-             combo_multiplier: Optional[float] = 1.0,
+             combo_multiplier: float | None = 1.0,
              combo_recovery: bool = False,
              afflictions: bool = True,
              trace: bool = False,
@@ -599,7 +609,9 @@ def simulate(build: JatBuild,
         if combo_recovery:
             tier_mult = float(combo_tier(points))
         else:
-            tier_mult = float(combo_multiplier)
+            # Without recovery the tier comes from the caller; None only means
+            # "unused" when the simulated combo counter drives it instead.
+            tier_mult = float(combo_multiplier if combo_multiplier is not None else 1.0)
         tier_log.append(int(tier_mult))
         cf = _crit_factor(rng, build.crit_chance, build.crit_multiplier)
         direct = {name: wiki_quantized_damage(single, build.modded_base)
@@ -621,13 +633,13 @@ def simulate(build: JatBuild,
             # Heavy-attack proc seeds inherit combo, as in the wiki's melee
             # status example. The 3x heavy-slam multiplier is already in
             # modded_base; faction enters here and again on each tick.
-            seed = build.modded_base * build.faction_bracket * tier_mult
+            proc_seed = build.modded_base * build.faction_bracket * tier_mult
             if ptype == "GAS":
-                target.gas_procs.append(GasProc(now, seed, cf))
+                target.gas_procs.append(GasProc(now, proc_seed, cf))
                 target.gas_procs = target.gas_procs[-GAS_CAP:]
                 counts["GAS"] += 1
             elif ptype == "TOXIN":
-                target.toxin_procs.append(ToxinProc(now, seed, cf))
+                target.toxin_procs.append(ToxinProc(now, proc_seed, cf))
                 counts["TOXIN"] += 1
             elif ptype == "CORR":
                 target.corrosive_expiries.append(now + CORROSIVE_DURATION)
@@ -703,10 +715,10 @@ def simulate(build: JatBuild,
 def run_trials(option: str,
                trials: int = 300,
                base_seed: int = 20261027,
-               combo_multiplier: Optional[float] = 1.0,
+               combo_multiplier: float | None = 1.0,
                galv_stacks: int = 0,
                combo_recovery: bool = False,
-               riven_option: Optional[str] = None,
+               riven_option: str | None = None,
                factory=steel_path_dummy_factory) -> dict:
     """Summarize observed kills and report attempted and timed-out trials."""
     if trials < 1:
@@ -807,8 +819,7 @@ def simulate_room(option: str,
         # death then chains another explosion in the same pass.
         nonlocal vulcan
         while True:
-            pending = [t for t in targets
-                       if t.health <= 0 and not getattr(t, "_dead", False)]
+            pending = [t for t in targets if t.health <= 0 and not t._dead]
             if not pending:
                 return
             for t in pending:
@@ -849,7 +860,7 @@ def simulate_room(option: str,
             now = death_time
             break
 
-        kills = sum(1 for t in targets if getattr(t, "_dead", False))
+        kills = sum(1 for t in targets if t._dead)
         steel_stacks = max(galv_stacks, min(4, kills))
         elem_stacks = max(galv_stacks, min(4, kills))
         cm = build.crit_multiplier * (1.0 + GALV_STEEL_KILL_CD * steel_stacks)

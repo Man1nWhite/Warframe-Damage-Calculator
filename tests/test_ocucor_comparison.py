@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import modules.ocucor_sim as ocucor
+from modules.crit import quantize_crit_multiplier
 from modules.damage_routing import route_enemy_hit
 from modules.kuva_nukor_sim import DummyTarget, enervate_afcc
 from modules.ocucor_comparison import compare, discard_overguard_overflow, make_target
@@ -49,7 +50,7 @@ class RivenAndStatTests(unittest.TestCase):
         fl = build_ocucor(ARCANE_FLARE, "Multishot")
         self.assertAlmostEqual(en.multishot, 5.678)
         self.assertAlmostEqual(en.fire_rate, 19.2)
-        self.assertAlmostEqual(en.crit_multiplier, 3.78)
+        self.assertAlmostEqual(en.crit_multiplier, quantize_crit_multiplier(1.8) * 2.1)
         self.assertAlmostEqual(en.merged_status, 2.452896)
         self.assertAlmostEqual(effective_status_per_beam(en, 4), 1.008)
         self.assertAlmostEqual(effective_status_per_beam(en, 4) * en.multishot,

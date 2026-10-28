@@ -55,17 +55,30 @@ import math
 import random
 from dataclasses import dataclass, field
 
+from modules import status_damage
+from modules.constants import FACTION_MULTIPLIERS
+from modules.crit import (
+    COLD_STACK_CAP,
+    cold_crit_damage_bonus,
+    quantize_crit_multiplier,
+)
+from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
+
 # Preserve the old simulator-level import for external callers.
 from modules.enemy_scaling import (
     enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
+)
+from modules.enemy_scaling import (
     steel_path_eximus_heavy_gunner,
 )
-from modules.constants import FACTION_MULTIPLIERS
-from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
-from modules.trial_statistics import sample_percentile
 from modules.status_damage import (
-    heat_tick, magnetic_break_electric_tick, toxin_tick, wiki_quantized_damage,
+    blast_stack_damage,
+    heat_tick,
+    magnetic_break_electric_tick,
+    toxin_tick,
+    wiki_quantized_damage,
 )
+from modules.trial_statistics import sample_percentile
 
 # --- Weapon base -----------------------------------------------------------
 
@@ -84,9 +97,11 @@ RELOAD_TIME = BASE_RELOAD_TIME / 1.6  # Pistol Elementalist: +60% reload speed
 RAMP_TIME = 0.6
 RAMP_START = 0.3                 # Nukor ramps 30% -> 100%, not the generic 20%
 BLAST_FUSE_BASE = 1.5            # seconds per Blast stack, scaled by status duration
-BLAST_MAX_STACKS = 10
-BLAST_SINGLE_COEF = 0.3          # 30% of modded base per stack to the proc target
-BLAST_RADIAL_COEF = 3.0          # 300% of modded base per stack in the 5 m explosion
+# Coefficients live in status_damage so every simulator shares one definition.
+BLAST_MAX_STACKS = status_damage.BLAST_MAX_STACKS
+BLAST_MAX_STACKS_BOSS = status_damage.BLAST_MAX_STACKS_BOSS
+BLAST_SINGLE_COEF = status_damage.BLAST_SINGLE_COEF  # 30% per stack, proc target
+BLAST_RADIAL_COEF = status_damage.BLAST_RADIAL_COEF  # 300% per stack, 5 m radial
 
 # --- Fixed mods in the build ----------------------------------------------
 
@@ -223,7 +238,9 @@ def build_nukor(last_mod: str = BASELINE_LAST_MOD) -> NukorBuild:
     status_per_beam = BASE_STATUS * (
         1.0 + GALV_SHOT_STATUS + extra.get("status", 0.0))
     crit_chance = BASE_CRIT_CHANCE * (1.0 + extra.get("crit_chance", 0.0))
-    crit_mult = BASE_CRIT_MULT * (
+    # Wiki Critical Hit: the base multiplier is a quantized 12-bit value,
+    # then relative Critical Damage bonuses scale it.
+    crit_mult = quantize_crit_multiplier(BASE_CRIT_MULT) * (
         1.0 + PRIMED_TARGET_CRACKER + RIVEN_CRIT_DAMAGE
         + extra.get("crit_damage", 0.0))
     sd_mult = 1.0 + RIVEN_STATUS_DURATION
@@ -286,11 +303,11 @@ class ToxinProc:
     start: float
     seed: float
     crit_factor: float
-    next_tick: float | None = None
+    # Always set: Toxin ticks from one second after application.
+    next_tick: float = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.next_tick is None:
-            self.next_tick = self.start + 1.0
+        self.next_tick = self.start + 1.0
 
 
 @dataclass
@@ -355,7 +372,8 @@ class MagneticBreakProc:
 class DummyTarget:
     """Eximus Heavy Gunner L150 Steel Path, with live status state."""
 
-    def __init__(self, health: float, armor: float, overguard: float):
+    def __init__(self, health: float, armor: float, overguard: float,
+                 *, boss: bool = False):
         self.max_health = health
         self.health = health
         self.max_armor = armor
@@ -368,6 +386,9 @@ class DummyTarget:
         self._status_expiries: dict[str, float] = {}
         self.toxin_procs: list[ToxinProc] = []
         self.blast_stacks: list[BlastProc] = []
+        # Bosses and some Eximus detonate Blast at four stacks, not ten.
+        self.boss = boss
+        self.cold_expiries: list[float] = []
         self.viral_expiries: list[float] = []
         self.puncture_expiries: list[float] = []
         self.mag_expiries: list[float] = []
@@ -375,6 +396,39 @@ class DummyTarget:
         self.magnetic_break_procs: list[MagneticBreakProc] = []
         self.broken = False
         self.overguard_broken_at: float | None = None
+
+    @property
+    def blast_stack_cap(self) -> int:
+        """Blast stacks held before the earliest detonates (4 for a boss)."""
+        return BLAST_MAX_STACKS_BOSS if self.boss else BLAST_MAX_STACKS
+
+    def blast_cap_reached(self) -> bool:
+        """Whether the next Blast application forces a detonation."""
+        return len(self.blast_stacks) >= self.blast_stack_cap
+
+    def add_cold(self, when: float, duration: float) -> None:
+        """Record a Cold (Freeze) stack, refreshing the ten-stack cap."""
+        self.cold_expiries = [t for t in self.cold_expiries if t > when]
+        self.cold_expiries.append(when + duration)
+        self.cold_expiries = self.cold_expiries[-COLD_STACK_CAP:]
+        self.record_status("COLD", when, duration)
+
+    def cold_stacks(self, now: float) -> int:
+        self.cold_expiries = [t for t in self.cold_expiries if t > now]
+        return len(self.cold_expiries)
+
+    def crit_damage_multiplier(self, base: float, now: float) -> float:
+        """Critical Damage including Cold's flat Freeze bonus.
+
+        Damage/Cold_Damage grants +0.10x on the first stack, +0.05x for each
+        further stack and +1.0x at ten stacks (Frozen), additive with Critical
+        Damage mods and applied before the crit tier. Bosses and targets with
+        active Overguard cap the bonus at four stacks.
+        """
+        bonus = cold_crit_damage_bonus(
+            self.cold_stacks(now),
+            overguard_or_boss=self.boss or self.overguard > 0)
+        return base + bonus
 
     def record_status(self, kind: str, when: float, duration: float) -> None:
         self._status_expiries[kind] = max(
@@ -417,7 +471,7 @@ class DummyTarget:
         return len(self.mag_expiries)
 
     def add_magnetic(self, when: float, duration: float,
-                     source: MagneticSource = MagneticSource()) -> None:
+                     source: MagneticSource | None = None) -> None:
         """Record a Magnetic stack and the applying source's modifiers.
 
         Each simulated fight currently uses one source; if several distinct
@@ -429,7 +483,7 @@ class DummyTarget:
         self.mag_stacks(when)
         self.mag_expiries.append(when + duration)
         self.mag_expiries = self.mag_expiries[-VIRAL_MAG_CAP:]
-        self.magnetic_source = source
+        self.magnetic_source = source or MagneticSource()
         self.record_status("MAG", when, duration)
 
     def add_heat(self, when: float, seed: float, crit_factor: float,
@@ -563,14 +617,16 @@ class DummyTarget:
 
     def blast_single_damage(self, status_damage_bonus: float) -> float:
         """Sum of per-stack 30% detonations against the proc target itself."""
-        return sum(BLAST_SINGLE_COEF * p.seed
-                   * (1.0 + status_damage_bonus) * p.crit_factor
+        return sum(blast_stack_damage(p.seed, BLAST_SINGLE_COEF, floor=0.0,
+                                      crit_factor=p.crit_factor,
+                                      status_damage_bonus=status_damage_bonus)
                    for p in self.blast_stacks)
 
     def blast_radial_damage(self, status_damage_bonus: float) -> float:
         """Combined 5 m radial: 300% modded base per stack, crit snapshots."""
-        return sum(BLAST_RADIAL_COEF * p.seed
-                   * (1.0 + status_damage_bonus) * p.crit_factor
+        return sum(blast_stack_damage(p.seed, BLAST_RADIAL_COEF, floor=0.0,
+                                      crit_factor=p.crit_factor,
+                                      status_damage_bonus=status_damage_bonus)
                    for p in self.blast_stacks)
 
 
@@ -585,7 +641,7 @@ def simulate(build: NukorBuild,
     rng = random.Random(seed)
     dt = build.tick_interval
     cc = build.afcc_pct / 100.0
-    ammo = MAGAZINE
+    ammo = float(MAGAZINE)  # each beam tick spends half a round
     now = 0.0
     beam_time = 0.0
     reloads = 0
@@ -598,12 +654,14 @@ def simulate(build: NukorBuild,
                "blast_og": 0.0}
 
     def crit_factor() -> float:
+        # Cold (Freeze) stacks raise Critical Damage for this target.
+        crit_multiplier = target.crit_damage_multiplier(build.crit_multiplier, now)
         full = int(math.floor(cc))
         if rng.random() < (cc - full):
             tier = full + 1
         else:
             tier = full
-        return 1.0 + tier * (build.crit_multiplier - 1.0)
+        return 1.0 + tier * (crit_multiplier - 1.0)
 
     def roll_proc_types(k: int) -> list[str]:
         types = list(build.proc_weights)
@@ -667,8 +725,11 @@ def simulate(build: NukorBuild,
         due = [p for p in target.blast_stacks if p.fuse_end <= when]
         for p in due:
             target.blast_stacks.remove(p)
-            amount = (BLAST_SINGLE_COEF * p.seed
-                      * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+            # Damage/Blast_Damage and Damage/Calculation: an expiring stack
+            # deals max(1, 0.3 x H).
+            amount = blast_stack_damage(
+                p.seed, BLAST_SINGLE_COEF, crit_factor=p.crit_factor,
+                status_damage_bonus=PISTOL_ELEMENTALIST_SD)
             route({"BLAST": amount}, when, "blast")
             if target.health <= 0:
                 break
@@ -679,7 +740,7 @@ def simulate(build: NukorBuild,
             BlastProc(when, when + build.blast_fuse,
                       seed_value, cf))
         blast_count += 1
-        if len(target.blast_stacks) >= BLAST_MAX_STACKS:
+        if target.blast_cap_reached():
             amount = target.blast_single_damage(PISTOL_ELEMENTALIST_SD)
             target.blast_stacks.clear()
             target.clear_status("BLAST")
@@ -822,18 +883,20 @@ def simulate(build: NukorBuild,
     )
 
 
-def steel_path_dummy_factory() -> "DummyTarget":
-    """Fresh dummy A (Eximus Heavy Gunner L150 Steel Path) for one trial."""
+def steel_path_dummy_factory(*, boss: bool = False) -> DummyTarget:
+    """Fresh dummy A (Eximus Heavy Gunner L150 Steel Path) for one trial.
+
+    ``boss=True`` gives the target the four-stack Blast cap from
+    Damage/Blast_Damage.
+    """
     dummy = steel_path_eximus_heavy_gunner(150)
-    return DummyTarget(dummy.health, dummy.armor, dummy.overguard)
+    return DummyTarget(dummy.health, dummy.armor, dummy.overguard, boss=boss)
 
 
 # --- Room clear (beam chaining + Blast radial AoE) -------------------------
 
 CHAIN_TARGETS = 2            # Kuva Nukor chains to up to two extra enemies
 CHAIN_DAMAGE_MULT = 0.5      # each chain deals 50% of the main beam
-CHAIN_RANGE_M = 9.0
-BLAST_RADIUS_M = 5.0         # Blast radial radius, no falloff
 
 
 @dataclass
@@ -844,6 +907,8 @@ class RoomResult:
     beam_ticks: int
     reloads: int
     radial_events: int
+    # Subset of radial_events triggered by a death rather than by the stack cap.
+    death_detonations: int
     radial_damage_total: float
     direct_damage_total: float
     dot_damage_total: float
@@ -862,12 +927,13 @@ def simulate_room(build: NukorBuild,
     dt = build.tick_interval
     cc = build.afcc_pct / 100.0
     targets = [factory() for _ in range(n_enemies)]
-    ammo = MAGAZINE
+    ammo = float(MAGAZINE)  # each beam tick spends half a round
     now = 0.0
     beam_time = 0.0
     reloads = 0
     beam_ticks = 0
     radial_events = 0
+    death_detonations = 0
     totals = {"direct": 0.0, "dot": 0.0, "radial": 0.0}
     kill_times: list[tuple[int, float]] = []
     log: list[str] = []
@@ -913,7 +979,7 @@ def simulate_room(build: NukorBuild,
                     radial(i, when, on_death=True)
 
     def radial(source_idx: int, when: float, *, on_death: bool = False) -> None:
-        nonlocal radial_events
+        nonlocal radial_events, death_detonations
         source = targets[source_idx]
         amount = source.blast_radial_damage(PISTOL_ELEMENTALIST_SD)
         source.blast_stacks.clear()
@@ -921,29 +987,48 @@ def simulate_room(build: NukorBuild,
         if amount <= 0:
             return
         radial_events += 1
+        if on_death:
+            death_detonations += 1
         for j, t in enumerate(targets):
             if j == source_idx or t.health <= 0:
                 continue
             absorb_target(t, {"BLAST": amount}, when, "radial")
 
-    def crit_factor() -> float:
+    def crit_tier() -> int:
         full = int(math.floor(cc))
-        tier = full + (1 if rng.random() < (cc - full) else 0)
-        return 1.0 + tier * (build.crit_multiplier - 1.0)
+        return full + (1 if rng.random() < (cc - full) else 0)
 
     def roll_proc_types(k: int) -> list[str]:
         return rng.choices(list(build.proc_weights),
                            weights=list(build.proc_weights.values()), k=k)
 
+    def rolled_proc_types(beams: int) -> list[str]:
+        """One status roll for a merged beam instance."""
+        merged_status = build.status_per_beam * beams
+        guaranteed = int(math.floor(merged_status))
+        n_procs = guaranteed + (1 if rng.random() < merged_status - guaranteed else 0)
+        return roll_proc_types(n_procs)
+
+    def record_killing_blow_blast(idx: int, when: float, cf: float,
+                                  beams: int, seed_value: float) -> None:
+        """Keep a Blast proc from a fatal hit so the death still explodes.
+
+        Damage/Blast_Damage: a killing blow that inflicts at least one Blast
+        proc activates the full explosion even though the target had no stacks
+        before it. Nothing else from the fatal hit is tracked, and the single
+        target settlement is skipped because the target is already dead.
+        """
+        if "BLAST" not in rolled_proc_types(beams):
+            return
+        t = targets[idx]
+        t.blast_stacks.append(
+            BlastProc(when, when + build.blast_fuse, seed_value, cf))
+
     def apply_procs(idx: int, when: float, cf: float,
                     beams: int, seed_value: float) -> None:
         t = targets[idx]
         t.record_status("MICROWAVE", when, math.inf)
-        merged_status = build.status_per_beam * beams
-        guaranteed = int(math.floor(merged_status))
-        n_procs = guaranteed + (1 if rng.random()
-                                < merged_status - guaranteed else 0)
-        for ptype in roll_proc_types(n_procs):
+        for ptype in rolled_proc_types(beams):
             duration = (build.blast_fuse if ptype == "BLAST" else
                         (12.0 * build.status_duration_mult if ptype == "RAD" else build.proc_duration))
             t.record_status(ptype, when, duration)
@@ -962,7 +1047,7 @@ def simulate_room(build: NukorBuild,
                 t.blast_stacks.append(
                     BlastProc(when, when + build.blast_fuse,
                               seed_value, cf))
-                if len(t.blast_stacks) >= BLAST_MAX_STACKS:
+                if t.blast_cap_reached():
                     # 10-stack early detonation: 30%/stack to itself plus a
                     # 300%/stack radial on every other target in the room.
                     single = t.blast_single_damage(PISTOL_ELEMENTALIST_SD)
@@ -1004,8 +1089,9 @@ def simulate_room(build: NukorBuild,
                 continue
             for p in [p for p in t.blast_stacks if p.fuse_end <= when]:
                 t.blast_stacks.remove(p)
-                amount = (BLAST_SINGLE_COEF * p.seed
-                          * (1.0 + PISTOL_ELEMENTALIST_SD) * p.crit_factor)
+                amount = blast_stack_damage(
+                    p.seed, BLAST_SINGLE_COEF, crit_factor=p.crit_factor,
+                    status_damage_bonus=PISTOL_ELEMENTALIST_SD)
                 absorb_target(t, {"BLAST": amount}, when, "dot")
                 if t.health <= 0:
                     break
@@ -1059,7 +1145,9 @@ def simulate_room(build: NukorBuild,
             break
 
         ramp = min(1.0, RAMP_START + (1.0 - RAMP_START) * beam_time / RAMP_TIME)
-        cf = crit_factor()
+        # One crit-tier roll per trigger pull, as for the single-target model;
+        # each beam carries its own target's Cold (Freeze) Critical Damage.
+        tier = crit_tier()
         beams = roll_multishot(rng, build.multishot)
         living = alive()
         # Primary target at full damage, up to two chains at 50%.
@@ -1068,6 +1156,8 @@ def simulate_room(build: NukorBuild,
             t = targets[idx]
             if t.health <= 0:
                 continue
+            cf = 1.0 + tier * (t.crit_damage_multiplier(
+                build.crit_multiplier, now) - 1.0)
             scale = galv_shot_scale(build.damage_bonus, t.unique_status_count(now))
             seed_value = build.modded_base_single * beams * scale
             damage = {name: wiki_quantized_damage(single * beams * scale, seed_value)
@@ -1076,6 +1166,9 @@ def simulate_room(build: NukorBuild,
             absorb_target(t, damage, now, "direct")
             if t.health > 0:
                 apply_procs(idx, now, cf, beams, seed_value * mult)
+            else:
+                record_killing_blow_blast(
+                    idx, now, cf, beams, seed_value * mult)
         record_deaths(now)
 
         ammo -= AMMO_PER_TICK
@@ -1100,6 +1193,7 @@ def simulate_room(build: NukorBuild,
         beam_ticks=beam_ticks,
         reloads=reloads,
         radial_events=radial_events,
+        death_detonations=death_detonations,
         radial_damage_total=totals["radial"],
         direct_damage_total=totals["direct"],
         dot_damage_total=totals["dot"],

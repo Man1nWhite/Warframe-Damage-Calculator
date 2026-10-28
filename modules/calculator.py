@@ -11,27 +11,28 @@ outside this screen's scope.
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Dict
 
 from .constants import (
     BASE_ELEMENT_TYPES,
+    COMBINED_ELEMENT_TYPES,
     DAMAGE_TYPES,
     ELEMENT_COMBINATIONS,
     FACTION_MULTIPLIERS,
     PHYSICAL_DAMAGE_TYPES,
+    faction_key,
 )
 from .enemy_scaling import enemy_armor_damage_reduction
-from .mod_engine import ordered_mod_effects
+from .mod_engine import ModAggregator, ordered_mod_effects
 from .models import CalculationInputs, CalculationResults, Weapon
 from .status_damage import wiki_quantized_damage
 
 # Innate primary elements follow equipped mods in this order.
 INNATE_ELEMENT_ORDER = ("HEAT", "COLD", "ELEC", "TOXIN")
 
-
 class DamageCalculator:
     def calculate(self, weapon: Weapon, inputs: CalculationInputs) -> CalculationResults:
         base_weapon_damage = float(weapon.dmg)
+        faction = faction_key(inputs.faction)
         element = (inputs.lich_element or "").strip().upper()
         if element and element not in DAMAGE_TYPES:
             raise ValueError(f"Unknown progenitor damage type: {element}")
@@ -39,20 +40,21 @@ class DamageCalculator:
         valence_damage = max(0.0, float(inputs.valence_base)) if element else 0.0
         valence_multiplier = valence_damage / base_weapon_damage if base_weapon_damage > 0 else 0.0
         weapon_total_damage = base_weapon_damage + valence_damage
-        base_multiplier = max(0.0, 1.0 + inputs.mod_for("TRUE"))
+        mod_totals = self._mod_totals(inputs, faction)
+        base_multiplier = max(0.0, 1.0 + mod_totals.get("TRUE", 0.0))
         modded_base = weapon_total_damage * base_multiplier
         quanta = modded_base / 32.0
 
         base_by_type, lich_damage, resolved_mods = self._resolve_elements(
-            weapon, inputs, element, valence_damage
+            weapon, inputs, mod_totals, element, valence_damage
         )
-        faction_modifiers = self._build_faction_modifiers(inputs.faction)
+        faction_modifiers = self._build_faction_modifiers(faction)
         armor_modifiers = self._build_armor_modifiers(inputs.armor_value, faction_modifiers)
-        bane_multiplier = max(0.0, 1.0 + inputs.mod_for("BANE"))
+        bane_multiplier = max(0.0, 1.0 + mod_totals.get("BANE", 0.0))
 
-        hud_damage_by_type: Dict[str, float] = {}
-        final_damage_by_type: Dict[str, float] = {}
-        bane_final_by_type: Dict[str, float] = {}
+        hud_damage_by_type: dict[str, float] = {}
+        final_damage_by_type: dict[str, float] = {}
+        bane_final_by_type: dict[str, float] = {}
         for damage_type in DAMAGE_TYPES:
             base_value = base_by_type[damage_type] + lich_damage[damage_type]
             mod_value = resolved_mods.get(damage_type, 0.0)
@@ -99,20 +101,37 @@ class DamageCalculator:
         )
 
     @staticmethod
+    def _mod_totals(inputs: CalculationInputs, faction: str) -> dict[str, float]:
+        """Per-stat bonuses in effect for this build.
+
+        The equipped slots are authoritative: when ``equipped_mods`` is
+        supplied, the totals are aggregated from them and ``inputs.mods`` is
+        ignored, so a build cannot produce different numbers depending on
+        whether the caller also passed the totals it pre-computed, and a stale
+        or hand-edited dictionary cannot smuggle in a bonus the slots do not
+        justify. The pre-aggregated dictionary stays supported -- and is the
+        only source -- for callers that do not supply the slot list at all.
+        """
+        if inputs.equipped_mods is None:
+            return {code: float(value) for code, value in inputs.mods.items()}
+        return ModAggregator().aggregate(inputs.equipped_mods, faction)
+
+    @staticmethod
     def _resolve_elements(weapon: Weapon, inputs: CalculationInputs,
-                          lich_element: str, valence_damage: float
-                          ) -> tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+                          mod_totals: dict[str, float], lich_element: str,
+                          valence_damage: float
+                          ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
         """Combine ordered primary mods, then innate and progenitor primaries.
 
         Already-combined elemental mods and innate secondary elements remain
-        independent.  For callers without equipped_mods, the mod dictionary is
+        independent. For callers without equipped_mods, the mod dictionary is
         considered already resolved; primary values have the deterministic
         HEAT/COLD/ELEC/TOXIN order, since a plain dictionary cannot express the
         origin of a pre-combined bonus.
         """
         base = {kind: weapon.damage_for(kind) for kind in DAMAGE_TYPES}
         lich = {kind: 0.0 for kind in DAMAGE_TYPES}
-        mods = dict(inputs.mods)
+        mods = dict(mod_totals)
         # Each first occurrence establishes a group's hierarchy.  Values are
         # [mod percentage, innate damage, progenitor damage].
         groups: OrderedDict[str, list[float]] = OrderedDict()
@@ -121,13 +140,13 @@ class DamageCalculator:
                 mods[kind] = 0.0
             # Aggregator totals already include paired primary mods; rebuild
             # elemental values from source effects to retain their provenance.
-            for kind in ("BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"):
+            for kind in COMBINED_ELEMENT_TYPES:
                 mods[kind] = 0.0
             for equipped in inputs.equipped_mods:
                 for effect in ordered_mod_effects(equipped):
                     if effect.code in BASE_ELEMENT_TYPES:
                         groups.setdefault(effect.code, [0.0, 0.0, 0.0])[0] += effect.value
-                    elif effect.code in {"BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"}:
+                    elif effect.code in COMBINED_ELEMENT_TYPES:
                         mods[effect.code] = mods.get(effect.code, 0.0) + effect.value
         else:
             for kind in INNATE_ELEMENT_ORDER:
@@ -153,7 +172,7 @@ class DamageCalculator:
             if i + 1 < len(ordered):
                 other, other_values = ordered[i + 1]
                 destination = ELEMENT_COMBINATIONS[frozenset((kind, other))]
-                values = [a + b for a, b in zip(values, other_values)]
+                values = [a + b for a, b in zip(values, other_values, strict=True)]
             else:
                 destination = kind
             mods[destination] = mods.get(destination, 0.0) + values[0]
@@ -162,12 +181,14 @@ class DamageCalculator:
         return base, lich, mods
 
     @staticmethod
-    def _build_faction_modifiers(faction: str) -> Dict[str, float]:
-        if faction == "Zairman":  # compatibility with saved builds
-            faction = "Zariman"
-        return {kind: float(FACTION_MULTIPLIERS[faction][kind]) for kind in DAMAGE_TYPES}
+    def _build_faction_modifiers(faction: str) -> dict[str, float]:
+        try:
+            modifiers = FACTION_MULTIPLIERS[faction_key(faction)]
+        except KeyError:
+            raise ValueError(f"Unknown faction: {faction!r}") from None
+        return {kind: float(modifiers[kind]) for kind in DAMAGE_TYPES}
 
     @staticmethod
-    def _build_armor_modifiers(armor_value: float, faction_modifiers: Dict[str, float]) -> Dict[str, float]:
+    def _build_armor_modifiers(armor_value: float, faction_modifiers: dict[str, float]) -> dict[str, float]:
         armor_term = 1.0 - enemy_armor_damage_reduction(armor_value)
         return {kind: armor_term * faction_modifiers[kind] for kind in DAMAGE_TYPES}

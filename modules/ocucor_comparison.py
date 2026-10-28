@@ -12,6 +12,7 @@ import json
 import math
 import statistics
 from contextlib import nullcontext
+from typing import Any, TypedDict
 from unittest.mock import patch
 
 import modules.kuva_nukor_sim as nukor
@@ -34,6 +35,17 @@ def make_target(eximus: bool, cls: type[DummyTarget] = DummyTarget) -> DummyTarg
     enemy = scale_enemy(HEAVY_GUNNER, level=150, eximus=eximus,
                         mode=MODE_STEEL_PATH)
     return cls(enemy.health, enemy.armor, enemy.overguard)
+
+
+class _StartSettings(TypedDict):
+    """Start-of-shot settings shared by the single-target and room models."""
+
+    starting_tendrils: int
+    starting_flare_stacks: int
+    enervate_extra_pct: float
+    heat_seed_mode: str
+    ramp_heat_seed: bool
+    puncture_cap: int
 
 
 class SharedHeatClockTarget(DummyTarget):
@@ -103,7 +115,7 @@ def _summarize(results, attempted: int, *, room: bool) -> dict:
 def _paired_difference(enervate, flare, *, room: bool) -> dict | None:
     attr = "clear_time" if room else "ttk"
     differences = [getattr(f, attr) - getattr(e, attr)
-                   for e, f in zip(enervate, flare)
+                   for e, f in zip(enervate, flare, strict=True)
                    if math.isfinite(getattr(e, attr))
                    and math.isfinite(getattr(f, attr))]
     if not differences:
@@ -134,7 +146,8 @@ def compare(name: str, *, eximus: bool, trials: int, seed: int,
     if room and full_beam_ramp:
         raise ValueError("the room model always starts each fresh target cold")
     target_type = SharedHeatClockTarget if shared_heat_clock else DummyTarget
-    factory = lambda: make_target(eximus, target_type)
+    def factory():
+        return make_target(eximus, target_type)
     patch_route = (patch.object(nukor, "route_enemy_hit", discard_overguard_overflow)
                    if gate_overguard else nullcontext())
     settings = {
@@ -152,19 +165,21 @@ def compare(name: str, *, eximus: bool, trials: int, seed: int,
     setups = (("enervate", ARCANE_ENERVATE, 0),
               ("flare_cold", ARCANE_FLARE, 0),
               ("flare_full", ARCANE_FLARE, FLARE_MAX_STACKS))
-    outcomes = {}
+    # Room runs yield RoomResult, single-target runs OcucorTrial; both carry
+    # the timing attribute that _summarize and _paired_difference read.
+    outcomes: dict[str, list[Any]] = {}
     with patch_route:
         for label, arcane, initial_flare in setups:
             build = build_ocucor(arcane, "Multishot")
-            kwargs = dict(
-                starting_tendrils=tendrils,
-                starting_flare_stacks=initial_flare,
-                enervate_extra_pct=(enervate_extra_pct
-                                     if arcane == ARCANE_ENERVATE else 0.0),
-                heat_seed_mode=heat_seed_mode,
-                ramp_heat_seed=ramp_heat_seed,
-                puncture_cap=puncture_cap,
-            )
+            kwargs: _StartSettings = {
+                "starting_tendrils": tendrils,
+                "starting_flare_stacks": initial_flare,
+                "enervate_extra_pct": (enervate_extra_pct
+                                       if arcane == ARCANE_ENERVATE else 0.0),
+                "heat_seed_mode": heat_seed_mode,
+                "ramp_heat_seed": ramp_heat_seed,
+                "puncture_cap": puncture_cap,
+            }
             if room:
                 outcomes[label] = [
                     simulate_room(arcane, "Multishot", n_enemies,

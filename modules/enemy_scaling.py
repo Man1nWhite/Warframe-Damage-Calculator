@@ -56,7 +56,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
 
 # Armor bounds for level-scaled enemy armor.
 ARMOR_CAP = 2700
@@ -164,15 +163,15 @@ class EnemyBase:
     health_curve: ScalingCurve = GRINEER_HEALTH
     armor_curve: ScalingCurve = GRINEER_ARMOR
     overguard_curve: ScalingCurve = OVERGUARD
-    damage_curve: Optional[ScalingCurve] = GRINEER_DAMAGE
+    damage_curve: ScalingCurve | None = GRINEER_DAMAGE
     damage_final_mult: float = GRINEER_DAMAGE_FINAL_MULT
     # If omitted, use the wiki faction curve where known.
-    shield_curve: Optional[ScalingCurve] = None
+    shield_curve: ScalingCurve | None = None
     # Eximus-specific base stats; None means the ordinary base stat is kept.
-    eximus_health: Optional[float] = None
-    eximus_armor: Optional[float] = None
-    eximus_shields: Optional[float] = None
-    eximus_overguard: Optional[float] = None
+    eximus_health: float | None = None
+    eximus_armor: float | None = None
+    eximus_shields: float | None = None
+    eximus_overguard: float | None = None
     # Additive Steel Path / Archimedea base-health bonuses (0 for Heavy Gunner).
     steel_path_health_bonus: float = 0.0
     steel_path_shield_bonus: float = 0.0

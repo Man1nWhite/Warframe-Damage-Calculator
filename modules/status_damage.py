@@ -33,8 +33,8 @@ these helpers do not reproduce exact game rounding or crit quantization.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 # Status coefficients (fraction of modded base damage per tick).
 SLASH_COEFFICIENT = 0.35
@@ -43,12 +43,17 @@ ELEMENTAL_DOT_COEFFICIENT = 0.5  # Heat, Toxin, Electricity, Gas
 # Standard proc timing (seconds).
 PROC_DURATION = 6.0
 SINGLE_TARGET_DELAY = 1.0  # Slash / Heat / Toxin
-AOE_PROC_DELAY = 0.0  # Electricity / Gas (last tick deals no damage)
 DEFAULT_TICK_RATE = 1.0  # status DoTs tick once per second
 
 # Stack caps.
 GAS_MAX_STACKS = 10
 BLAST_MAX_STACKS = 10
+# Damage/Blast_Damage: bosses and some Eximus detonate at four stacks instead
+# of ten. It is a property of the target, so the simulators ask the target for
+# its cap rather than reading this constant directly.
+BLAST_MAX_STACKS_BOSS = 4
+BLAST_SINGLE_COEF = 0.30  # 30% of modded base per stack
+BLAST_RADIAL_COEF = 3.0   # 300% of modded base per stack, 5 m
 
 
 def modded_base_damage(base_damage: float,
@@ -181,6 +186,25 @@ def damaging_ticks(duration: float = PROC_DURATION,
             and math.isclose(span, round(span), rel_tol=0.0, abs_tol=1e-12)):
         ticks -= 1
     return ticks
+
+
+def blast_stack_damage(seed: float, coefficient: float = BLAST_SINGLE_COEF,
+                       *, crit_factor: float = 1.0,
+                       status_damage_bonus: float = 0.0,
+                       floor: float = 1.0) -> float:
+    """Blast damage of one stack: ``coefficient x H x crit x status damage``.
+
+    ``H`` is the damage the inducing hit recorded for the stack. The
+    ``Damage/Calculation`` and ``Damage/Blast_Damage`` pages give
+    ``max(1, 0.3 x H)`` for a stack settled on its own and ``3 x H`` per stack
+    for the 5 m radial; both forms go through this helper so the coefficients
+    and the death/cap floor cannot drift between simulators.
+
+    ``floor=0`` disables the minimum, which is how the wiki presents the radial
+    and the 10-stack settlement (all stacks summed into one instance).
+    """
+    return max(floor, coefficient * seed * crit_factor
+               * (1.0 + status_damage_bonus))
 
 
 def proc_type_chances(damage_distribution: Mapping[str, float]) -> dict[str, float]:

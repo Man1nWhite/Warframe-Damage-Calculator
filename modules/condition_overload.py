@@ -30,7 +30,6 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 GUNCO_FILE = "gunco_mechanic.json"
 
@@ -57,7 +56,7 @@ class CoBehavior:
     mode: str
     scale: float
     source: str
-    note: Optional[str]
+    note: str | None
     matched: bool  # True = explicit catalog rule, False = default resolution
 
     @property
@@ -76,7 +75,7 @@ def _default_path() -> Path:
     return candidates[0]
 
 
-def load_gunco_dataset(path: Optional[str | Path] = None) -> dict:
+def load_gunco_dataset(path: str | Path | None = None) -> dict:
     """Load the full GunCO dataset (meta, formulas, CO sources, rules)."""
     dataset_path = Path(path) if path else _default_path()
     with dataset_path.open("r", encoding="utf-8") as handle:
@@ -92,8 +91,8 @@ def resolve_co_behavior(
     *,
     is_aoe: bool = False,
     hitscan_aoe: bool = False,
-    section: Optional[str] = None,
-    dataset: Optional[dict] = None,
+    section: str | None = None,
+    dataset: dict | None = None,
 ) -> CoBehavior:
     """Resolve how CO-type bonuses apply to a weapon attack.
 
@@ -133,7 +132,7 @@ def resolve_co_behavior(
 
 
 def co_bonus_for_statuses(per_status: float, status_count: int,
-                          cap: Optional[float] = None) -> float:
+                          cap: float | None = None) -> float:
     """Total CO-type damage fraction from one CO source.
 
     ``per_status`` e.g. 0.4 for Galvanized Aptitude, 0.8 for Condition
@@ -184,8 +183,8 @@ def apply_co(
     )
 
 
-def multiplicative_rules(section: Optional[str] = None,
-                         dataset: Optional[dict] = None) -> list[dict]:
+def multiplicative_rules(section: str | None = None,
+                         dataset: dict | None = None) -> list[dict]:
     """All catalog rules that stack CO multiplicatively (the user's tables)."""
     data = dataset if dataset is not None else load_gunco_dataset()
     return [
