@@ -103,7 +103,18 @@ _PLAIN_UNIT_TAGS = {
     "WeaponMeleeComboInitialBonusMod",
     "ComboDurationMod",
     "WeaponMeleeRangeIncMod",
+    "WeaponPunctureDepthMod",
 }
+
+# Wiki ordinary traits marked positive-only or negative-only. The Riven Mods
+# rank-8 range table contradicts its coefficient legend for Initial Combo; the
+# dedicated Melee Combo page explicitly confirms Initial Combo is positive-only.
+_POSITIVE_ONLY_TAGS = frozenset({
+    "WeaponFireDamageMod", "WeaponFreezeDamageMod", "WeaponElectricityDamageMod",
+    "WeaponToxinDamageMod", "WeaponPunctureDepthMod", "WeaponMeleeDamageMod",
+    "WeaponMeleeComboInitialBonusMod", "WeaponMeleeComboBonusOnHitMod",
+})
+_NEGATIVE_ONLY_TAGS = frozenset({"WeaponMeleeComboPointsOnHitMod"})
 
 # tag -> (human-readable label, unit kind, WDC damage/mod code when applicable)
 TAG_METADATA: Dict[str, tuple[str, str, Optional[str]]] = {
@@ -131,7 +142,7 @@ TAG_METADATA: Dict[str, tuple[str, str, Optional[str]]] = {
     "WeaponReloadSpeedMod": ("Reload Speed", UNIT_PERCENT, None),
     "WeaponClipMaxMod": ("Magazine Capacity", UNIT_PERCENT, None),
     "WeaponAmmoMaxMod": ("Ammo Maximum", UNIT_PERCENT, None),
-    "WeaponPunctureDepthMod": ("Punch Through", UNIT_PERCENT, None),
+    "WeaponPunctureDepthMod": ("Punch Through", UNIT_PLAIN, None),
     "WeaponRecoilReductionMod": ("Weapon Recoil", UNIT_PERCENT, None),
     "WeaponZoomFovMod": ("Zoom", UNIT_PERCENT, None),
     "WeaponProjectileSpeedMod": ("Projectile Speed", UNIT_PERCENT, None),
@@ -188,11 +199,14 @@ def _js_round(value: float) -> float:
 
 
 def display_value(tag: str, raw: float) -> float:
-    """Round a raw fractional stat the way the game displays it."""
+    """Round a raw stat for the table (faction entries remain bonus-only)."""
     if tag in _FACTION_TAGS:
         return _js_round(raw * 100) / 100
     if tag in _PLAIN_UNIT_TAGS:
         return _js_round(raw * 10) / 10
+    if tag == "WeaponMeleeComboPointsOnHitMod":
+        # This negative-only trait is displayed as -100*v, not +100*v.
+        raw = -raw
     return _js_round(raw * 1000) / 10
 
 
@@ -238,8 +252,10 @@ def average_buff(
     grade_t: float = AVERAGE_GRADE_T,
     tables: Optional[Dict[str, list[dict]]] = None,
 ) -> float:
-    """Raw average-grade value of a positive Riven stat for a given layout."""
+    """Raw average-grade value of a rollable positive trait for a given layout."""
     tables = tables or load_riven_tags()
+    if tag in _NEGATIVE_ONLY_TAGS:
+        raise ValueError(f"{tag} cannot roll as a positive Riven trait")
     return (
         _tag_value(tables, riven_type, tag)
         * base_attenuation(disposition)
@@ -259,8 +275,14 @@ def average_curse(
     grade_t: float = AVERAGE_GRADE_T,
     tables: Optional[Dict[str, list[dict]]] = None,
 ) -> float:
-    """Raw average-grade value of a negative Riven stat (returned negative)."""
+    """Raw average-grade modifier for a rollable negative trait.
+
+    Some raw coefficients have inverted display conventions, so the sign of
+    the raw modifier is not always the sign shown to the player.
+    """
     tables = tables or load_riven_tags()
+    if tag in _POSITIVE_ONLY_TAGS:
+        raise ValueError(f"{tag} cannot roll as a negative Riven trait")
     return (
         _tag_value(tables, riven_type, tag)
         * -1.0
@@ -323,16 +345,22 @@ def _stat_entry(
     name, unit, wdc_code = TAG_METADATA.get(tag, (tag, stat_unit(tag), None))
     buffs = {}
     for layout_key, num_buffs, num_curses in BUFF_LAYOUTS:
-        raw = average_buff(
-            riven_type, tag, disposition, rank, num_buffs, num_curses, tables=tables
-        )
-        buffs[layout_key] = {"raw": raw, "display": display_value(tag, raw)}
+        if tag in _NEGATIVE_ONLY_TAGS:
+            buffs[layout_key] = None
+        else:
+            raw = average_buff(
+                riven_type, tag, disposition, rank, num_buffs, num_curses, tables=tables
+            )
+            buffs[layout_key] = {"raw": raw, "display": display_value(tag, raw)}
     curses = {}
     for layout_key, num_buffs, num_curses in CURSE_LAYOUTS:
-        raw = average_curse(
-            riven_type, tag, disposition, rank, num_buffs, num_curses, tables=tables
-        )
-        curses[layout_key] = {"raw": raw, "display": display_value(tag, raw)}
+        if tag in _POSITIVE_ONLY_TAGS:
+            curses[layout_key] = None
+        else:
+            raw = average_curse(
+                riven_type, tag, disposition, rank, num_buffs, num_curses, tables=tables
+            )
+            curses[layout_key] = {"raw": raw, "display": display_value(tag, raw)}
     return {
         "tag": tag,
         "name": name,

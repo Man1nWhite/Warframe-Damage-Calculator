@@ -10,7 +10,7 @@ Galvanized Aptitude/Shot/Savvy, Secondary Shiver, ...):
 
 * ``multiply`` (wiki behavior #1, mostly projectiles, not the intended design)::
 
-      damage = base * most_damage_bonuses * (1 + co_bonus) * other_multipliers
+      damage = base * most_damage_bonuses * (1 + co_bonus * scale) * other_multipliers
 
 * ``add`` (wiki behaviors #2-#4, intended, most hitscan weapons)::
 
@@ -137,15 +137,15 @@ def co_bonus_for_statuses(per_status: float, status_count: int,
     """Total CO-type damage fraction from one CO source.
 
     ``per_status`` e.g. 0.4 for Galvanized Aptitude, 0.8 for Condition
-    Overload. ``cap`` clips the result (e.g. 0.8 for Galvanized Aptitude's
-    2 stacks). Returns 0.0 for zero statuses.
+    Overload. ``cap`` is the maximum bonus *per status type* (e.g. 0.8
+    for Galvanized Aptitude at two kill stacks), not a cap on the total.
+    Returns 0.0 for zero statuses.
     """
     if status_count < 0:
         raise ValueError("status_count must be non-negative")
-    bonus = per_status * status_count
     if cap is not None:
-        bonus = min(bonus, cap)
-    return bonus
+        per_status = min(per_status, cap)
+    return per_status * status_count
 
 
 def apply_co(
@@ -162,6 +162,9 @@ def apply_co(
     ``co_bonus`` is the summed CO-type bonus fraction (e.g. 0.8 for one
     status under Condition Overload). ``damage_bonus_mult`` is the pooled
     ordinary +% damage multiplier including base (Serration 1.65 -> 2.65).
+    In additive mode ``other_multipliers`` applies only to the ordinary term,
+    for effects the wiki says that CO ignores; apply shared final multipliers
+    to the returned result. ``scale`` applies to the CO term in both modes.
     """
     if mode not in VALID_MODES:
         raise ValueError(f"unknown CO mode {mode!r}; expected one of {sorted(VALID_MODES)}")
@@ -171,7 +174,7 @@ def apply_co(
         return (
             base_damage
             * damage_bonus_mult
-            * (1.0 + co_bonus)
+            * (1.0 + co_bonus * scale)
             * other_multipliers
         )
     # additive: CO joins the ordinary damage-bonus pool, scaled per attack

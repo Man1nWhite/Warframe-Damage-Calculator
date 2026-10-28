@@ -1,9 +1,10 @@
 # Warframe Damage & Status Formula Reference
 
 Compiled from the WARFRAME Wiki on **2026-10-27**. Several source pages carry
-the wiki's "actively being worked on" banner; formulas below are the ones the
-wiki currently publishes and every numeric example is pinned by a unit test in
-`tests/test_status_damage.py`.
+an "actively being worked on" banner and disagree on some details. This is a
+reference, not a claim that the calculator or simulators implement every
+formula here. See [the formula audit](formula_audit.md) for tested scope,
+source conflicts and known simulation errors.
 
 ## Sources
 
@@ -40,6 +41,10 @@ Arsenal Total = Base Damage
 ```
 
 Melee weapons have no multishot term and no stance multiplier in this number.
+The desktop currently uses innate multishot only. It applies this generic
+calculation to the public-export row, which may combine separate impact and
+radial events rather than describing one hit; see the
+[Grimoire example and limitations](formula_audit.md#2026-10-28-follow-up-weapon-export-collisions-and-hit-components).
 
 ### 1.2 Quantization
 
@@ -53,19 +58,24 @@ Quantized(x) = sign(x) x floor(|x| x 32 + 0.5) / 32
 Quantized Damage Type Value = Quantized(x) x Modded Base Damage
 ```
 
-DoT ticks are **not** quantized this way (see section 4). The pop-up number is
-the quantized result rounded again to a whole number.
+DoT ticks are **not** quantized this way (see section 4). After all applicable
+multipliers and defenses, the damage pop-up is rounded to a whole number;
+this display rounding is not applied to the underlying health damage.
 
 ### 1.3 Health-type and armor modifiers
 
 ```
 Unarmored / True (Cinematic) damage:  Inflicted = Starting x (1 + Health Modifier)
-Armored:  Damage Modifier = 1 - 0.9 x Armor / (Armor + 2700)
+Enemy armor <= 2700:  DR = 0.9 x sqrt(Armor / 2700)
+Enemy armor > 2700:   DR = Armor / (Armor + 300)    # exceptional case
+Health damage = Starting x faction/type modifier x (1 - DR)
 ```
 
 Armor is the value after all debuffs (Corrosive procs, Corrosive Projection,
-Terrify, ...). Shield damage is never reduced by armor; Toxin bypasses shields
-straight to health (Treasurer/Hounds excepted).
+Terrify, ...). Positive damage reduced by armor has a minimum of 1 per damage
+type. Shield damage is not reduced by armor; Toxin generally bypasses shields
+straight to health (Treasurer/Hounds excepted). The desktop calculator models
+health, not shields or Overguard.
 
 ### 1.4 Total, crit, AoE and weak points
 
@@ -91,8 +101,8 @@ Shots per Magazine   = Modded Mag Size / Ammo Cost Per Shot
 Sustained DPS        = Burst DPS x ShotsPerMag / (EffFireRate x Reload + ShotsPerMag)
 Effective Fire Rate:
   Auto / Semi / Duplex / Held = Modded Fire Rate
-  Charge   = 1 / Modded Charge Time + 1 / Modded Fire Rate
-  Burst    = Burst Count / (1/FireRate + (Burst Count - 1) x Burst Delay)
+  Charge   = 1 / (Modded Charge Time + 1 / Modded Fire Rate)
+  Burst    = Burst Count / (1/Modded Fire Rate + (Burst Count - 1) x Modded Burst Delay)
 ```
 
 ---
@@ -145,9 +155,9 @@ registration, proc rolls and multishot behavior.
 
 - Arsenal status chance is the probability **per pellet/projectile/tick**.
   Multishot adds rolls, it never changes the per-projectile chance.
-- Above 100%, one proc is guaranteed per hit and the excess rolls additional
-  **unique** procs; each proc's type is drawn independently (duplicates of the
-  same type in one hit are possible).
+- Above 100%, each whole 100% guarantees one proc, and the fractional remainder
+  rolls one more. Each type is drawn independently with replacement, so the
+  same type can occur multiple times on one hit.
 - Proc type weighting equals the damage distribution (enemy status immunities
   remove that type and renormalize):
 
@@ -197,7 +207,7 @@ pay out all remaining ticks in one damage instance.
 
 ### 4.2 The tick formula
 
-Exact engine behavior (Damage/Calculation), binary32 intermediates:
+The wiki describes this tick-group form with binary32 intermediates:
 
 ```
 Unrounded Tick Damage = (sum(S_i) + 1) x C x M
@@ -207,8 +217,12 @@ Unrounded Tick Damage = (sum(S_i) + 1) x C x M
 - `+1`: the group's accumulator starts at 1; counted **once per tick group**,
   not per stack and not as a flat end bonus
 - `C`: **0.35 Slash**, **0.50 Heat / Toxin / Electricity / Gas**
-- `M`: product of the remaining modifiers (elemental, faction, status-damage,
-  crit, body part)
+- `M`: product of remaining applicable modifiers (elemental, faction and
+  status damage). Crit/body-part factors can be part of the stored seed;
+  avoid multiplying them twice.
+
+The Python helpers use binary64 and do not implement exact binary32 or critical
+multiplier quantization, so their results can differ slightly in game.
 
 The per-type wiki pages present the simplified form without the accumulator:
 
@@ -293,8 +307,8 @@ dependency:
 
 - `modded_base_damage()` — proc seed (base/faction only)
 - `proc_tick_damage()` plus `slash_tick/heat_tick/toxin_tick/electricity_tick/gas_tick`
-  — exact `(sum(S)+1) x C x M` form, with `accumulator=False` for the
-  simplified per-type-page form
+  — `(sum(S)+1) x C x M` form in Python binary64, with `accumulator=False`
+  for the simplified per-type-page form
 - `total_ticks()` / `damaging_ticks()` — tick counting including the empty
   final AoE tick
 - `proc_type_chances()`, `average_procs_per_shot()`,

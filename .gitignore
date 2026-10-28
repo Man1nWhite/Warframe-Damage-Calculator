@@ -2,10 +2,15 @@
 __pycache__/
 *.py[cod]
 
+# Local tooling and editor backups
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+*.bak
+
 # PyInstaller output
 build/
 dist/
-*.spec.bak
 
 # Inno Setup output
 installer_output/

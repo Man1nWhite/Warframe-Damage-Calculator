@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+import tempfile
 from pathlib import Path
 from typing import Callable, List
 
@@ -39,12 +42,13 @@ from PyQt6.QtWidgets import (
 
 from modules.app_paths import ensure_app_dirs
 from modules.calculator import DamageCalculator
-from modules.constants import APP_TITLE, APP_VERSION, DAMAGE_TYPES, DISPLAY_NAMES, FACTION_MULTIPLIERS, MOD_SLOT_COUNT, MOD_STAT_ORDER, WINDOW_TITLE
+from modules.constants import APP_TITLE, APP_VERSION, DAMAGE_TYPES, DISPLAY_NAMES, FACTION_MULTIPLIERS, MOD_SLOT_COUNT, WINDOW_TITLE
 from modules.database import ModRepository, WeaponRepository
 from modules.importer import build_database
+from modules.mod_compatibility import ModCompatibility
 from modules.mod_engine import ModAggregator
 from modules.models import CalculationInputs, EquippedMod, Mod, Weapon
-from modules.updater import DataRefreshError, WarframeDataUpdater
+from modules.updater import WarframeDataUpdater
 
 
 DARK_STYLESHEET = """
@@ -153,23 +157,23 @@ Why are there both HUD values and Final values?
 -----------------------------------------------
 The HUD / Mod Screen values show the damage buckets after the weapon, adversary bonus, and mod values have been built into each damage type. This view is useful for seeing what the build itself is doing before enemy modifiers are applied.
 
-The Final values show the per-type damage buckets after faction resistances or weaknesses and armor are applied. This is the practical output against the selected target profile.
+The Final values treat the exported damage row as one non-critical hit to health after faction damage-type modifiers and armor. Some export rows combine separate direct and radial hits; for those weapons this is not a per-hit estimate and does not model falloff or separate quantization. Shields, Overguard, critical hits, status effects, and special weapon mechanics are also outside this screen's scope.
 
 What is the valence input doing?
 --------------------------------
-The calculator works backward from the weapon's displayed bonus damage to recover the true adversary multiplier before the rest of the math runs.
+Enter the adversary bonus as an absolute damage value, not a percentage. For example, a 60% bonus on 100 base damage is 60. Select its element; without a selected element no bonus is added.
 
 True Valence = Valence Base / Base Weapon Damage
 
-That recovered multiplier is then used to rebuild the weapon's actual total damage before mods and enemy calculations are applied.
+The bonus is included in weapon base damage before mods and enemy calculations.
 
 Why is Quanta shown?
 --------------------
-WDC uses damage quanta to stay aligned with Warframe-style packet rounding.
+The wiki describes direct-hit damage quantization in units of one thirty-second of modded base damage:
 
-Quanta = Weapon Total Damage / 16
+Quanta = Weapon Total Damage x (1 + Base Damage Bonuses) / 32
 
-That value is used in the HUD and final per-type rounding passes so the calculator stays aligned with in-game behavior.
+Final damage types are quantized before faction and armor. Arsenal-style HUD values are not quantized. The displayed values are estimates and do not replicate every game rounding rule.
 
 Why can the HUD total and Final total be very different?
 --------------------------------------------------------
@@ -177,7 +181,7 @@ Because enemy health type and armor matter a lot. The HUD side shows the built d
 
 How are elemental mods combined?
 --------------------------------
-Elemental effects are combined by slot order. Single elements are queued in slot order and paired into Blast, Radiation, Gas, Magnetic, Viral, or Corrosive when possible.
+Primary elements are grouped by mod slot order, followed by innate and adversary primaries in Heat, Cold, Electricity, Toxin order. Pairs form Blast, Radiation, Gas, Magnetic, Viral, or Corrosive. Already-combined elements stay separate.
 
 Why do faction mods show separately?
 ------------------------------------
@@ -188,23 +192,27 @@ How does WDC process the damage flow?
 WDC preserves the same layered logic used by the calculator engine:
 - weapon lookup
 - true valence reconstruction
-- quanta-based rounding
 - elemental combination by slot order
 - HUD bucket calculation
+- direct-hit quantization
 - faction and armor application
 - final total calculation
 
-Why might adversary weapons still be slightly off?
---------------------------------------------------
-Warframe does not expose enough decimal precision in every place needed to fully reconstruct the hidden values. The math is built to stay as close as possible to what the game shows, but there are still edge cases where the game's hidden precision wins.
+Why might a weapon estimate differ from gameplay?
+------------------------------------------------
+Exported stats can be stale, omit attack modes, or combine multiple hit components. The screen also omits falloff and many mechanics; hidden precision and game rounding can add differences. An adversary bonus must be entered as an absolute value for the selected element.
 
 Where is the database saved?
 ----------------------------
 The SQLite database and source data live in WDC's AppData-backed folder so the app can be packaged later without relying on files sitting beside the executable.
 
+What happens when an older database is upgraded?
+------------------------------------------------
+WDC upgrades supported older databases from the saved local exports without downloading. It keeps a pre-upgrade backup in data/backups and stops if it cannot upgrade safely. Explicit rebuilds replace the mod catalog, but first back up an existing database in data/backups.
+
 How does the data updater work?
 -------------------------------
-WDC can download fresh public export data from DE and rebuild the SQLite database in one step. If the download cannot be completed, WDC can fall back to the bundled backup export files that ship with the app.
+WDC can download fresh public export data from DE and rebuild the SQLite database in one step. If the download cannot be completed, WDC can fall back to saved local export files, initially seeded from the app.
 """.strip()
 
 
@@ -258,7 +266,7 @@ ENEMY_PRESETS = {
     "Sentient Durable": ("Sentient", 350),
     "Narmer Heavy": ("Narmer", 375),
     "Murmur Heavy": ("Murmur", 450),
-    "Zariman Void": ("Zairman", 250),
+    "Zariman Void": ("Zariman", 250),
 }
 
 
@@ -398,7 +406,7 @@ class SettingsDialog(QDialog):
         intro_text = QLabel(
             "Use this panel to download the latest public export data, rebuild the SQLite database, "
             "and manage where WDC stores its working files. The updater uses Python LZMA recovery for "
-            "DE's manifest index and can fall back to the bundled backup export files when fresh data "
+            "DE's manifest index and can fall back to the saved local export files when fresh data "
             "cannot be reached."
         )
         intro_text.setWordWrap(True)
@@ -441,7 +449,7 @@ class SettingsDialog(QDialog):
         button_layout.setHorizontalSpacing(10)
         button_layout.setVerticalSpacing(10)
         self.update_and_rebuild_button = QPushButton("Download Fresh Data + Rebuild Database")
-        self.use_backup_button = QPushButton("Use Bundled Backup Data + Rebuild")
+        self.use_backup_button = QPushButton("Use Saved Local Exports + Rebuild")
         self.open_folder_button = QPushButton("Open App Data Folder")
         self.close_button = QPushButton("Close")
         self.update_and_rebuild_button.setMinimumHeight(42)
@@ -465,27 +473,47 @@ class SettingsDialog(QDialog):
         self.status.append(message)
         QApplication.processEvents()
 
+    def _confirm_catalog_rebuild(self) -> bool:
+        choice = QMessageBox.question(
+            self, "Rebuild Database",
+            "This rebuild replaces the mod and effect catalog, including custom entries. "
+            "An existing database will first be backed up in data/backups. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return choice == QMessageBox.StandardButton.Yes
+
     def update_and_rebuild(self) -> None:
+        if not self._confirm_catalog_rebuild():
+            return
         try:
             self.set_status("Downloading fresh data from DE and rebuilding the SQLite database...")
             outputs = self.window.run_data_pipeline(prefer_online=True, log_callback=self.set_status)
             self.set_status(f"Database rebuilt at: {outputs['db_path']}")
             self.set_status(f"Data source: {outputs['source_mode']}")
             self.set_status(f"Manifest decode path: {outputs['lzma_method']}")
+            if outputs.get("backup_path"):
+                self.set_status(f"Previous database backup: {outputs['backup_path']}")
             if outputs.get("refresh_error"):
-                self.set_status(f"Fresh download failed, so WDC used bundled backup data: {outputs['refresh_error']}")
-            QMessageBox.information(self, "Update Complete", "WDC finished rebuilding the database.")
+                self.set_status(f"Fresh download failed, so WDC used saved local exports: {outputs['refresh_error']}")
+            backup_note = f"\n\nPrevious database backup: {outputs['backup_path']}" if outputs.get("backup_path") else ""
+            QMessageBox.information(self, "Update Complete", "WDC finished rebuilding the database." + backup_note)
         except Exception as exc:
             self.set_status(f"Update failed: {exc}")
             QMessageBox.critical(self, "Update Failed", str(exc))
 
     def rebuild_from_backup(self) -> None:
+        if not self._confirm_catalog_rebuild():
+            return
         try:
-            self.set_status("Rebuilding the database from bundled backup data...")
+            self.set_status("Rebuilding the database from saved local exports...")
             outputs = self.window.run_data_pipeline(prefer_online=False, log_callback=self.set_status)
             self.set_status(f"Database rebuilt at: {outputs['db_path']}")
-            self.set_status("WDC used bundled backup data for this rebuild.")
-            QMessageBox.information(self, "Rebuild Complete", "The SQLite database was rebuilt from bundled backup data.")
+            self.set_status("WDC used saved local exports for this rebuild.")
+            if outputs.get("backup_path"):
+                self.set_status(f"Previous database backup: {outputs['backup_path']}")
+            backup_note = f"\n\nPrevious database backup: {outputs['backup_path']}" if outputs.get("backup_path") else ""
+            QMessageBox.information(self, "Rebuild Complete", "The SQLite database was rebuilt from saved local exports." + backup_note)
         except Exception as exc:
             self.set_status(f"Rebuild failed: {exc}")
             QMessageBox.critical(self, "Rebuild Failed", str(exc))
@@ -537,41 +565,55 @@ class ModSlotWidget(QGroupBox):
 
         self.browse_button.clicked.connect(self.open_picker)
 
-    def set_mod_options(self, mods: List[Mod]) -> None:
+    def set_mod_options(self, mods: List[Mod]) -> bool:
+        """Refresh the picker and report whether the selected build changed.
+
+        Rebuilding the combo temporarily changes its index. Suppress those
+        intermediate signals, including spinbox clamps, so the parent can
+        recalculate once after *all* slots have been refreshed.
+        """
         current_unique = self.current_mod.unique_name if self.current_mod else None
+        old_rank = self.rank_spin.value()
         self.current_options = list(mods)
         self.mod_lookup = {mod.unique_name: mod for mod in mods}
-        self.mod_combo.blockSignals(True)
-        self.mod_combo.clear()
-        self.mod_combo.addItem("-- Empty --", None)
-        for mod in mods:
-            summary = (mod.effect_summary or mod.description or "").strip()
-            suffix = []
-            if mod.rarity:
-                suffix.append(mod.rarity.title())
-            if mod.polarity:
-                suffix.append(f"Polarity {mod.polarity}")
-            suffix.append(f"Drain {mod.base_drain}")
-            suffix.append(f"Max {mod.fusion_limit}")
-            display_text = mod.name
-            if summary:
-                display_text += f"  |  {summary[:64]}"
-            display_text += f"  |  {' / '.join(suffix)}"
-            self.mod_combo.addItem(display_text, mod.unique_name)
-            self.mod_combo.setItemData(self.mod_combo.count() - 1, summary or mod.description, Qt.ItemDataRole.ToolTipRole)
-        self.mod_combo.blockSignals(False)
+        combo_blocked = self.mod_combo.blockSignals(True)
+        rank_blocked = self.rank_spin.blockSignals(True)
+        try:
+            self.mod_combo.clear()
+            self.mod_combo.addItem("-- Empty --", None)
+            for mod in mods:
+                summary = (mod.effect_summary or mod.description or "").strip()
+                suffix = []
+                if mod.rarity:
+                    suffix.append(mod.rarity.title())
+                if mod.polarity:
+                    suffix.append(f"Polarity {mod.polarity}")
+                suffix.append(f"Drain {mod.base_drain}")
+                suffix.append(f"Max {mod.fusion_limit}")
+                display_text = mod.name
+                if summary:
+                    display_text += f"  |  {summary[:64]}"
+                display_text += f"  |  {' / '.join(suffix)}"
+                self.mod_combo.addItem(display_text, mod.unique_name)
+                self.mod_combo.setItemData(self.mod_combo.count() - 1, summary or mod.description, Qt.ItemDataRole.ToolTipRole)
 
-        if current_unique and current_unique in self.mod_lookup:
-            index = self.mod_combo.findData(current_unique)
-            if index >= 0:
-                self.mod_combo.setCurrentIndex(index)
-                self.current_mod = self.mod_lookup[current_unique]
-                self.rank_spin.setMaximum(max(self.current_mod.fusion_limit, 0))
-                self.rank_spin.setValue(min(self.rank_spin.value(), self.rank_spin.maximum()))
-                self._refresh_summary()
-                return
-
-        self.clear_selection()
+            if current_unique and current_unique in self.mod_lookup:
+                index = self.mod_combo.findData(current_unique)
+                if index >= 0:
+                    self.mod_combo.setCurrentIndex(index)
+                    self.current_mod = self.mod_lookup[current_unique]
+                    self.rank_spin.setMaximum(max(self.current_mod.fusion_limit, 0))
+                    self.rank_spin.setValue(min(old_rank, self.rank_spin.maximum()))
+                    self._refresh_summary()
+                else:
+                    self.clear_selection()
+            else:
+                self.clear_selection()
+        finally:
+            self.mod_combo.blockSignals(combo_blocked)
+            self.rank_spin.blockSignals(rank_blocked)
+        selected = self.current_mod.unique_name if self.current_mod else None
+        return (selected, self.rank_spin.value()) != (current_unique, old_rank)
 
     def selected_unique_name(self) -> str | None:
         return self.mod_combo.currentData()
@@ -616,6 +658,7 @@ class DamageCalculatorWindow(QMainWindow):
         self.weapon_repository = weapon_repository
         self.mod_repository = mod_repository
         self.project_root = project_root
+        self.mod_compatibility = ModCompatibility.from_file(project_root / "source" / "weapon_mod_classes.json")
         self.paths = ensure_app_dirs()
         self.calculator = DamageCalculator()
         self.mod_aggregator = ModAggregator()
@@ -664,7 +707,7 @@ class DamageCalculatorWindow(QMainWindow):
         self.weapon_summary.setReadOnly(True)
         self.weapon_summary.setMinimumHeight(260)
 
-        subtitle = QLabel("Search for a weapon, build a loadout, and compare the real damage output.")
+        subtitle = QLabel("Search for a weapon, build a loadout, and compare estimated damage.")
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #91a3c4;")
 
@@ -716,6 +759,9 @@ class DamageCalculatorWindow(QMainWindow):
         self.lich_combo = QComboBox()
         self.lich_combo.addItems([""] + DAMAGE_TYPES)
         self.valence_edit = QLineEdit("0")
+        self.valence_edit.setToolTip(
+            "Absolute adversary bonus damage, not percent: e.g. 60 for a 60% bonus on 100 base damage."
+        )
         self.faction_combo = QComboBox()
         self.faction_combo.addItems(list(FACTION_MULTIPLIERS.keys()))
         self.armor_edit = QLineEdit("0")
@@ -754,12 +800,20 @@ class DamageCalculatorWindow(QMainWindow):
         layout = QVBoxLayout(box)
         layout.setContentsMargins(14, 18, 14, 14)
 
-        note = QLabel(
-            "Pick real mods and ranks. WDC filters mods by the selected weapon family, supports a searchable slot picker, shows polarity and drain details, and combines elemental effects in slot order before sending the results through the calculator engine."
+        self.damage_scope_notice = QLabel(
+            "Estimates treat each exported damage row as one non-critical hit. Some rows combine "
+            "separate direct and radial hits; falloff and separate quantization are not modeled. "
+            "Only modeled damage effects are included."
         )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #91a3c4;")
-        layout.addWidget(note)
+        self.damage_scope_notice.setWordWrap(True)
+        self.damage_scope_notice.setStyleSheet("color: #91a3c4;")
+        layout.addWidget(self.damage_scope_notice)
+        self.compatibility_notice = QLabel(
+            "Compatibility filtering is partial; verify conflicts, mod capacity and other restrictions."
+        )
+        self.compatibility_notice.setWordWrap(True)
+        self.compatibility_notice.setStyleSheet("color: #e4bd78;")
+        layout.addWidget(self.compatibility_notice)
 
         filter_row = QHBoxLayout()
         self.mod_search_edit = QLineEdit()
@@ -949,19 +1003,34 @@ class DamageCalculatorWindow(QMainWindow):
                 lines.append(f"  {self.display_name(damage_type)}: {value:.6f}")
         self.weapon_summary.setPlainText("\n".join(lines))
 
-    def _load_mod_options_for_weapon(self, weapon: Weapon) -> None:
+    def _compatible_mod_options(self, weapon: Weapon) -> list[Mod]:
         raw_mods = self.mod_repository.list_mods_for_slot(weapon.slot_group)
         deduped: dict[tuple[str, str], Mod] = {}
         for mod in raw_mods:
-            key = (mod.name.strip().lower(), (mod.effect_summary or "").strip().lower())
+            if not self.mod_compatibility.allows(weapon, mod):
+                continue
+            # Do not collapse a user-defined mod into an official entry with
+            # the same visible name/summary; saved builds use unique IDs.
+            identity = ("official:" + mod.name.strip().lower() if mod.unique_name.startswith("/Lotus/")
+                        else "custom:" + mod.unique_name)
+            key = (identity, (mod.effect_summary or "").strip().lower())
             existing = deduped.get(key)
             if existing is None or mod.fusion_limit > existing.fusion_limit:
                 deduped[key] = mod
-        self.available_mods = sorted(deduped.values(), key=lambda mod: (mod.name.lower(), mod.fusion_limit))
+        return sorted(deduped.values(), key=lambda mod: (mod.name.lower(), mod.fusion_limit))
+
+    def _load_mod_options_for_weapon(self, weapon: Weapon) -> None:
+        self.available_mods = self._compatible_mod_options(weapon)
+        self.compatibility_notice.setText(self.mod_compatibility.notice(weapon))
         self.apply_mod_filters()
 
     def apply_mod_filters(self) -> None:
         if not self.available_mods:
+            changed = False
+            for slot in self.mod_slots:
+                changed = slot.set_mod_options([]) or changed
+            if changed:
+                self.recalculate()
             return
 
         search_text = self.mod_search_edit.text().strip().lower()
@@ -975,8 +1044,20 @@ class DamageCalculatorWindow(QMainWindow):
                 continue
             filtered.append(mod)
 
+        # Filtering the picker must not silently unequip mods that no longer
+        # match the search. Keep each equipped mod in its own slot's options,
+        # provided it is still compatible with the selected weapon.
+        available_ids = {mod.unique_name for mod in self.available_mods}
+        filtered_ids = {mod.unique_name for mod in filtered}
+        changed = False
         for slot in self.mod_slots:
-            slot.set_mod_options(filtered)
+            selected = slot.current_mod
+            options = filtered
+            if selected and selected.unique_name in available_ids and selected.unique_name not in filtered_ids:
+                options = [*filtered, selected]
+            changed = slot.set_mod_options(options) or changed
+        if changed:
+            self.recalculate()
 
     def _mod_matches_category(self, mod: Mod, category: str) -> bool:
         summary = f"{mod.effect_summary} {mod.description}".lower()
@@ -1015,8 +1096,16 @@ class DamageCalculatorWindow(QMainWindow):
         self.recalculate()
 
     def clear_all_mods(self) -> None:
-        for slot in self.mod_slots:
-            slot.clear_selection()
+        # Do not recalculate partial intermediate builds as each slot clears.
+        states = [(slot.mod_combo.blockSignals(True), slot.rank_spin.blockSignals(True))
+                  for slot in self.mod_slots]
+        try:
+            for slot in self.mod_slots:
+                slot.clear_selection()
+        finally:
+            for slot, (combo_blocked, rank_blocked) in zip(self.mod_slots, states):
+                slot.mod_combo.blockSignals(combo_blocked)
+                slot.rank_spin.blockSignals(rank_blocked)
         self.recalculate()
 
     def recalculate(self) -> None:
@@ -1033,6 +1122,7 @@ class DamageCalculatorWindow(QMainWindow):
                 lich_element=self.lich_combo.currentText(),
                 valence_base=self.safe_float(self.valence_edit.text()),
                 mods=aggregated_mods,
+                equipped_mods=equipped_mods,
             )
             results = self.calculator.calculate(self.selected_weapon, inputs)
             self.current_results = results
@@ -1041,13 +1131,16 @@ class DamageCalculatorWindow(QMainWindow):
             QMessageBox.critical(self, "Calculation error", str(exc))
 
     def _build_equipped_mods(self) -> list[EquippedMod]:
+        selections = [(slot.current_mod.unique_name, slot.rank_spin.value())
+                      for slot in self.mod_slots if slot.current_mod is not None]
+        effects_by_selection = self.mod_repository.fetch_ranked_effects_many(selections)
         equipped: list[EquippedMod] = []
         for slot in self.mod_slots:
             if slot.current_mod is None:
                 equipped.append(EquippedMod())
                 continue
             rank = slot.rank_spin.value()
-            effects = self.mod_repository.fetch_ranked_effects(slot.current_mod.unique_name, rank)
+            effects = effects_by_selection[(slot.current_mod.unique_name, rank)]
             equipped.append(EquippedMod(mod=slot.current_mod, rank=rank, effects=effects))
         return equipped
 
@@ -1104,46 +1197,127 @@ class DamageCalculatorWindow(QMainWindow):
                 for slot in self.mod_slots
             ],
         }
-        Path(file_name).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        target = Path(file_name)
+        temporary: Path | None = None
+        try:
+            # Do not truncate an existing build before the new JSON is ready.
+            descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+            temporary = Path(name)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+            os.replace(temporary, target)
+        except (OSError, UnicodeError) as exc:
+            QMessageBox.warning(self, "Save Build", f"Could not save the build: {exc}")
+            return
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass  # Do not hide the original save error.
         QMessageBox.information(self, "Save Build", "Build saved.")
+
+    def _read_build(self, file_name: str, action: str) -> tuple[Weapon, dict[str, str], list[tuple[Mod | None, int]]] | None:
+        """Validate a saved build before mutating the UI or comparing results."""
+        try:
+            payload = json.loads(Path(file_name).read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("The build must be a JSON object.")
+            weapon_name = payload.get("weapon")
+            if not isinstance(weapon_name, str) or not weapon_name.strip():
+                raise ValueError("The build does not include a weapon name.")
+            weapon = self.weapon_repository.get_weapon(weapon_name)
+            if weapon is None:
+                raise ValueError(f"Weapon not found in the database: {weapon_name}")
+
+            raw_inputs = payload.get("inputs")
+            if raw_inputs is None:
+                raw_inputs = {}
+            if not isinstance(raw_inputs, dict):
+                raise ValueError("Build inputs must be a JSON object.")
+            faction = str(raw_inputs.get("faction") or "Grineer")
+            if faction == "Zairman":
+                faction = "Zariman"  # Compatibility with older saved builds.
+            if faction not in FACTION_MULTIPLIERS:
+                raise ValueError(f"Unknown faction: {faction}")
+            element = str(raw_inputs.get("lich_element") or "")
+            if element and element not in DAMAGE_TYPES:
+                raise ValueError(f"Unknown adversary element: {element}")
+            inputs = {"faction": faction, "lich_element": element}
+            for key in ("armor", "valence_base"):
+                text = str(raw_inputs.get(key) or "0")
+                if not math.isfinite(float(text)):
+                    raise ValueError(f"{key} must be a finite number.")
+                inputs[key] = text
+
+            raw_mods = payload.get("mods")
+            if raw_mods is None:
+                raw_mods = []
+            if not isinstance(raw_mods, list) or len(raw_mods) > len(self.mod_slots):
+                raise ValueError(f"The build must contain at most {len(self.mod_slots)} mod slots.")
+            compatible = {mod.unique_name: mod for mod in self._compatible_mod_options(weapon)}
+            mods: list[tuple[Mod | None, int]] = []
+            for row in raw_mods:
+                if not isinstance(row, dict):
+                    raise ValueError("Each mod slot must be a JSON object.")
+                unique_name = row.get("unique_name")
+                if unique_name is not None and not isinstance(unique_name, str):
+                    raise ValueError("A mod identifier must be a string or null.")
+                raw_rank = row.get("rank", 0)
+                if isinstance(raw_rank, bool) or not isinstance(raw_rank, (int, str)):
+                    raise ValueError("A mod rank must be an integer.")
+                rank = int(raw_rank)
+                mod = compatible.get(unique_name) if unique_name else None
+                if unique_name and mod is None:
+                    raise ValueError(f"Mod is unavailable or incompatible with {weapon_name}: {unique_name}")
+                if rank < 0 or (mod is not None and rank > mod.fusion_limit):
+                    raise ValueError(f"Invalid rank {rank} for {unique_name or 'empty slot'}.")
+                mods.append((mod, rank))
+            return weapon, inputs, mods
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            QMessageBox.warning(self, action, f"Could not read the build: {exc}")
+            return None
 
     def load_build(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "Load Build", str(self.paths["builds"]), "JSON Files (*.json)")
         if not file_name:
             return
-        payload = json.loads(Path(file_name).read_text(encoding="utf-8"))
-        weapon_name = str(payload.get("weapon") or "")
-        if not weapon_name:
-            QMessageBox.warning(self, "Load Build", "That build file does not include a weapon name.")
+        loaded = self._read_build(file_name, "Load Build")
+        if loaded is None:
             return
+        weapon, inputs, mod_rows = loaded
 
-        self.search_edit.setText(weapon_name)
-        matches = self.weapon_list.findItems(weapon_name, Qt.MatchFlag.MatchExactly)
-        if matches:
-            self.weapon_list.setCurrentItem(matches[0])
-        else:
-            self.refresh_weapon_list()
-            matches = self.weapon_list.findItems(weapon_name, Qt.MatchFlag.MatchExactly)
-            if matches:
-                self.weapon_list.setCurrentItem(matches[0])
+        # Reset filters before selecting saved mods, which may otherwise be
+        # hidden. The exact weapon is known to exist from the preflight.
+        self.mod_search_edit.clear()
+        self.mod_category_combo.setCurrentText("All Mods")
+        self.search_edit.setText(weapon.weapon)
+        matches = self.weapon_list.findItems(weapon.weapon, Qt.MatchFlag.MatchExactly)
+        if not matches:
+            # An exact match can be outside a search result's limit.
+            self.weapon_list.addItem(weapon.weapon)
+            matches = self.weapon_list.findItems(weapon.weapon, Qt.MatchFlag.MatchExactly)
+        self.weapon_list.setCurrentItem(matches[0])
+        # Refresh even when the weapon was already selected: the database may
+        # have been rebuilt since the current picker options were populated.
+        self.selected_weapon = weapon
+        self._show_weapon_summary(weapon)
+        self._load_mod_options_for_weapon(weapon)
 
-        inputs = payload.get("inputs") or {}
-        self.lich_combo.setCurrentText(str(inputs.get("lich_element") or ""))
-        self.valence_edit.setText(str(inputs.get("valence_base") or "0"))
-        self.faction_combo.setCurrentText(str(inputs.get("faction") or self.faction_combo.currentText()))
-        self.armor_edit.setText(str(inputs.get("armor") or "0"))
+        self.lich_combo.setCurrentText(inputs["lich_element"])
+        self.valence_edit.setText(inputs["valence_base"])
+        self.faction_combo.setCurrentText(inputs["faction"])
+        self.armor_edit.setText(inputs["armor"])
 
-        mod_rows = payload.get("mods") or []
-        for slot, row in zip(self.mod_slots, mod_rows):
-            unique_name = row.get("unique_name")
-            rank = int(row.get("rank") or 0)
-            if not unique_name:
+        # Older files may contain fewer than eight rows. Missing rows mean
+        # empty slots, not "keep whatever the current build had equipped".
+        for index, slot in enumerate(self.mod_slots):
+            mod, rank = mod_rows[index] if index < len(mod_rows) else (None, 0)
+            if mod is None:
                 slot.clear_selection()
                 continue
-            index = slot.mod_combo.findData(unique_name)
-            if index >= 0:
-                slot.mod_combo.setCurrentIndex(index)
-                slot.rank_spin.setValue(rank)
+            slot.mod_combo.setCurrentIndex(slot.mod_combo.findData(mod.unique_name))
+            slot.rank_spin.setValue(rank)
         self.on_mod_changed()
         QMessageBox.information(self, "Load Build", "Build loaded.")
 
@@ -1157,13 +1331,13 @@ class DamageCalculatorWindow(QMainWindow):
         if preset_name == "Custom":
             self.recalculate()
 
-    def run_data_pipeline(self, prefer_online: bool, log_callback: Callable[[str], None] | None = None) -> dict[str, str | Path]:
+    def run_data_pipeline(self, prefer_online: bool, log_callback: Callable[[str], None] | None = None) -> dict[str, str | Path | None]:
         updater = WarframeDataUpdater()
         if log_callback:
             if prefer_online:
-                log_callback("Trying to download fresh data from DE. If that fails, WDC will fall back to bundled backup data.")
+                log_callback("Trying to download fresh data from DE. If that fails, WDC will fall back to saved local exports.")
             else:
-                log_callback("Using bundled backup export data that ships with WDC.")
+                log_callback("Using saved local export data (no download).")
         outputs = updater.update_and_build_database(
             db_path=self.paths["db"],
             cleaned_weapons_zip_path=self.paths["source"] / "ExportWeapons_en_Cleaned.zip",
@@ -1188,36 +1362,29 @@ class DamageCalculatorWindow(QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(self, "Compare Build", str(self.paths["builds"]), "JSON Files (*.json)")
         if not file_name:
             return
-        payload = json.loads(Path(file_name).read_text(encoding="utf-8"))
-        weapon_name = str(payload.get("weapon") or "")
-        weapon = self.weapon_repository.get_weapon(weapon_name)
-        if weapon is None:
-            QMessageBox.warning(self, "Compare Build", "The selected build references a weapon that is not in the database.")
+        loaded = self._read_build(file_name, "Compare Build")
+        if loaded is None:
             return
-
-        inputs = payload.get("inputs") or {}
+        weapon, inputs, mod_rows = loaded
+        selections = [(mod.unique_name, rank) for mod, rank in mod_rows if mod is not None]
+        effects_by_selection = self.mod_repository.fetch_ranked_effects_many(selections)
         equipped_mods: list[EquippedMod] = []
-        for row in payload.get("mods") or []:
-            unique_name = row.get("unique_name")
-            rank = int(row.get("rank") or 0)
-            if not unique_name:
-                equipped_mods.append(EquippedMod())
-                continue
-            mod = self.mod_repository.get_mod(unique_name)
+        for mod, rank in mod_rows:
             if mod is None:
                 equipped_mods.append(EquippedMod())
                 continue
-            effects = self.mod_repository.fetch_ranked_effects(unique_name, rank)
+            effects = effects_by_selection[(mod.unique_name, rank)]
             equipped_mods.append(EquippedMod(mod=mod, rank=rank, effects=effects))
 
-        aggregated_mods = self.mod_aggregator.aggregate(equipped_mods, str(inputs.get("faction") or "Grineer"))
+        aggregated_mods = self.mod_aggregator.aggregate(equipped_mods, inputs["faction"])
         compare_inputs = CalculationInputs(
             weapon_name=weapon.weapon,
-            faction=str(inputs.get("faction") or "Grineer"),
-            armor_value=self.safe_float(str(inputs.get("armor") or "0")),
-            lich_element=str(inputs.get("lich_element") or ""),
-            valence_base=self.safe_float(str(inputs.get("valence_base") or "0")),
+            faction=inputs["faction"],
+            armor_value=self.safe_float(inputs["armor"]),
+            lich_element=inputs["lich_element"],
+            valence_base=self.safe_float(inputs["valence_base"]),
             mods=aggregated_mods,
+            equipped_mods=equipped_mods,
         )
         compare_results = self.calculator.calculate(weapon, compare_inputs)
 
@@ -1251,7 +1418,8 @@ class DamageCalculatorWindow(QMainWindow):
 
     def safe_float(self, value: str) -> float:
         try:
-            return float(value.strip()) if value.strip() else 0.0
+            parsed = float(value.strip()) if value.strip() else 0.0
+            return parsed if math.isfinite(parsed) else 0.0
         except ValueError:
             return 0.0
 

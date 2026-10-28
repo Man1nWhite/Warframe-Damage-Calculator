@@ -145,7 +145,7 @@ META = {
 STACKING_MODES = {
     "multiply": {
         "label": "Multiplying (wiki behavior #1, not intended; mostly projectiles)",
-        "formula": "Base x MostDamageBonuses x (1 + CO_bonus) x OtherMultipliers",
+        "formula": "Base x MostDamageBonuses x (1 + CO_bonus x scale) x OtherMultipliers",
         "description": (
             "The CO-type bonus stacks additively with other CO-type bonuses only, "
             "then multiplies against ordinary +% damage bonuses (Serration, Hornet "
@@ -184,11 +184,11 @@ CO_SOURCES = [
     {"name": "Galvanized Savvy", "slot": "shotgun", "per_status": 0.40,
      "stacks": 2, "cap": 0.80, "note": "+40% per status type, 2 stacks"},
     {"name": "Secondary Shiver", "slot": "secondary", "per_status": 0.45,
-     "stacks": "Freeze stacks", "cap": None,
-     "note": "+45% per Freeze stack; also the only practical GunCO source for archguns"},
-    {"name": "Cedo / Cedo Prime (innate alt-fire)", "slot": "secondary",
+     "stacks": "Cold status stacks", "cap": None,
+     "note": "+45% per Cold status stack; also applies to archguns"},
+    {"name": "Cedo / Cedo Prime (innate)", "slot": "shotgun",
      "per_status": 0.60, "stacks": "status types", "cap": None,
-     "note": "+60% per status type on alt-fire"},
+     "note": "+60% per status type: additive on primary fire, multiplicative on alt-fire direct hits, absent on alt-fire explosions"},
     {"name": "Shattering Frost (Duviri decree, Koumei)", "slot": "decree",
      "per_status": 0.80, "stacks": 3, "cap": 2.40,
      "note": "+80% vs a Frozen target, up to +240%"},

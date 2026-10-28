@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import unittest
 
-from modules import riven
 from modules.riven import (
     BUFF_LAYOUTS,
     CURSE_LAYOUTS,
@@ -81,6 +80,23 @@ class FingerprintParityTests(unittest.TestCase):
         )
         self.assertEqual([s["display"] for s in stats], [104.0, 55.5, 110.8, -48.0])
 
+    def test_negative_combo_gain_fingerprint_displays_the_wiki_sign(self) -> None:
+        stats = parse_riven(
+            "PlayerMeleeWeaponRandomModRare",
+            {
+                "lvl": 8,
+                "buffs": [
+                    {"Tag": "WeaponCritChanceMod", "Value": 0},
+                    {"Tag": "WeaponCritDamageMod", "Value": 0},
+                    {"Tag": "WeaponMeleeDamageMod", "Value": 0},
+                ],
+                "curses": [{"Tag": "WeaponMeleeComboPointsOnHitMod", "Value": 0}],
+            },
+            1.2,
+        )
+        self.assertAlmostEqual(stats[-1]["raw"], 0.849285)
+        self.assertEqual(stats[-1]["display"], -84.9)
+
     def test_repeated_tag_with_min_and_max_rolls(self) -> None:
         stats = parse_riven(
             "LotusRifleRandomModRare",
@@ -121,6 +137,11 @@ class DisplayValueTests(unittest.TestCase):
         self.assertEqual(display_value("WeaponMeleeRangeIncMod", 2.9133), 2.9)
         self.assertEqual(display_value("ComboDurationMod", 8.04), 8.0)
         self.assertEqual(display_value("WeaponMeleeComboInitialBonusMod", 29.12), 29.1)
+        self.assertEqual(display_value("WeaponPunctureDepthMod", 3.0375), 3.0)
+
+    def test_combo_gain_curse_inverts_internal_value_for_display(self) -> None:
+        # Wiki: Chance to Gain Combo Count displays -100*v, unlike most stats.
+        self.assertEqual(display_value("WeaponMeleeComboPointsOnHitMod", 0.94365), -94.4)
 
 
 class AverageTableTests(unittest.TestCase):
@@ -158,8 +179,8 @@ class AverageTableTests(unittest.TestCase):
         self.assertEqual(heat["buffs"]["3_pos"]["display"], 81.0)
         self.assertEqual(heat["buffs"]["2_pos_1_neg"]["display"], 133.7)
         self.assertEqual(heat["buffs"]["3_pos_1_neg"]["display"], 101.3)  # 1012.5 rounds half up
-        self.assertEqual(heat["curses"]["with_2_pos"]["display"], -53.5)
-        self.assertEqual(heat["curses"]["with_3_pos"]["display"], -81.0)
+        self.assertIsNone(heat["curses"]["with_2_pos"])
+        self.assertIsNone(heat["curses"]["with_3_pos"])
 
     def test_values_scale_linearly_with_disposition(self) -> None:
         at_1_2 = average_buff("LotusRifleRandomModRare", "WeaponFireDamageMod", disposition=1.2)
@@ -176,11 +197,51 @@ class AverageTableTests(unittest.TestCase):
         self.assertAlmostEqual(with_curse / two_pos, 1.25, places=12)
 
     def test_curse_is_negative_and_layout_dependent(self) -> None:
-        with_two = average_curse("LotusRifleRandomModRare", "WeaponFireDamageMod", num_buffs=2)
-        with_three = average_curse("LotusRifleRandomModRare", "WeaponFireDamageMod", num_buffs=3)
+        with_two = average_curse("LotusRifleRandomModRare", "WeaponDamageAmountMod", num_buffs=2)
+        with_three = average_curse("LotusRifleRandomModRare", "WeaponDamageAmountMod", num_buffs=3)
         self.assertLess(with_two, 0)
         self.assertLess(with_three, 0)
         self.assertNotAlmostEqual(with_two, with_three)
+
+    def test_positive_only_traits_do_not_have_curse_values(self) -> None:
+        # https://wiki.warframe.com/w/Riven_Mods and /w/Melee_Combo.
+        positive_only = {
+            "WeaponFireDamageMod", "WeaponFreezeDamageMod", "WeaponElectricityDamageMod",
+            "WeaponToxinDamageMod", "WeaponPunctureDepthMod", "WeaponMeleeDamageMod",
+            "WeaponMeleeComboInitialBonusMod", "WeaponMeleeComboBonusOnHitMod",
+        }
+        for riven_type, payload in self.tables["riven_types"].items():
+            for stat in payload["stats"]:
+                if stat["tag"] in positive_only:
+                    with self.subTest(riven_type=riven_type, tag=stat["tag"]):
+                        self.assertTrue(all(v is not None for v in stat["buffs"].values()))
+                        self.assertTrue(all(v is None for v in stat["curses"].values()))
+                        with self.assertRaises(ValueError):
+                            average_curse(riven_type, stat["tag"])
+
+    def test_negative_only_combo_chance_has_correct_display(self) -> None:
+        melee = self.tables["riven_types"]["PlayerMeleeWeaponRandomModRare"]
+        stat = next(s for s in melee["stats"] if s["tag"] == "WeaponMeleeComboPointsOnHitMod")
+        self.assertTrue(all(v is None for v in stat["buffs"].values()))
+        self.assertAlmostEqual(stat["curses"]["with_3_pos"]["raw"], 0.94365)
+        self.assertEqual(stat["curses"]["with_3_pos"]["display"], -94.4)
+        with self.assertRaises(ValueError):
+            average_buff("PlayerMeleeWeaponRandomModRare", stat["tag"])
+
+    def test_punch_through_is_a_plain_meter_value(self) -> None:
+        rifle = self.tables["riven_types"]["LotusRifleRandomModRare"]
+        stat = next(s for s in rifle["stats"] if s["tag"] == "WeaponPunctureDepthMod")
+        self.assertEqual(stat["unit"], "plain")
+        self.assertAlmostEqual(stat["buffs"]["3_pos_1_neg"]["raw"], 3.0375)
+        self.assertEqual(stat["buffs"]["3_pos_1_neg"]["display"], 3.0)
+
+    def test_ranged_damage_and_recoil_can_still_be_curses(self) -> None:
+        rifle = self.tables["riven_types"]["LotusRifleRandomModRare"]
+        stats = {s["tag"]: s for s in rifle["stats"]}
+        self.assertLess(stats["WeaponDamageAmountMod"]["curses"]["with_3_pos"]["display"], 0)
+        # A beneficial recoil modifier is negative; the curse increases recoil.
+        self.assertLess(stats["WeaponRecoilReductionMod"]["buffs"]["3_pos_1_neg"]["display"], 0)
+        self.assertGreater(stats["WeaponRecoilReductionMod"]["curses"]["with_3_pos"]["display"], 0)
 
     def test_unknown_tag_raises(self) -> None:
         with self.assertRaises(KeyError):

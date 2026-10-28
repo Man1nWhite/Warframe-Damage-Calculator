@@ -62,6 +62,8 @@ class CalculationInputs:
     lich_element: str = ""
     valence_base: float = 0.0
     mods: Dict[str, float] = field(default_factory=dict)
+    # Original slot order preserves which primary elements formed a pair.
+    equipped_mods: List[EquippedMod] | None = None
 
     def mod_for(self, damage_type: str) -> float:
         return float(self.mods.get(damage_type, 0.0))

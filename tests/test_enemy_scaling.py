@@ -17,11 +17,13 @@ from modules.enemy_scaling import (
     ARMOR_FLOOR,
     HEAVY_GUNNER,
     MODE_ICEBIND,
-    MODE_NORMAL,
     MODE_STEEL_PATH,
     OVERGUARD_BASE,
     ScalingCurve,
+    EnemyBase,
     armor_damage_reduction,
+    enemy_armor_damage_reduction,
+    eximus_base_shields,
     empowered_multiplier,
     enemy_damage_multiplier,
     eximus_base_health,
@@ -79,6 +81,49 @@ class ArmorReductionTests(unittest.TestCase):
     def test_icebind_pre_cap_armor(self) -> None:
         # 500 base armor x4 (solo Icebind) = 2000 at base level, below cap.
         self.assertEqual(armor_damage_reduction(2000), 0.7746)
+
+
+class IndependentWikiCurveTests(unittest.TestCase):
+    """Direct equations from Enemy Level Scaling and Armor, not port snapshots."""
+
+    def test_exceptional_armor_uses_classic_branch(self) -> None:
+        self.assertAlmostEqual(enemy_armor_damage_reduction(500),
+                               0.9 * math.sqrt(500 / 2700))
+        self.assertEqual(enemy_armor_damage_reduction(2700), 0.9)
+        self.assertAlmostEqual(enemy_armor_damage_reduction(3000), 3000 / 3300)
+        self.assertNotEqual(enemy_armor_damage_reduction(3000),
+                            armor_damage_reduction(3000))  # display is rounded
+
+    def test_faction_shields_use_their_own_curves(self) -> None:
+        # q=100 is beyond the transition; values are pre-display rounded.
+        for faction, coefficient, exponent in (
+            ("Corpus", 2.0, 0.76), ("Amalgam", 2.0, 0.76),
+            ("Orokin", 2.0, 0.75), ("Grineer", 1.6, 0.75),
+            ("Sentient", 1.6, 0.75), ("Techrot", 3.5, 0.76),
+        ):
+            enemy = EnemyBase("Fixture", 1, health=100, armor=0,
+                              shields=100, faction=faction)
+            expected = round2(100 * (1 + coefficient * 100 ** exponent))
+            self.assertEqual(scale_enemy(enemy, 101).shields, expected, faction)
+        # q=20 uses the Corpus f1 curve, not the Grineer health curve.
+        corpus = EnemyBase("Fixture", 1, health=100, armor=0,
+                           shields=100, faction="Corpus")
+        self.assertEqual(scale_enemy(corpus, 21).shields,
+                         round2(100 * (1 + 0.02 * 20 ** 1.76)))
+
+    def test_eximus_shield_base_and_then_level_curve(self) -> None:
+        self.assertAlmostEqual(eximus_base_shields(100, 0), 110)
+        self.assertAlmostEqual(eximus_base_shields(100, 20), 112.5)
+        self.assertAlmostEqual(eximus_base_shields(100, 100), 600)
+        corpus = EnemyBase("Fixture", 1, health=100, armor=0,
+                           shields=100, faction="Corpus")
+        expected = round2(112.5 * (1 + 0.02 * 20 ** 1.76))
+        self.assertEqual(scale_enemy(corpus, 21, eximus=True).shields, expected)
+
+    def test_overguard_follows_gadget_level_minus_base_level(self) -> None:
+        # Article instead says level - 1; this test records the chosen source.
+        eximus = scale_enemy(HEAVY_GUNNER, 9, eximus=True)
+        self.assertEqual(eximus.overguard, round2(12 * (1 + 0.0015 * 1**4)))
 
 
 class EximusBaseHealthTests(unittest.TestCase):

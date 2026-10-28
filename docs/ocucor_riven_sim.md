@@ -1,5 +1,15 @@
 # Ocucor: Arcane Choice and Riven Stat Simulation
 
+> **Historical report — results invalidated by the 2026-10-27 formula audit.**
+> The archived TTKs, rankings, recommendations and some formulas below use
+> superseded mechanics. For the requested Multishot/Viral Riven and arcane
+> comparison, see the newer [experimental report](ocucor_enervate_flare_comparison.md).
+> Simulation output still has important limitations; see the
+> [formula audit](formula_audit.md) before use.
+
+<details>
+<summary>Show archived, unvalidated report</summary>
+
 Tick-by-tick Monte Carlo simulation for an Ocucor against the Steel Path
 level 150 Eximus Heavy Gunner dummy (1,716,837.41 health, 2,700 armor / 90%
 DR, 269,918.97 Overguard). Code:
@@ -172,3 +182,6 @@ print(run_trials("Secondary Enervate", "Damage", trials=1000))
 result = simulate_room("Cascadia Flare", "Multishot", n_enemies=10, seed=1)
 print(result.clear_time, result.tendril_peak, result.flare_peak)
 ```
+
+
+</details>

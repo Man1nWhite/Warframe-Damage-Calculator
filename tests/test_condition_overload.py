@@ -239,11 +239,18 @@ class FormulaTests(unittest.TestCase):
 
     def test_co_bonus_for_statuses_and_caps(self) -> None:
         self.assertAlmostEqual(co_bonus_for_statuses(0.8, 3), 2.4)  # Condition Overload
-        self.assertAlmostEqual(co_bonus_for_statuses(0.4, 3, cap=0.8), 0.8)
+        self.assertAlmostEqual(co_bonus_for_statuses(0.4, 3, cap=0.8), 1.2)
+        self.assertAlmostEqual(co_bonus_for_statuses(0.8, 3, cap=0.8), 2.4)
+        self.assertAlmostEqual(co_bonus_for_statuses(0.8, 3, cap=0.4), 1.2)
         self.assertAlmostEqual(co_bonus_for_statuses(0.4, 1, cap=1.2), 0.4)
         self.assertEqual(co_bonus_for_statuses(0.45, 0), 0.0)
         with self.assertRaises(ValueError):
             co_bonus_for_statuses(0.4, -1)
+
+    def test_multiplicative_scale_applies_to_co_term(self) -> None:
+        # E.g. Syam heavy wave 2 has a 0.2 multiplicative CO scale.
+        self.assertAlmostEqual(apply_co(100, 1.0, 2.0, mode=MODE_MULTIPLY,
+                                         scale=0.2), 240.0)
 
     def test_invalid_mode_raises(self) -> None:
         with self.assertRaises(ValueError):

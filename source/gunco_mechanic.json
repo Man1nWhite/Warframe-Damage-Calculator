@@ -16,7 +16,7 @@
   "stacking_modes": {
     "multiply": {
       "label": "Multiplying (wiki behavior #1, not intended; mostly projectiles)",
-      "formula": "Base x MostDamageBonuses x (1 + CO_bonus) x OtherMultipliers",
+      "formula": "Base x MostDamageBonuses x (1 + CO_bonus x scale) x OtherMultipliers",
       "description": "The CO-type bonus stacks additively with other CO-type bonuses only, then multiplies against ordinary +% damage bonuses (Serration, Hornet Strike, Vex Armor, Arcane Fury, Pressure Point, ...)."
     },
     "add": {
@@ -67,17 +67,17 @@
       "name": "Secondary Shiver",
       "slot": "secondary",
       "per_status": 0.45,
-      "stacks": "Freeze stacks",
+      "stacks": "Cold status stacks",
       "cap": null,
-      "note": "+45% per Freeze stack; also the only practical GunCO source for archguns"
+      "note": "+45% per Cold status stack; also applies to archguns"
     },
     {
-      "name": "Cedo / Cedo Prime (innate alt-fire)",
-      "slot": "secondary",
+      "name": "Cedo / Cedo Prime (innate)",
+      "slot": "shotgun",
       "per_status": 0.6,
       "stacks": "status types",
       "cap": null,
-      "note": "+60% per status type on alt-fire"
+      "note": "+60% per status type: additive on primary fire, multiplicative on alt-fire direct hits, absent on alt-fire explosions"
     },
     {
       "name": "Shattering Frost (Duviri decree, Koumei)",

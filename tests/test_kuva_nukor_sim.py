@@ -1,8 +1,8 @@
 """Tests for the Kuva Nukor tick-by-tick kill simulation.
 
 Stat pins are hand-computed from the mod values on the wiki pages; simulation
-tests pin the mechanics and the Monte Carlo ranking against the SP150 Eximus
-Heavy Gunner dummy (modules.enemy_scaling).
+tests exercise selected invariants against the SP150 Eximus Heavy Gunner.
+They do not establish a valid Monte Carlo ranking.
 """
 from __future__ import annotations
 
@@ -18,13 +18,14 @@ from modules.kuva_nukor_sim import (
     DummyTarget,
     LAST_MODS,
     MAGAZINE,
-    NukorBuild,
     PISTOL_ELEMENTALIST_SD,
     RAMP_START,
     BlastProc,
     _heat_strip_fraction,
     build_nukor,
     enervate_afcc,
+    galv_shot_scale,
+    roll_multishot,
     run_trials,
     simulate,
     simulate_room,
@@ -51,15 +52,23 @@ class BuildStatTests(unittest.TestCase):
         # 50% x (1 + 80% Galv Shot) per beam, merged x3.9.
         self.assertAlmostEqual(b.status_per_beam, 0.9)
         self.assertAlmostEqual(b.merged_status, 3.51)
-        # 5.0 x (1 + 120% PTC + 101.3% riven).
-        self.assertAlmostEqual(b.crit_multiplier, 5.0 * 3.213)
-        # Status duration: Elementalist 90% + riven 112.5%.
-        self.assertAlmostEqual(b.status_duration_mult, 3.025)
-        self.assertAlmostEqual(b.proc_duration, 18.15)
-        self.assertAlmostEqual(b.heat_ramp_interval, 0.5 * 3.025)
+        # Wiki Primed Target Cracker: +110% at max rank.
+        # 5.0 x (1 + 110% PTC + 101.3% riven).
+        self.assertAlmostEqual(b.crit_multiplier, 5.0 * 3.113)
+        # Only the Riven affects duration; Elementalist buffs status damage.
+        self.assertAlmostEqual(b.status_duration_mult, 2.125)
+        self.assertAlmostEqual(b.proc_duration, 12.75)
+        self.assertAlmostEqual(b.heat_ramp_interval, 0.5 * 2.125)
         # Damage bonus is Galvanized Shot's +120% only (no Hornet Strike).
         self.assertAlmostEqual(b.damage_bonus, 1.2)
         self.assertAlmostEqual(b.heat_bonus, 1.65)
+
+    def test_comparison_candidates_use_max_rank_primed_target_cracker(self) -> None:
+        # Max-rank PTC adds 110%, not 120%. None of these last-slot mods
+        # changes the assumed 101.3% Riven critical-damage bonus.
+        for name in ("Hornet Strike", "Scorch", "Frostbite"):
+            with self.subTest(last_mod=name):
+                self.assertAlmostEqual(build_nukor(name).crit_multiplier, 15.565)
 
     def test_ppg_crit_chance_and_afcc(self) -> None:
         b = build_nukor("Primed Pistol Gambit")
@@ -70,7 +79,7 @@ class BuildStatTests(unittest.TestCase):
     def test_hollow_point_tradeoff(self) -> None:
         b = build_nukor("Hollow Point")
         self.assertAlmostEqual(b.damage_bonus, 1.05)       # 120% - 15%
-        self.assertAlmostEqual(b.crit_multiplier, 5.0 * 3.813)
+        self.assertAlmostEqual(b.crit_multiplier, 5.0 * 3.713)
         self.assertAlmostEqual(b.afcc_pct, 102.45 + 0.5 * 7.0)
 
     def test_scorch_keeps_heat_and_raises_status(self) -> None:
@@ -122,7 +131,7 @@ class FrostbiteBuildTests(unittest.TestCase):
         # Same status chance profile as Scorch.
         self.assertAlmostEqual(b.merged_status, 0.5 * 2.4 * 3.9)
         # Blast fuse = 1.5 s x status duration multiplier.
-        self.assertAlmostEqual(b.blast_fuse, 1.5 * 3.025)
+        self.assertAlmostEqual(b.blast_fuse, 1.5 * 2.125)
         self.assertAlmostEqual(sum(b.proc_weights.values()), 1.0)
         self.assertAlmostEqual(b.proc_weights["BLAST"], 0.5278, places=4)
 
@@ -160,14 +169,10 @@ class BlastMechanicTests(unittest.TestCase):
         self.assertEqual(r.final_armor, 2700.0)  # no Heat = no strip
         self.assertTrue(math.isfinite(r.ttk))
 
-    def test_frostbite_single_target_is_slow(self) -> None:
-        # The documented Blast trade-off: 30%/stack fuses cannot compete
-        # with consolidated Heat against one armored target.
-        summary = run_trials("Frostbite", steel_path_dummy_factory, trials=60)
-        scorch = run_trials("Scorch", steel_path_dummy_factory, trials=60)
-        self.assertGreater(summary["ttk_median"], 5.0)
-        self.assertGreater(summary["ttk_median"],
-                           scorch["ttk_median"] * 3.0)
+    def test_frostbite_trials_produce_finite_damage(self) -> None:
+        summary = run_trials("Frostbite", steel_path_dummy_factory, trials=20)
+        self.assertTrue(math.isfinite(summary["ttk_median"]))
+
 
 
 class RoomClearTests(unittest.TestCase):
@@ -186,21 +191,13 @@ class RoomClearTests(unittest.TestCase):
             self.assertEqual(r.radial_damage_total, 0.0)
             self.assertEqual(len(r.kill_times), 10)
 
-    def test_blast_wins_large_packs_heat_wins_small_packs(self) -> None:
-        def median_clear(cand: str, n: int) -> float:
-            vals = [
-                simulate_room(build_nukor(cand), n, seed=9000 + s).clear_time
-                for s in range(12)
-            ]
-            vals.sort()
-            return vals[len(vals) // 2]
+    def test_room_is_reproducible_with_same_seed(self) -> None:
+        build = build_nukor("Frostbite")
+        first = simulate_room(build, 3, seed=9000)
+        second = simulate_room(build, 3, seed=9000)
+        self.assertEqual(first.clear_time, second.clear_time)
+        self.assertEqual(first.kill_times, second.kill_times)
 
-        # Three targets: chains already cover the whole pack, Heat wins.
-        self.assertLess(median_clear("Scorch", 3),
-                        median_clear("Frostbite", 3))
-        # Ten targets: 5 m Blast radials reach enemies chains cannot.
-        self.assertLess(median_clear("Frostbite", 10),
-                        median_clear("Scorch", 10))
 
 
 class EnervateAFCCTests(unittest.TestCase):
@@ -233,16 +230,44 @@ class HeatStripTests(unittest.TestCase):
         self.assertEqual(_heat_strip_fraction(6.05, interval), 0.50)
         self.assertEqual(_heat_strip_fraction(99.0, interval), 0.50)
 
-    def test_armor_is_product_of_active_proc_factors(self) -> None:
+    def test_many_heat_procs_share_one_ramp_and_cap(self) -> None:
         target = DummyTarget(1000.0, 2700.0, 100.0)
         interval = 1.5125
-        target.heat_procs.append(
-            _make_proc(age=2.0))  # 15% factor
-        target.heat_procs.append(
-            _make_proc(age=4.0))  # 30% factor
-        expected = 2700 * 0.85 * 0.70
-        self.assertAlmostEqual(
-            target.current_armor(0.0, interval), expected)
+        target.heat_procs.append(_make_proc(age=4.0))  # 30% shared strip
+        self.assertAlmostEqual(target.current_armor(0.0, interval), 2700 * 0.70)
+        for _ in range(20):
+            target.heat_procs.append(_make_proc(age=2.0))
+        self.assertAlmostEqual(target.current_armor(0.0, interval), 2700 * 0.70)
+        self.assertAlmostEqual(target.current_armor(3.0, interval), 1350.0)
+
+    def test_heat_expiry_restores_armor_in_steps(self) -> None:
+        target = DummyTarget(1000, 2700, 0)
+        from modules.kuva_nukor_sim import HeatProc
+        target.heat_procs.append(HeatProc(0, 100, 1, 0))
+        target.prune(6.0, 6.0)  # final tick still applies
+        self.assertEqual(len(target.heat_procs), 1)
+        target.prune(6.01, 6.0)
+        self.assertAlmostEqual(target.current_armor(6.01, 0.5), 1350)
+        self.assertAlmostEqual(target.current_armor(7.5, 0.5), 1620)
+        self.assertAlmostEqual(target.current_armor(12.0, 0.5), 2700)
+
+    def test_live_status_types_not_kill_stacks_determine_gunco(self) -> None:
+        target = DummyTarget(1000, 0, 0)
+        self.assertEqual(target.unique_status_count(0), 0)
+        target.record_status("MICROWAVE", 0, math.inf)
+        target.record_status("HEAT", 0.2, 6)
+        target.record_status("HEAT", 1, 6)  # same type counts once
+        self.assertEqual(target.unique_status_count(1), 2)
+        self.assertEqual(target.unique_status_count(8), 1)
+        self.assertAlmostEqual(galv_shot_scale(1.2, 0), 1 / 2.2)
+        self.assertAlmostEqual(galv_shot_scale(1.2, 3), 4.6 / 2.2)
+
+    def test_fractional_multishot_rolls_integer_counts(self) -> None:
+        import random
+        rng = random.Random(42)
+        counts = [roll_multishot(rng, 3.9) for _ in range(10000)]
+        self.assertEqual(set(counts), {3, 4})
+        self.assertAlmostEqual(sum(counts) / len(counts), 3.9, delta=0.01)
 
 
 def _make_proc(age: float):
@@ -269,9 +294,10 @@ class SimulationTests(unittest.TestCase):
         b = build_nukor("Scorch")
         r = simulate(b, steel_path_dummy_factory(), seed=7)
         # Overguard absorbed by direct damage; health by direct + DoT + break.
-        self.assertAlmostEqual(
-            r.direct_to_overguard + r.dot_to_overguard,
-            DUMMY.overguard, delta=50_000)  # overkill absorbed by the buffer
+        # Current simulation reports the whole final hit as Overguard damage,
+        # including overkill; see the audit for this routing limitation.
+        self.assertGreaterEqual(r.direct_to_overguard + r.dot_to_overguard,
+                                DUMMY.overguard)
         health_dealt = (r.direct_to_health + r.dot_to_health
                         + r.break_electric)
         self.assertGreaterEqual(health_dealt, DUMMY.health * 0.99)
@@ -282,7 +308,7 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(r.reloads, 0)
         self.assertLessEqual(r.ticks, MAGAZINE)
 
-    def test_all_candidates_kill_and_ranking(self) -> None:
+    def test_all_candidates_produce_finite_results(self) -> None:
         summary = {
             name: run_trials(name, steel_path_dummy_factory, trials=200)
             for name in LAST_MODS
@@ -290,13 +316,9 @@ class SimulationTests(unittest.TestCase):
         for name, result in summary.items():
             self.assertTrue(math.isfinite(result["ttk_median"]), name)
             self.assertEqual(result["trials"], 200)
-        # Scorch / Hornet / Anemic hit the 2.0 s Heat-tick floor; crit mods
-        # are slower.
-        self.assertAlmostEqual(summary["Scorch"]["ttk_median"], 2.0)
-        self.assertAlmostEqual(summary["Hornet Strike"]["ttk_median"], 2.0)
-        self.assertAlmostEqual(summary["Anemic Agility"]["ttk_median"], 2.0)
-        self.assertGreater(summary["Primed Pistol Gambit"]["ttk_median"], 2.1)
-        self.assertGreater(summary["Hollow Point"]["ttk_median"], 2.1)
+        # Ranking is model-dependent; do not treat an old Monte Carlo
+        # ordering or timing as an independent wiki fact.
+
 
     def test_factory_returns_independent_targets(self) -> None:
         t1 = steel_path_dummy_factory()

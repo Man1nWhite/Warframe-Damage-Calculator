@@ -1,5 +1,13 @@
 # Akarius Prime Riven Choice: Viral vs Corrosive
 
+> **Historical report — results invalidated by the 2026-10-27 formula audit.**
+> The archived TTKs, rankings, recommendations and some formulas below use
+> superseded mechanics. The newer [Viral vs Corrosive comparison](akarius_prime_viral_corrosive_comparison.md)
+> is also experimental; see the [formula audit](formula_audit.md) before use.
+
+<details>
+<summary>Show archived, unvalidated report</summary>
+
 Tick-by-tick Monte Carlo simulation for an Akarius Prime against the Steel
 Path level 150 Eximus Heavy Gunner dummy (1,716,837.41 health, 2,700 armor /
 90% DR, 269,918.97 Overguard). Code:
@@ -134,3 +142,6 @@ print(trial.ttk, trial.final_armor, trial.trace)
 
 summary = run_trials("Corrosive", trials=500)
 ```
+
+
+</details>

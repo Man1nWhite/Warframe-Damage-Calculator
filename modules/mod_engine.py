@@ -4,10 +4,31 @@ from collections import OrderedDict, defaultdict
 from typing import Dict, Iterable
 
 from .constants import BASE_ELEMENT_TYPES, BANE_CODE_MAP, ELEMENT_COMBINATIONS, MOD_STAT_ORDER
-from .models import EquippedMod
+from .models import EquippedMod, ModEffect
 
 
-def _bane_bonus(value: float) -> float:
+def ordered_mod_effects(equipped: EquippedMod) -> Iterable[ModEffect]:
+    """Return effect order for elemental hierarchy without mutating the mod.
+
+    The Wiki gives the last displayed primary elemental stat of a Riven
+    priority. Recognition currently uses the existing name-based convention;
+    arbitrary named Rivens are not automatically identified as Rivens.
+    Non-primary effects keep their positions and are otherwise unaffected.
+    """
+    if equipped.mod is None:
+        return ()
+    effects = equipped.effects
+    if "riven" not in equipped.mod.name.lower():
+        return effects
+    primary = [effect for effect in effects if effect.code in BASE_ELEMENT_TYPES]
+    if len(primary) < 2:
+        return effects
+    reversed_primary = iter(reversed(primary))
+    return tuple(next(reversed_primary) if effect.code in BASE_ELEMENT_TYPES else effect
+                 for effect in effects)
+
+
+def _bane_bonus(value: float, text: str = "") -> float:
     """Normalize a bane/faction mod value to an additive damage bonus.
 
     The DE export data (and the reference spreadsheet) express bane mods as full
@@ -15,6 +36,11 @@ def _bane_bonus(value: float) -> float:
     stat is stored as a fractional bonus (0.30 for +30%), so convert here.
     Percent-style entries are already fractional and pass through unchanged.
     """
+    if text.strip().lower().startswith("x"):
+        return value - 1.0
+    if "%" in text:
+        return value
+    # Compatibility for older callers without a stat label.
     return value - 1.0 if value > 1.0 else value
 
 
@@ -45,10 +71,10 @@ class ModAggregator:
             if equipped.mod is None:
                 continue
 
-            for effect in equipped.effects:
+            for effect in ordered_mod_effects(equipped):
                 code = effect.code
                 if code in bane_codes:
-                    totals["BANE"] += _bane_bonus(effect.value)
+                    totals["BANE"] += _bane_bonus(effect.value, effect.text)
                     continue
 
                 if code in BASE_ELEMENT_TYPES:

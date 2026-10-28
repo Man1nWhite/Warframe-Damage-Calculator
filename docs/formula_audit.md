@@ -1,0 +1,328 @@
+# Formula audit: WARFRAME Wiki
+
+Reviewed against the English WARFRAME Wiki on **2026-10-27**. The wiki is a
+community-maintained reference and several relevant pages are marked as works
+in progress; it is not a guarantee of Digital Extremes' current implementation.
+This audit covers the repository's formula families, not a proof that every
+weapon, catalog entry, game update, or edge case is correct. It uses the Wiki
+and public community discussions rather than assuming in-game verification;
+export snapshots and player reports may be incomplete or outdated.
+
+## 2026-10-28 follow-up: imported mod effects and compatibility
+
+The old parser could mistake [Firestorm's Blast radius](https://wiki.warframe.com/w/Firestorm),
+[Comet Rounds' conversion](https://wiki.warframe.com/w/Comet_Rounds), or
+[Proton Snap's conditional Wall Latch bonus](https://wiki.warframe.com/w/Proton_Snap)
+for unconditional direct damage. It now accepts exact supported damage labels
+and rejects leading trigger clauses. Existing official effects are rechecked
+on read; custom non-`/Lotus/` effects are not reinterpreted. The exact label
+`Melee Damage` remains supported: [Primed Pressure Point](https://wiki.warframe.com/w/Primed_Pressure_Point)
+gives +165% base damage at rank 10. The rank-10 export row named Pressure Point
+with +200% and a heavy-kill identifier does not match the Wiki's documented
+variants and is excluded pending independent identification. Conditional
+[Condition Overload](https://wiki.warframe.com/w/Condition_Overload) is not
+turned into a permanent base bonus. The parser is intentionally incomplete:
+conditions may be split from saved text, and false negatives remain possible.
+
+Primary compatibility is bounded by a pinned WFCD snapshot, with the explicit
+[Wiki correction for Coda Bubonico](https://wiki.warframe.com/w/Coda_Bubonico)
+using shotgun rather than rifle mods. It also checks selected augment and
+melee-subclass restrictions, but not all conflicts, duplicates, mod capacity,
+fire modes, conditions or set effects. See [README mod selection](../README.md#mod-selection-and-compatibility)
+and `modules/mod_compatibility.py` for the exact conservative rules and unknown
+cases. Rev-1 databases receive a backed-up mod-only reparse; rev-0 databases
+still receive the weapon-index correction as well. This is not an assertion
+that every export row or game mechanic has been verified.
+
+## 2026-10-28 follow-up: Primed Target Cracker
+
+The Nukor, Ocucor and Akarius simulators incorrectly used +120% Critical
+Damage for max-rank Primed Target Cracker. The
+[Wiki's rank table](https://wiki.warframe.com/w/Primed_Target_Cracker) gives
+**+110%**. The three simulator constants and their independent stat fixtures
+have been corrected. Earlier archived simulation results remain invalid. A
+new, explicitly experimental [Nukor three-mod comparison](kuva_nukor_three_mod_comparison.md)
+illustrates how sensitive a specific test is to target and model assumptions;
+it does not validate these simulators against the game.
+
+## 2026-10-28 follow-up: Akarius multishot Viral timing
+
+For projectile multishot, the [Viral Wiki](https://wiki.warframe.com/w/Damage/Viral_Damage)
+says same-shot hits do not benefit from each other's Viral procs, whereas
+[Galvanized Shot](https://wiki.warframe.com/w/Galvanized_Shot) counts
+multishot hits sequentially. The Akarius simulator now snapshots Viral at the
+start of each ammo shot while retaining live status counts for GunCO and live
+Viral for delayed damage. Grouping impact and detonation under that snapshot,
+independent crit rolls, and fixed hit ordering are still weapon-specific
+assumptions. Deterministic tests cover the chosen behavior, not in-game
+validation. The new [Akarius comparison](akarius_prime_viral_corrosive_comparison.md)
+shows a Heat-timing sensitivity that reverses the Eximus mean ordering and
+includes a one-hit Overguard overflow-discard sensitivity.
+
+## 2026-10-28 follow-up: Ocucor Riven, Puncture, and tendrils
+
+The old Ocucor simulator mixed up several Riven layouts: a 1.2-disposition,
+max-rank two-positive/one-negative Pistol Multishot midpoint is **+177.8%**,
+not +134.7%. Its selectable midpoint values now match the corresponding CSV
+column. The single-target simulator can start with carried-over Sentient Surge
+tendrils, tracks Puncture's flat crit bonus, and drops tendrils on an empty
+magazine or reload. The illustrative room model distinguishes primary/status
+kills from direct tendril kills, resets target ramp on a fresh target, and
+credits fatal Heat applications to Flare. These are unit-tested assumptions,
+not validation against gameplay. The [Ocucor comparison](ocucor_enervate_flare_comparison.md)
+uses the requested Multishot/Viral Riven and tests Flare ramp, Heat assumptions,
+and an explicitly hypothetical multi-target Enervate sensitivity. The Wiki's
+single-hit AFCC formula does **not** validate the latter's crowd behavior. A
+[later Riven comparison](ocucor_viral_dilution_comparison.md) tests the effect
+of different positive-layout weights, Viral status dilution and a separate
+Reload Speed value; these are still experimental simulations.
+
+## 2026-10-28 follow-up: Jat Kittag heavy-slam spam
+
+The historical Jat simulation does not support reliable Afflictions/Gas/Blast
+rankings. A new [analytical comparison](jat_kittag_slam_spam_comparison.md)
+separates Initial Combo recovery, approximate status probabilities and
+**direct-only** benchmarks from unknown TTK and area damage. It compares Focus
+Energy and Focus Radon, ordinary Gas, and two feasible spliced-Gas Rivens
+without adding a ninth weapon mod. It also distinguishes first recovery from
+long-run combo sustainability. The Wiki's first-hit status eligibility and
+Lifted +12 bug are documented, but current Blast and damaging-DoT requirements
+are disputed; no definitive arcane or crowd-clear ranking is asserted. A
+[follow-up build](jat_kittag_gas_cold_damage_build.md) deliberately drops Primed
+Pressure Point to fit Fever, Focus Energy and a spliced Gas / Cold / Damage
+Riven. It validates the specified element order and reports only idealized
+first-hit rolls, neutral direct damage, and a conditional Wiki-derived Magnetic
+break calculation—not a defense-routing or Afflictions simulation. A later,
+separate [slam-count sensitivity experiment](jat_kittag_expected_slams.md)
+models two exact eight-mod builds with sampled crit/status rolls, a user-requested
+no-overflow rule and explicit alternative Afflictions/status-timing hypotheses.
+It is not a validated gameplay TTK, and its isolated shieldless targets do not
+establish a crowd-clear or shielded-enemy ranking.
+
+## 2026-10-28 follow-up: Riven table trait eligibility
+
+The generated Riven tables incorrectly listed negative primary elements, Punch
+Through, melee damage, Initial Combo and Additional Combo Count Chance, and
+listed a positive Chance to Gain Combo Count. The [Riven Mods Wiki](https://wiki.warframe.com/w/Riven_Mods)
+marks those signs unavailable. Its rank-8 Initial Combo row conflicts with its
+coefficient legend; [Melee Combo](https://wiki.warframe.com/w/Melee_Combo)
+explicitly says Initial Combo is positive-only, so the generator follows that
+more specific statement. Unrollable entries are now `null` in JSON and blank in
+CSV, rather than plausible-looking numbers. Punch Through is displayed in
+meters, not percent, and the negative-only Chance to Gain Combo Count uses the
+Wiki's inverted display sign. The 1.2 tables were regenerated; other existing
+rollable values were compared and did not change. The Alternox CSV loader now
+skips unavailable traits and preserves plain/faction units instead of dividing
+all entries by 100; its compared percent-based values were unchanged.
+Weapon-specific roll restrictions and spliced traits remain out of scope;
+binary64 is not exact in-game binary32 arithmetic. The earlier simulation
+artifacts are unchanged.
+
+## 2026-10-28 follow-up: weapon export collisions and hit components
+
+The bundled DE export contains two different `Grimoire` rows. The old importer
+used the last name-keyed row, selecting the Doppelganger's 25 Impact/Puncture
+instead of the player weapon. `modules/weapon_export_policy.py` now explicitly
+prioritizes the player ID regardless of export order, rejects a missing player
+entry and unrecognized same-name conflicts in modeled fields, and retains the
+old entry for safe legacy-coverage checks. Revision 3 repairs an existing
+revision-1/2 row only if it exactly matches the saved Doppelganger entry; it
+retains a SQLite backup and refuses to overwrite an edited row. Revision 0
+reimports covered export rows as before. Same-name entries that differ only in
+ID are not fully resolved by this guard.
+
+The player export's **150 Electricity is not a single 150-damage hit**: the
+[Grimoire Wiki](https://wiki.warframe.com/w/Grimoire) separates primary fire
+into 100 direct plus 50 radial. The desktop model still treats the exported row
+as one instance, with no radial falloff or separate quantization. Its Final
+value is therefore not a reliable per-hit prediction for this and other rows
+that aggregate distinct components. Alternate fire and per-attack modeling
+remain unimplemented. This correction is export- and Wiki-checked, not
+in-game validation.
+
+The mod aggregator and calculator now share the Wiki's last-listed Riven
+primary-element ordering; tests include mixed primary, secondary and faction
+stats across slots. Riven recognition still relies on the word `Riven` in the
+mod name, and a plain already-aggregated dictionary cannot preserve slot
+provenance. Do not assume arbitrary named Rivens are detected.
+
+## Scope and findings
+
+| Area | Checked and changed | Remaining limitations |
+| --- | --- | --- |
+| Desktop direct-hit calculator | Uses signed nearest-1/32 quantization of modded base damage, without intermediate display rounding. Applies the faction/type table, square-root armor DR and the exceptional >2700 armor branch. Arsenal totals use innate multishot, or one hit for melee rows without multishot. | Treats the exported row as **one non-critical health hit**; some rows combine multiple real hits and cannot be interpreted per hit. It does not calculate falloff, shields, Overguard, critical hits, status effects, enemy-specific resistances, special attacks, modded multishot, or actual DPS. Data/attack modes imported from the export can be incomplete. |
+| Export/import data | Corrected DE `damagePerShot` indices for Heat (3), Cold (4), and Electricity (5); select the player Grimoire over its same-named Doppelganger; and rebuilt the bundled database. Ignis Wraith, Tenet Glaxion, Alternox Prime and Grimoire examples exercise the types. Legacy AppData databases are upgraded from saved exports with a backup. | Export snapshots may be stale, merge multiple hit components, or omit attack modes. Automatic migration refuses incomplete or mismatching exports rather than overwriting a possibly edited Grimoire row. |
+| Mods, progenitors, factions | Ordered mod effects are passed to the calculator. Primaries are paired in slot order, followed by innate and progenitor primaries in Heat/Cold/Electricity/Toxin order; the last-listed Riven elemental stat has priority. A pre-combined element remains independent. `X1.55` is interpreted as a +55% faction bonus, not +155%; Narmer does not inherit Grineer/Corpus bane. | A bare `CalculationInputs.mods` dictionary cannot preserve the original pairing history; callers needing exact slot-order resolution should pass `equipped_mods`. Only names containing `Riven` trigger the Riven-order rule. Complex negative elemental stats, nonstandard weapon inheritance, and spliced Riven entry in the desktop UI have not been fully validated. |
+| Enemy scaling | Added faction-specific shield curves, Eximus base shields, and unrounded enemy armor DR for damage. Heavy Gunner gadget fixtures and independently transcribed shield/armor examples are tested. | The model follows the wiki infobox **gadget** for Overguard level difference; the article disagrees, as described below. Python binary64 and rounded gadget EHP are not exact in-game binary32 emulation. Supplying the right enemy base stats, faction curves and special exceptions remains the caller's responsibility. |
+| Status damage | Wiki examples for Slash, Heat, Toxin, Electricity, Gas, faction double dipping, critical seeds and the tick-group `+1` accumulator have tests. Heat armor strip is one shared 15/30/40/50% ramp. AoE tick counting distinguishes an exact expiry from a fractional duration. | `status_damage.py` uses Python binary64, not the wiki's binary32 intermediate operations or exact critical-multiplier quantization. Some simulators use simplified tick clocks and do not implement every interaction such as Heat inheritance or special immunities. |
+| CO / GunCO | The cap on Galvanized's per-status bonus is per type, not a cap on the sum across types; multiplicative `scale` is applied to its CO term. The Cedo and Secondary Shiver source descriptions were corrected. Tests cover selected wiki attack examples and formulas. | The attack catalog is a dated snapshot of community-sourced, changing, attack-specific behavior; **not every row has been independently verified**. The desktop calculator does not automatically apply CO. Simulation assumptions about kill stacks and target statuses must be supplied correctly. |
+| Riven tables | Selected Wiki rank-8 range endpoints, rollable trait signs, display units, and the four standard positive/negative layout weights are covered by tests; current default disposition is 1.2. | The vendored tag catalog and every possible stat/roll were not independently verified. Binary32 rounding is not emulated; spliced traits and weapon-specific restrictions are not fully modeled. Historical fingerprint tests use older explicit dispositions and are not assertions about today's disposition. |
+| Weapon simulations | Corrected Elementalist's reload/status-damage bonuses, shared Heat strip, stat stacking, burst timing, live GunCO counts, Microwave timing and beam multishot sampling. All five simulators use typed shieldless Overguard/health routing and timed Magnetic-break Electricity; Jat uses faction and combo in its DoT seeds. Added unit and deterministic integration fixtures. | **Experimental, not validated TTK calculators.** Unverified routing assumptions and proc, timing and weapon-specific approximations below materially affect results. Previous rankings and recommendations are invalid. Passing tests do not establish accuracy of a complete simulated fight. |
+
+## Known simulation limitations
+
+1. **Overguard routing is an approximation.** The five simulators now route
+   typed hits through enemy Overguard into health without a depletion gate,
+   applying Magnetic to Overguard and Viral/armor to health. The exact
+   allocation of a mixed hit across the breaking boundary is not specified by
+   the wiki: the implementation assumes proportional overflow. It also
+   applies faction type modifiers to Overguard, despite its neutral intrinsic
+   table; the available sources do not settle that interaction. Simulated targets have
+   no shields and do not model all other defenses or immunities.
+2. **Magnetic break behavior is not settled.** The model follows the dedicated
+   Magnetic page's forced Electricity proc: `3% × max Overguard × stacks` over
+   the six-second base duration, with source status/faction bonuses each
+   applied twice, Electricity bonus and modified duration. The first tick is
+   immediate and later ticks use current armor and Viral. The general Damage
+   and Overguard pages have differing immediate-damage wording. The special
+   proc's `+1` accumulator is not specified there and is omitted; the most
+   recent Magnetic applier supplies all source modifiers when sources differ.
+   Electricity's area damage to *other* room targets is not modeled, and the
+   `break_electric` bucket is a model result, not a validated game value.
+3. **Blast is approximate and sources disagree.** The simulators generally
+   use a 10-stack threshold and the dedicated Blast page's 30%-per-stack
+   single-target hit plus 300%-per-stack radial to surrounding enemies. The
+   generic Damage/Calculation page describes a different cap for bosses and
+   Eximus and a different combined detonation settlement. Exact caps,
+   death-triggered hits and routing need in-game checks.
+4. **Some proc timing and inheritance are simplified.** Heat groups now tick
+   from their first application, Nukor Toxin and Jat Toxin tick independently,
+   and Jat Gas/Alternox Electricity use application-relative pulses. The
+   eligibility of newly added Heat stacks and synchronization/consolidation of
+   other same-time pulses remain modeling assumptions. The Nukor/Ocucor models
+   merge same-target beam damage and status chance so multishot contributes
+   to both proc seeds and proc counts, as the [Multishot Wiki](https://wiki.warframe.com/w/Multishot)
+   describes; that does not establish every weapon-specific interaction.
+   Cross-source Heat
+   inheritance, exact restoration, many immunities and binary32/critical
+   quantization are not fully modeled. Beam ramp recovery/reloads are
+   approximate; the Nukor model applies ramp to direct hits but not status
+   seeds, whose ramp interaction is not established here. The Nukor room
+   simulation also skips procs on fatal direct hits, including Blast's
+   death-triggered radius, so it cannot support crowd-clear rankings.
+5. **Jat Kittag:** Melee Afflictions' immediate damage and full cross-status,
+   faction and status-damage re-seeding are omitted; Blast procs, Gas damage
+   to nearby room targets, exact Lifted timing, and Seismic Wave's effect on
+   DoT seeds are not fully modeled. Whether a live damaging DoT is required to
+   replicate non-damaging statuses such as Corrosive/Viral is **disputed**:
+   a [2026 forum report](https://forums.warframe.com/topic/1512645-melee-afflictions-the-dot-requirement-and-blast-status/)
+   describes such a requirement with exceptions, while the
+   [Wiki's Afflictions page](https://wiki.warframe.com/w/Melee_Afflictions)
+   gives an incomplete and potentially outdated account. Neither is a
+   definitive current answer. The historical simulator also assumes the
+   target must already be Lifted, although the Wiki says a status from the
+   triggering hit can be eligible. The modeled heavy-slam seed includes combo
+   and faction, with faction applied again at tick time.
+6. **Alternox and data:** the analytic DPS calculation assumes maintained kill
+   stacks and saturated Viral where applicable; its average-crit/status
+   calculation cannot reproduce every consolidated pulse. The stochastic
+   default target is a plain shieldless Heavy Gunner, and its Riven candidate
+   grid covers only a subset of elemental orders. The bundled database is a
+   snapshot: for example, its Akarius Prime fire rate is 3.9007 while the
+   wiki infobox shows 3.67; the simulator uses the latter.
+7. **Other loadout assumptions:** kill-stack uptime, averaged Secondary
+   Enervate below 140% crit chance, fixed enemy positions, weak points,
+   multi-target interactions and special weapon/ability interactions are
+   simplified. Trial summaries sort samples and use linearly interpolated
+   percentiles; `trials_attempted` and `timed_out` expose censored runs, while
+   the reported statistics include successful kills only. Infinity means no
+   kill was observed within the simulation cutoff, not that a kill is
+   impossible. Values produced by rerunning a simulation are model outputs,
+   not independently verified wiki facts.
+
+The old per-weapon reports are retained as explicitly marked historical
+archives, not recommendations. No new ranking is claimed by this audit.
+
+## Source disagreements and choices
+
+- [Enemy Level Scaling](https://wiki.warframe.com/w/Enemy_Level_Scaling)
+  states `level - 1` for Overguard; the live
+  [enemy infobox gadget](https://wiki.warframe.com/w/MediaWiki:Gadget-enemyinfoboxslider.js)
+  uses `level - base_level`. `enemy_scaling.py` follows the gadget; the two
+  choices give different dummy Overguard and EHP values.
+- [Damage/Calculation](https://wiki.warframe.com/w/Damage/Calculation)
+  describes the scale as **modded base damage / 32**, but also contains
+  conflicting prose about whether base-damage and faction bonuses enter the
+  scale. The direct calculator uses modded base damage for the scale and
+  applies faction bonuses after quantization; this choice is not a claim
+  that the contradiction has been resolved.
+- [Magnetic Damage](https://wiki.warframe.com/w/Damage/Magnetic_Damage)
+  describes a forced Electricity proc on shield/Overguard break; the general
+  [Damage](https://wiki.warframe.com/w/Damage) and
+  [Overguard](https://wiki.warframe.com/w/Overguard) pages use wording that
+  can imply an immediate hit instead. Simulators follow the dedicated page as
+  an approximation, not as a verified exact mechanic.
+- **Player and enemy gating differ.** The Overguard Wiki states that player
+  Overguard has a 0.5-second invulnerability gate, but enemy Overguard has no
+  invulnerability gate [2](https://wiki.warframe.com/w/Overguard). Enemy
+  shields instead have a short gate with 95% damage reduction, weak-point and
+  other exceptions [4](https://wiki.warframe.com/w/Shield). The simulations
+  here do not model shields. A forum claim that both enemy shields and
+  Overguard discard all excess damage appears alongside contrary replies
+  [8](https://forums.warframe.com/topic/1410924-how-do-magnetic-procs-affect-damage-that-carries-over-to-health/);
+  it does not establish the mixed-hit overflow calculation.
+- Community discussions do not resolve the remaining Overguard questions.
+  One Reddit discussion
+  says faction bonuses apply regardless of health type [1](https://www.reddit.com/r/Warframe/comments/1fqur7h/faction_weaknesses/),
+  while a calculator author says their spreadsheet was changed to use
+  Overguard's own resistances [27](https://www.reddit.com/r/Warframe/comments/1hrl099/weapon_builderdamage_calculator_spreadsheet/).
+  Another player reports that Elementalist boosts the Magnetic-break proc
+  [17](https://www.reddit.com/r/Warframe/comments/1exd62z/why_you_should_get_a_magnetic_progenitor_bonus/),
+  but this does not establish the full double-dipping formula. These are
+  community reports, not definitive measurements; Reddit was reviewed through
+  indexed search excerpts because direct page retrieval was denied.
+- [Blast Damage](https://wiki.warframe.com/w/Damage/Blast_Damage) and the
+  generic calculation page describe different Blast detonation/cap behavior;
+  simulations use the former as an approximation, not a settled answer.
+- [Armor](https://wiki.warframe.com/w/Armor) gives the square-root enemy
+  formula at or below 2700 and a different `armor/(armor+300)` branch above
+  2700. The normal enemy scaling model floors/clamps ordinary armor; the
+  direct calculator accepts a manually entered exceptional armor value. The
+  Wiki also describes a minimum of 1 per damage type reduced by armor; the
+  desktop calculator and shared typed routing apply a minimum to positive
+  damage, but the separate scalar Jat slam-count model does not. That is a
+  further limitation for sufficiently small damage events, not a validated
+  change to the archived sweep.
+
+## Main references
+
+- [Damage and elemental modding](https://wiki.warframe.com/w/Damage),
+  [Damage/Calculation](https://wiki.warframe.com/w/Damage/Calculation),
+  [Damage type table](https://wiki.warframe.com/w/Damage/Overview_Table),
+  [Faction Damage Bonus](https://wiki.warframe.com/w/Faction_Damage_Bonus)
+- [Armor](https://wiki.warframe.com/w/Armor),
+  [Enemy Level Scaling](https://wiki.warframe.com/w/Enemy_Level_Scaling),
+  [Overguard](https://wiki.warframe.com/w/Overguard)
+- [Damage over Time](https://wiki.warframe.com/w/Damage_over_Time),
+  [Status Effect](https://wiki.warframe.com/w/Status_Effect),
+  [Heat](https://wiki.warframe.com/w/Damage/Heat_Damage),
+  [Blast](https://wiki.warframe.com/w/Damage/Blast_Damage),
+  [Magnetic](https://wiki.warframe.com/w/Damage/Magnetic_Damage)
+- [Condition Overload (Mechanic)](https://wiki.warframe.com/w/Condition_Overload_(Mechanic)),
+  [Galvanized Shot](https://wiki.warframe.com/w/Galvanized_Shot),
+  [Cedo](https://wiki.warframe.com/w/Cedo),
+  [Secondary Shiver](https://wiki.warframe.com/w/Secondary_Shiver)
+- [Riven Mods](https://wiki.warframe.com/w/Riven_Mods),
+  [Pistol Elementalist](https://wiki.warframe.com/w/Pistol_Elementalist),
+  [Cascadia Flare](https://wiki.warframe.com/w/Cascadia_Flare),
+  [Melee](https://wiki.warframe.com/w/Melee),
+  [Seismic Wave](https://wiki.warframe.com/w/Seismic_Wave),
+  [Melee Afflictions](https://wiki.warframe.com/w/Melee_Afflictions)
+- [Continuous Weapon](https://wiki.warframe.com/w/Continuous_Weapon),
+  [Multishot](https://wiki.warframe.com/w/Multishot),
+  [Fire Rate](https://wiki.warframe.com/w/Fire_Rate),
+  [Hek](https://wiki.warframe.com/w/Hek),
+  [Ignis Wraith](https://wiki.warframe.com/w/Ignis_Wraith),
+  [Tenet Glaxion](https://wiki.warframe.com/w/Tenet_Glaxion),
+  [Alternox Prime](https://wiki.warframe.com/w/Alternox_Prime)
+
+Run all offline tests with `python -m unittest discover -s tests -q`. The
+independent wiki fixtures live in `tests/test_damage_formulas.py`,
+`tests/test_enemy_scaling.py`, `tests/test_status_damage.py`,
+`tests/test_riven_wiki.py`, and `tests/test_condition_overload.py`;
+`tests/test_database_calculator_integration.py` checks bundled weapon and mod
+fields. `tests/test_damage_routing.py`,
+`tests/test_simulator_status_regressions.py` and
+`tests/test_simulator_routing_integration.py` exercise selected routing,
+status, source-modifier and cutoff invariants; `tests/test_trial_statistics.py`
+checks summary percentiles and timeouts. None establish validated TTKs.

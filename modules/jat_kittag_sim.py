@@ -1,5 +1,8 @@
 """Jat Kittag heavy-slam simulation: last-slot mod and Riven choice.
 
+WARNING: Experimental simulation, not a validated TTK or build-ranking model.
+See docs/formula_audit.md for routing assumptions and status approximations.
+
 The fixed build is:
 
 * Primed Pressure Point (+165% base damage)
@@ -24,20 +27,20 @@ Wiki mechanics (retrieved 2026-10-27):
   Point; crit-chance mods (Galvanized Steel, Riven crit chance) apply twice.
 * Heavy slams at zero combo deal x1. The module takes an explicit combo
   multiplier per trial so the cold-open spam case (1x) and a maintained
-  tier (4x/7x/12x) can both be measured; the multiplier is common to every
-  option, so option rankings do not depend on the chosen tier.
+  tier (4x/7x/12x) can both be measured under the model's assumptions.
 * Melee Afflictions (arcane): while Overguard is active it cannot trigger;
   afterwards, every slam on an already-Lifted enemy adds stacks of each
   live status effect on it (expired procs are pruned first, so nothing is
   resurrected). Rank 5 adds 6 stacks, but the wiki documents a bug where
   Lifted triggers add 12 — heavy slams force Lifted, so 12 is used here.
-  A live damaging DoT (Gas/Toxin) is required to trigger at all; pure
-  Corrosive/Viral/Blast statuses are not sufficient. Modeled in both the
-  single-target and room simulations; the immediate Affliction Damage
-  Hit is omitted (conservative).
-* Gas: Heat+Toxin combine into Gas; clouds tick 6 times over 6 s, 10
-  instances cap, armor-mitigated, and their modded base ignores elemental
-  mods (only base-damage, faction and status-damage bonuses apply).
+  Any modeled live status is eligible, including Corrosive and Viral.
+  Modeled in both single-target and room simulations, but the Affliction
+  Damage Hit and exact re-seeding modifiers are omitted; this is an
+  approximation and cannot establish a reliable ranking.
+* Gas: Heat+Toxin combine into Gas; clouds tick 6 times over 6 s, cap at 10
+  instances and are armor-mitigated. Their seeds ignore Heat/Toxin bonuses;
+  the model includes combo, crit, faction and status damage as applicable.
+  The Seismic Wave interaction with status seeds is not verified here.
 * Galvanized mods' on-kill stacks and Vulcan Blitz explosions cannot happen
   before the single dummy dies, so only their static effects enter the
   single-target sim; ``simulate_room`` models the kill-stacked behavior.
@@ -54,16 +57,17 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from modules.akarius_sim import corrosive_armor_factor
+# Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import (
-    armor_damage_reduction,
+    enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
     steel_path_heavy_gunner,
 )
+from modules.trial_statistics import sample_percentile
 from modules.kuva_nukor_sim import (
     DummyTarget,
     ToxinProc,
-    _heat_strip_fraction,
     steel_path_dummy_factory,
-    viral_magnetic_multiplier,
+    viral_magnetic_multiplier as viral_magnetic_multiplier,
 )
 from modules.status_damage import (
     gas_tick,
@@ -352,6 +356,11 @@ class GasProc:
     start: float
     seed: float
     crit_factor: float
+    next_tick: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.next_tick is None:
+            self.next_tick = self.start
 
 
 class JatTarget(DummyTarget):
@@ -369,11 +378,52 @@ class JatTarget(DummyTarget):
                                    if t > now]
         return len(self.corrosive_expiries)
 
-    def effective_armor(self, now: float) -> float:
-        armor = float(self.max_armor)
-        for proc in self.heat_procs:
-            armor *= 1.0 - _heat_strip_fraction(now - proc.start, 0.5)
+    def current_armor(self, now: float, ramp_interval: float) -> float:
+        armor = super().current_armor(now, ramp_interval)
         return armor * corrosive_armor_factor(self.corrosive_stacks(now))
+
+    def effective_armor(self, now: float) -> float:
+        return self.current_armor(now, 0.5)
+
+
+def _as_jat_target(target: DummyTarget) -> JatTarget:
+    """Preserve factory state while adding the Jat-specific target fields."""
+    if isinstance(target, JatTarget):
+        return target
+    adapted = JatTarget(target.max_health, target.max_armor, target.overguard_max)
+    adapted.__dict__.update(target.__dict__)
+    return adapted
+
+
+def _next_status_tick(target: JatTarget) -> float:
+    gas = (p.next_tick for p in target.gas_procs
+           if p.next_tick < p.start + PROC_DURATION)
+    toxin = (p.next_tick for p in target.toxin_procs
+             if p.next_tick <= p.start + PROC_DURATION)
+    return min(min(gas, default=math.inf), min(toxin, default=math.inf))
+
+
+def _process_status_ticks(target: JatTarget, build: JatBuild, when: float,
+                          route) -> None:
+    """Resolve same-time Gas pulses together and Toxin ticks independently."""
+    gas = [p for p in target.gas_procs
+           if p.next_tick == when and p.next_tick < p.start + PROC_DURATION]
+    if gas:
+        seeds = sum(p.seed * p.crit_factor for p in gas)
+        for proc in gas:
+            proc.next_tick += 1.0
+        route({"GAS": gas_tick(seeds,
+              status_damage_bonus=build.status_damage_bonus,
+              faction_bonus=build.faction_bracket - 1.0)}, when)
+    for proc in target.toxin_procs:
+        if target.health <= 0:
+            break
+        if proc.next_tick == when and proc.next_tick <= proc.start + PROC_DURATION:
+            proc.next_tick += 1.0
+            route({"TOXIN": toxin_tick(proc.seed * proc.crit_factor,
+                  elemental_bonus=build.toxin_elemental_bonus,
+                  status_damage_bonus=build.status_damage_bonus,
+                  faction_bonus=build.faction_bracket - 1.0)}, when)
 
 
 def plain_heavy_gunner_factory() -> JatTarget:
@@ -384,10 +434,10 @@ def plain_heavy_gunner_factory() -> JatTarget:
 
 def has_live_status(target: "JatTarget", when: float) -> bool:
     """True if at least one (un-expired) status stack is present."""
-    if any(when - p.start < PROC_DURATION
+    if any(when < p.start + PROC_DURATION
            for p in target.gas_procs):
         return True
-    if any(when - p.start < PROC_DURATION
+    if any(when < p.start + PROC_DURATION
            for p in target.toxin_procs):
         return True
     return bool(target.viral_stacks(when) or target.corrosive_stacks(when))
@@ -396,16 +446,13 @@ def has_live_status(target: "JatTarget", when: float) -> bool:
 def has_live_dot(target: "JatTarget", when: float) -> bool:
     """True if a damaging DoT status (Gas/Toxin) is live on the target.
 
-    Wiki/community testing (Melee Afflictions page, retrieved
-    2026-10-27): the arcane only does anything while at least one DoT
-    status (Slash/Heat/Toxin/Electricity/Gas) is present; pure
-    non-damaging stacks such as Corrosive or Viral are not enough on
-    their own. Jat builds can only carry Gas or Toxin DoTs.
+    This helper only classifies the stored procs. Melee Afflictions may
+    also add stacks of non-damaging statuses; it is not a trigger gate.
     """
-    if any(when - p.start < PROC_DURATION
+    if any(when < p.start + PROC_DURATION
            for p in target.gas_procs):
         return True
-    return any(when - p.start < PROC_DURATION
+    return any(when < p.start + PROC_DURATION
                for p in target.toxin_procs)
 
 
@@ -416,30 +463,29 @@ def apply_melee_afflictions(target: "JatTarget", when: float,
     Heavy slams force Lifted, and the wiki documents a bug (carried on
     both wiki mirrors, retrieved 2026-10-27) where Lifted triggers add
     12 stacks instead of the rank-5 value of 6 — callers in this module
-    therefore pass ``LIFTED_AFFLICTION_STACKS``. Proc lists are pruned
-    first: DoT pruning otherwise only happens at integer-second ticks, so
-    a slam later in the same second could see a cloud/DoT that has already
-    aged out and resurrect it. Statuses applied by the triggering slam
+    therefore pass ``LIFTED_AFFLICTION_STACKS``. Expired proc lists are
+    pruned first, so a new slam cannot resurrect an old effect. Statuses
+    applied by the triggering slam
     itself are eligible (wiki explicitly includes them). The immediate
     Affliction Damage Hit and the wiki's "exponential" faction/Status
     Damage scaling are intentionally not modeled (conservative).
     """
     target.affliction_triggers += 1
     live_gas = [p for p in target.gas_procs
-                if when - p.start < PROC_DURATION]
+                if when < p.start + PROC_DURATION]
+    target.gas_procs = live_gas
     if live_gas:
-        avg_seed = sum(p.seed for p in live_gas) / len(live_gas)
-        avg_crit = sum(p.crit_factor for p in live_gas) / len(live_gas)
+        avg_weighted_seed = sum(p.seed * p.crit_factor for p in live_gas) / len(live_gas)
         for _ in range(stacks):
-            target.gas_procs.append(GasProc(when, avg_seed, avg_crit))
+            target.gas_procs.append(GasProc(when, avg_weighted_seed, 1.0))
         target.gas_procs = target.gas_procs[-GAS_CAP:]
     live_toxin = [p for p in target.toxin_procs
-                  if when - p.start < PROC_DURATION]
+                  if when < p.start + PROC_DURATION]
+    target.toxin_procs = live_toxin
     if live_toxin:
-        avg_seed = sum(p.seed for p in live_toxin) / len(live_toxin)
-        avg_crit = sum(p.crit_factor for p in live_toxin) / len(live_toxin)
+        avg_weighted_seed = sum(p.seed * p.crit_factor for p in live_toxin) / len(live_toxin)
         for _ in range(stacks):
-            target.toxin_procs.append(ToxinProc(when, avg_seed, avg_crit))
+            target.toxin_procs.append(ToxinProc(when, avg_weighted_seed, 1.0))
     # Stack-only effects: only extend status types already on the target.
     if target.viral_stacks(when):
         target.viral_expiries = (
@@ -469,6 +515,7 @@ class SlamTrial:
     dot_to_overguard: float = 0.0
     direct_to_health: float = 0.0
     dot_to_health: float = 0.0
+    break_electric: float = 0.0
     combo_tiers: list = field(default_factory=list)
     trace: list = field(default_factory=list)
 
@@ -503,60 +550,50 @@ def simulate(build: JatBuild,
     """
     rng = random.Random(seed)
     now = 0.0
-    next_dot = 0.0
     slams = 0
     counts = {"GAS": 0, "TOXIN": 0, "CORR": 0, "VIRAL": 0}
-    og_break: Optional[float] = None
     log: list[str] = []
-    buckets = {"direct_og": 0.0, "dot_og": 0.0, "direct_hp": 0.0, "dot_hp": 0.0}
+    buckets = {"direct_og": 0.0, "dot_og": 0.0, "direct_hp": 0.0,
+               "dot_hp": 0.0, "break": 0.0}
     points = build.initial_combo
     tier_log: list[int] = []
 
-    def route(amount: float, when: float, is_dot: bool,
-              bypass_armor: bool = False) -> None:
-        if amount <= 0:
-            return
-        if target.overguard > 0:
-            target.overguard -= amount
-            buckets["dot_og" if is_dot else "direct_og"] += amount
-            if target.overguard <= 0:
-                target.overguard = 0.0
-                target.broken = True
-            return
-        if not bypass_armor:
-            amount *= (1.0 - armor_damage_reduction(
-                target.effective_armor(when)))
-        amount *= viral_magnetic_multiplier(target.viral_stacks(when))
-        target.health -= amount
-        buckets["dot_hp" if is_dot else "direct_hp"] += amount
+    def process_magnetic(when: float) -> None:
+        for _, result in target.process_magnetic_electric_until(
+                when, 0.5, faction_type_modifiers=GRINEER_TYPE_MOD):
+            buckets["break"] += result.health
 
-    def dot_tick(when: float) -> None:
-        target.gas_procs = [p for p in target.gas_procs
-                            if when - p.start < PROC_DURATION]
-        if target.gas_procs:
-            seeds = sum(p.seed * p.crit_factor for p in target.gas_procs)
-            route(gas_tick(seeds,
-                           status_damage_bonus=build.status_damage_bonus,
-                           faction_bonus=build.faction_bracket - 1.0),
-                  when, is_dot=True)
-        live_toxin = [p for p in target.toxin_procs
-                      if when - p.start < PROC_DURATION]
-        if live_toxin:
-            seeds = sum(p.seed * p.crit_factor for p in live_toxin)
-            # Toxin bypasses shields but NOT armor (wiki Toxin Damage);
-            # the +165% Toxin mod still buffs the tick via elemental_bonus.
-            route(toxin_tick(seeds,
-                             elemental_bonus=build.toxin_elemental_bonus,
-                             status_damage_bonus=build.status_damage_bonus,
-                             faction_bonus=build.faction_bracket - 1.0),
-                  when, is_dot=True)
+    def route(damage: dict[str, float], when: float, is_dot: bool,
+              bypass_armor: bool = False) -> None:
+        result = target.absorb(damage, when, 0.5,
+                               faction_type_modifiers=GRINEER_TYPE_MOD,
+                               armor_bypass=bypass_armor)
+        buckets["dot_og" if is_dot else "direct_og"] += result.overguard
+        buckets["dot_hp" if is_dot else "direct_hp"] += result.health
+        if result.broke_overguard:
+            process_magnetic(when)
+
+    def advance_events(until: float) -> float | None:
+        while target.health > 0:
+            next_electric = target.next_magnetic_electric_tick()
+            next_dot = _next_status_tick(target)
+            event = min(next_dot, next_electric)
+            if event > until:
+                break
+            if next_electric <= next_dot:
+                process_magnetic(event)
+            else:
+                _process_status_ticks(target, build, event,
+                                      lambda damage, at: route(damage, at, True))
+            if target.health <= 0:
+                return event
+        return None
 
     interval = build.slam_interval
     while now < max_time and target.health > 0:
-        while next_dot <= now and target.health > 0:
-            dot_tick(next_dot)
-            next_dot += 1.0
-        if target.health <= 0:
+        death_time = advance_events(now)
+        if death_time is not None:
+            now = death_time
             break
 
         if combo_recovery:
@@ -565,19 +602,26 @@ def simulate(build: JatBuild,
             tier_mult = float(combo_multiplier)
         tier_log.append(int(tier_mult))
         cf = _crit_factor(rng, build.crit_chance, build.crit_multiplier)
-        direct = 0.0
-        for name, single in build.type_damage.items():
-            q = wiki_quantized_damage(single, build.modded_base)
-            direct += (q * build.seismic_bracket * tier_mult * cf
-                       * GRINEER_TYPE_MOD.get(name, 1.0))
-        direct *= build.faction_bracket
+        direct = {name: wiki_quantized_damage(single, build.modded_base)
+                  * build.seismic_bracket * tier_mult * cf * build.faction_bracket
+                  for name, single in build.type_damage.items()}
         route(direct, now, is_dot=False)
+        slams += 1
+        if target.health <= 0:
+            break
+        target.gas_procs = [p for p in target.gas_procs
+                            if now < p.start + PROC_DURATION]
+        target.toxin_procs = [p for p in target.toxin_procs
+                              if now < p.start + PROC_DURATION]
 
         n_rolls = _status_rolls(rng, build.status_per_slam)
         for ptype in rng.choices(list(build.proc_weights),
                                  weights=list(build.proc_weights.values()),
                                  k=n_rolls):
-            seed = build.modded_base
+            # Heavy-attack proc seeds inherit combo, as in the wiki's melee
+            # status example. The 3x heavy-slam multiplier is already in
+            # modded_base; faction enters here and again on each tick.
+            seed = build.modded_base * build.faction_bracket * tier_mult
             if ptype == "GAS":
                 target.gas_procs.append(GasProc(now, seed, cf))
                 target.gas_procs = target.gas_procs[-GAS_CAP:]
@@ -593,14 +637,14 @@ def simulate(build: JatBuild,
                 target.viral_expiries.append(now + PROC_DURATION)
                 target.viral_expiries = target.viral_expiries[-VIRAL_CAP:]
                 counts["VIRAL"] += 1
-            # BLAST proc (accuracy debuff) has no single-target DPS effect.
+            # Blast proc damage is currently omitted; see formula_audit.md.
 
         # Melee Afflictions: impossible while Overguard is active (it grants
         # crowd-control immunity, so Lifted only sticks once broken); with no
         # Overguard the first slam Lifts and the second can trigger. The
-        # gate sees only live statuses: DoT pruning happens at integer ticks.
+        # gate sees only live statuses; expired procs are pruned first.
         if (afflictions and target.overguard <= 0 and target.lifted
-                and has_live_dot(target, now)):
+                and has_live_status(target, now)):
             apply_melee_afflictions(target, now)
         if target.overguard <= 0:
             target.lifted = True
@@ -609,13 +653,15 @@ def simulate(build: JatBuild,
         # Initial Combo floor at 40 points/s until the next slam lands.
         if combo_recovery:
             points *= build.heavy_efficiency
-        slams += 1
+        # Gas clouds pulse immediately on application (and on copied stacks).
+        death_time = advance_events(now)
+        if death_time is not None:
+            now = death_time
+            break
         now += interval
         if combo_recovery:
             points = min(build.initial_combo,
                          points + COMBO_REGEN_PER_SEC * interval)
-        if target.broken and og_break is None:
-            og_break = now
         if trace and slams % 2 == 0:
             log.append(
                 f"  t={now:6.2f}s og={max(target.overguard, 0):12.0f} "
@@ -626,10 +672,16 @@ def simulate(build: JatBuild,
                 f"corr={target.corrosive_stacks(now):2d} "
                 f"affl={target.affliction_triggers:2d}")
 
+    if target.health > 0 and now >= max_time:
+        death_time = advance_events(max_time)
+        now = death_time if death_time is not None else max_time
+
     ttk = now if target.health <= 0 else math.inf
     return SlamTrial(
         ttk=ttk,
-        overguard_break_time=og_break if og_break is not None else ttk,
+        overguard_break_time=(target.overguard_broken_at
+                              if target.overguard_broken_at is not None
+                              else 0.0 if target.overguard_max <= 0 else math.inf),
         slams=slams,
         gas_procs=counts["GAS"],
         toxin_procs=counts["TOXIN"],
@@ -642,6 +694,7 @@ def simulate(build: JatBuild,
         dot_to_overguard=buckets["dot_og"],
         direct_to_health=buckets["direct_hp"],
         dot_to_health=buckets["dot_hp"],
+        break_electric=buckets["break"],
         combo_tiers=tier_log,
         trace=log,
     )
@@ -655,15 +708,16 @@ def run_trials(option: str,
                combo_recovery: bool = False,
                riven_option: Optional[str] = None,
                factory=steel_path_dummy_factory) -> dict:
+    """Summarize observed kills and report attempted and timed-out trials."""
+    if trials < 1:
+        raise ValueError("trials must be positive")
     if riven_option is not None:
         build = build_loadout(option, riven_option, galv_stacks)
     else:
         build = build_jat_kittag(option, galv_stacks)
     ttks, og_times, armors, affl, tiers, slam_counts = [], [], [], [], [], []
     for i in range(trials):
-        dummy = factory()
-        target = JatTarget(dummy.max_health, dummy.max_armor,
-                           dummy.overguard_max)
+        target = _as_jat_target(factory())
         result = simulate(build, target, seed=base_seed + i,
                           combo_multiplier=combo_multiplier,
                           combo_recovery=combo_recovery)
@@ -675,26 +729,22 @@ def run_trials(option: str,
             slam_counts.append(result.slams)
             if result.combo_tiers:
                 tiers.append(sum(result.combo_tiers) / len(result.combo_tiers))
-    ttks.sort()
-
-    def pct(vals: list[float], p: float) -> float:
-        idx = min(len(vals) - 1, int(round(p * (len(vals) - 1))))
-        return vals[idx]
-
     return {
         "option": build.option,
         "build": build,
         "combo_multiplier": combo_multiplier,
         "trials": len(ttks),
-        "ttk_mean": sum(ttks) / len(ttks),
-        "ttk_median": pct(ttks, 0.5),
-        "ttk_p90": pct(ttks, 0.9),
-        "ttk_min": ttks[0],
-        "ttk_max": ttks[-1],
-        "overguard_median": pct(og_times, 0.5),
-        "armor_median": pct(armors, 0.5),
-        "affliction_median": pct(affl, 0.5),
-        "slams_median": pct(slam_counts, 0.5),
+        "trials_attempted": trials,
+        "timed_out": trials - len(ttks),
+        "ttk_mean": sum(ttks) / len(ttks) if ttks else math.inf,
+        "ttk_median": sample_percentile(ttks, 0.5, empty=math.inf),
+        "ttk_p90": sample_percentile(ttks, 0.9, empty=math.inf),
+        "ttk_min": min(ttks, default=math.inf),
+        "ttk_max": max(ttks, default=math.inf),
+        "overguard_median": sample_percentile(og_times, 0.5),
+        "armor_median": sample_percentile(armors, 0.5),
+        "affliction_median": sample_percentile(affl, 0.5),
+        "slams_median": sample_percentile(slam_counts, 0.5),
         "combo_tier_mean": (sum(tiers) / len(tiers)) if tiers else None,
     }
 
@@ -732,55 +782,25 @@ def simulate_room(option: str,
     """
     build = build_jat_kittag(option, 0)
     rng = random.Random(seed)
-    template = factory()
-    targets = [JatTarget(template.max_health, template.max_armor,
-                         template.overguard_max) for _ in range(n_enemies)]
+    targets = [_as_jat_target(factory()) for _ in range(n_enemies)]
     now = 0.0
-    next_dot = 0.0
     kill_times: list[tuple[int, float]] = []
     vulcan = 0
 
     def alive() -> list[JatTarget]:
         return [t for t in targets if t.health > 0]
 
-    def route(t: JatTarget, amount: float, when: float,
-              bypass_armor: bool = False) -> None:
-        if amount <= 0:
-            return
-        if t.overguard > 0:
-            t.overguard -= amount
-            if t.overguard <= 0:
-                t.overguard = 0.0
-                t.broken = True
-            return
-        if not bypass_armor:
-            amount *= (1.0 - armor_damage_reduction(t.effective_armor(when)))
-        amount *= viral_magnetic_multiplier(t.viral_stacks(when))
-        t.health -= amount
+    def process_magnetic(t: JatTarget, when: float) -> None:
+        t.process_magnetic_electric_until(
+            when, 0.5, faction_type_modifiers=GRINEER_TYPE_MOD)
 
-    def room_dot(when: float) -> None:
-        for t in targets:
-            if t.health <= 0:
-                continue
-            t.gas_procs = [p for p in t.gas_procs
-                           if when - p.start < PROC_DURATION]
-            if t.gas_procs:
-                seeds = sum(p.seed * p.crit_factor for p in t.gas_procs)
-                route(t, gas_tick(
-                    seeds,
-                    status_damage_bonus=build.status_damage_bonus,
-                    faction_bonus=build.faction_bracket - 1.0), when)
-            live_toxin = [p for p in t.toxin_procs
-                          if when - p.start < PROC_DURATION]
-            if live_toxin:
-                seeds = sum(p.seed * p.crit_factor for p in live_toxin)
-                # Armor mitigation applies to Toxin (shields only are bypassed).
-                route(t, toxin_tick(
-                    seeds,
-                    elemental_bonus=build.toxin_elemental_bonus,
-                    status_damage_bonus=build.status_damage_bonus,
-                    faction_bonus=build.faction_bracket - 1.0),
-                    when)
+    def route(t: JatTarget, damage: dict[str, float], when: float,
+              bypass_armor: bool = False) -> None:
+        result = t.absorb(damage, when, 0.5,
+                          faction_type_modifiers=GRINEER_TYPE_MOD,
+                          armor_bypass=bypass_armor)
+        if result.broke_overguard:
+            process_magnetic(t, when)
 
     def deaths(when: float) -> None:
         # Fixed point: a Vulcan blast can itself kill another target, whose
@@ -797,14 +817,36 @@ def simulate_room(option: str,
                 vulcan += 1
                 blast = (300.0 + 0.60 * t.max_health) * vulcan_falloff
                 for other in alive():
-                    route(other, blast, when)
+                    route(other, {"BLAST": blast}, when)
+
+    def advance_events(until: float) -> float | None:
+        while alive():
+            next_electric = min((t.next_magnetic_electric_tick() for t in targets
+                                 if t.health > 0), default=math.inf)
+            next_dot = min((_next_status_tick(t) for t in targets
+                            if t.health > 0), default=math.inf)
+            event = min(next_dot, next_electric)
+            if event > until:
+                break
+            if next_electric <= next_dot:
+                for t in targets:
+                    if t.health > 0:
+                        process_magnetic(t, event)
+            else:
+                for t in targets:
+                    if t.health > 0 and _next_status_tick(t) == event:
+                        _process_status_ticks(
+                            t, build, event,
+                            lambda damage, at, target=t: route(target, damage, at))
+            deaths(event)
+            if not alive():
+                return event
+        return None
 
     while now < max_time and alive():
-        while next_dot <= now and alive():
-            room_dot(next_dot)
-            deaths(next_dot)
-            next_dot += 1.0
-        if not alive():
+        death_time = advance_events(now)
+        if death_time is not None:
+            now = death_time
             break
 
         kills = sum(1 for t in targets if getattr(t, "_dead", False))
@@ -817,22 +859,29 @@ def simulate_room(option: str,
 
         for t in alive():
             cf = _crit_factor(rng, build.crit_chance, cm)
-            direct = 0.0
-            for name, single in build.type_damage.items():
-                q = wiki_quantized_damage(single, build.modded_base)
-                direct += (q * build.seismic_bracket * combo_multiplier * cf
-                           * GRINEER_TYPE_MOD.get(name, 1.0))
-            route(t, direct * build.faction_bracket, now)
+            direct = {name: wiki_quantized_damage(single, build.modded_base)
+                      * build.seismic_bracket * combo_multiplier * cf * build.faction_bracket
+                      for name, single in build.type_damage.items()}
+            route(t, direct, now)
+            if t.health <= 0:
+                continue
+            t.gas_procs = [p for p in t.gas_procs
+                           if now < p.start + PROC_DURATION]
+            t.toxin_procs = [p for p in t.toxin_procs
+                             if now < p.start + PROC_DURATION]
             for ptype in rng.choices(
                     list(build.proc_weights),
                     weights=list(build.proc_weights.values()),
                     k=_status_rolls(rng, status_chance)):
                 if ptype == "GAS":
-                    t.gas_procs.append(GasProc(now, build.modded_base, cf))
+                    t.gas_procs.append(GasProc(
+                        now, build.modded_base * build.faction_bracket
+                        * combo_multiplier, cf))
                     t.gas_procs = t.gas_procs[-GAS_CAP:]
                 elif ptype == "TOXIN":
                     t.toxin_procs.append(
-                        ToxinProc(now, build.modded_base, cf))
+                        ToxinProc(now, build.modded_base * build.faction_bracket
+                                  * combo_multiplier, cf))
                 elif ptype == "CORR":
                     t.corrosive_expiries.append(now + CORROSIVE_DURATION)
                     t.corrosive_expiries = t.corrosive_expiries[-CORROSIVE_CAP:]
@@ -842,12 +891,23 @@ def simulate_room(option: str,
             # Afflictions need a Lifted target and no active Overguard;
             # the first post-Overguard slam Lifts, later slams trigger.
             if (afflictions and t.overguard <= 0 and t.lifted
-                    and has_live_dot(t, now)):
+                    and has_live_status(t, now)):
                 apply_melee_afflictions(t, now)
             if t.overguard <= 0:
                 t.lifted = True
         deaths(now)
+        if not alive():
+            break
+        death_time = advance_events(now)
+        if death_time is not None:
+            now = death_time
+            break
         now += build.slam_interval
+
+    if alive() and now >= max_time:
+        death_time = advance_events(max_time)
+        if death_time is not None:
+            now = death_time
 
     return RoomTrial(
         clear_time=now if not alive() else math.inf,

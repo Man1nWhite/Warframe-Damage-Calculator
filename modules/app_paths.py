@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from modules.constants import APP_NAME
+from modules.export_safety import UnfinishedExportPublication, require_complete_exports
 
 DB_NAME = "weapons.db"
 SETTINGS_NAME = "settings.json"
+EXPORT_FILES = ("ExportWeapons_en_Cleaned.zip", "ExportKeys_en_Cleaned.zip")
 SOURCE_FILES = [
-    "ExportWeapons_en_Cleaned.zip",
-    "ExportKeys_en_Cleaned.zip",
+    *EXPORT_FILES,
     "Warframe-Damage-Calculator_v2.xlsx",
     "riven_tags.json",
     "riven_stats_average_1_2.json",
@@ -49,11 +51,43 @@ def ensure_app_dirs() -> dict[str, Path]:
 
 
 def seed_source_files(project_root: Path) -> None:
+    """Seed an absent export pair, never fill one half from another snapshot.
+
+    Stage both files before publication and reuse the refresh recovery marker;
+    a process interruption cannot make a partially seeded pair look complete.
+    Other independent reference files may still be seeded individually.
+    """
     paths = ensure_app_dirs()
     bundled_source = project_root / "source"
+    source = paths["source"]
+    bundled_pair = [bundled_source / name for name in EXPORT_FILES]
+    targets = [source / name for name in EXPORT_FILES]
+    try:
+        require_complete_exports(*targets)
+        safe_to_seed = True
+    except UnfinishedExportPublication:
+        # Do not touch a pair that requires manual refresh recovery.
+        safe_to_seed = False
+    if (safe_to_seed and not any(target.exists() for target in targets)
+            and all(path.is_file() for path in bundled_pair)):
+        # Imported lazily to avoid a module-level app_paths/updater cycle.
+        from .updater import WarframeDataUpdater
+
+        stage = Path(tempfile.mkdtemp(prefix=".wdc-refresh-seed-", dir=source))
+        try:
+            staged = [stage / name for name in EXPORT_FILES]
+            for original, copy in zip(bundled_pair, staged):
+                shutil.copy2(original, copy)
+            WarframeDataUpdater._publish_exports(tuple(zip(staged, targets)), stage)
+        finally:
+            if not (stage / "PUBLISHING.json").exists():
+                shutil.rmtree(stage, ignore_errors=True)
+
     for file_name in SOURCE_FILES:
+        if file_name in EXPORT_FILES:
+            continue
         source_file = bundled_source / file_name
-        target_file = paths["source"] / file_name
+        target_file = source / file_name
         if source_file.exists() and not target_file.exists():
             shutil.copy2(source_file, target_file)
 

@@ -2,14 +2,16 @@
 
 Mathematical model for the two requested target dummies, implemented in
 [`modules/enemy_scaling.py`](../modules/enemy_scaling.py) and pinned by
-[`tests/test_enemy_scaling.py`](../tests/test_enemy_scaling.py) (24 tests).
+[`tests/test_enemy_scaling.py`](../tests/test_enemy_scaling.py). See the
+[formula audit](formula_audit.md) for source disagreements and limitations.
 
-The implementation is a faithful Python port of the WARFRAME wiki's live
-enemy-infobox calculator `MediaWiki:Gadget-enemyinfoboxslider.js` (oldid
-2816353, retrieved 2026-10-27) — the same gadget that renders the
-[Heavy Gunner](https://wiki.warframe.com/w/Heavy_Gunner) infobox with its
-Eximus / Steel Path / Icebind / player-count checkboxes. Cross-checked
-against [Enemy Level Scaling](https://wiki.warframe.com/w/Enemy_Level_Scaling),
+The implementation follows the main scaling formulas in the WARFRAME wiki's
+live enemy-infobox calculator `MediaWiki:Gadget-enemyinfoboxslider.js`
+(oldid 2816353, retrieved 2026-10-27) — the gadget that renders the
+[Heavy Gunner](https://wiki.warframe.com/w/Heavy_Gunner) infobox. It uses
+Python binary64 rather than emulating all in-game binary32 operations, and
+some wiki sources disagree on the Overguard formula. Cross-checked against
+[Enemy Level Scaling](https://wiki.warframe.com/w/Enemy_Level_Scaling),
 [Armor](https://wiki.warframe.com/w/Armor),
 [Eximus](https://wiki.warframe.com/w/Eximus),
 [Overguard](https://wiki.warframe.com/w/Overguard),
@@ -34,8 +36,11 @@ At base level the live infobox shows **38.73% damage reduction** and
 
 ## Scaling pipeline (order matters)
 
-For level difference `q = current_level - 8`, every stat uses two power
-curves blended by a smoothstep over a transition window:
+The gadget uses `q = current_level - 8` for this enemy, including Overguard.
+The [Enemy Level Scaling](https://wiki.warframe.com/w/Enemy_Level_Scaling)
+article instead says `level - 1` for Overguard; this model follows the gadget,
+so its Overguard and EHP figures depend on that unresolved choice. Each stat
+uses two power curves blended by a smoothstep over a transition window:
 
 ```
 s(q; lo, hi) =
@@ -48,10 +53,10 @@ multiplier = 1 + f1(q) + (f2(q) - f1(q)) * s(q; lo, hi)
 
 | Stat | f1(q) | f2(q) | Window |
 | --- | --- | --- | --- |
-| Health (Grineer) | `1 + 0.015 q^2.12` | `1 + 10.7332 q^0.72` | 70–80 |
-| Armor | `1 + 0.005 q^1.75` | `1 + 0.4 q^0.75` | 70–80 |
-| Overguard | `1 + 0.0015 q^4` | `1 + 260 q^0.9` | 45–50 |
-| Outgoing damage (Grineer, then x2) | `1 + 0.015 q^1.75` | `1 + 0.0075 q^1.55` | 1–25 |
+| Health (Grineer) | `0.015 q^2.12` | `10.7332 q^0.72` | 70–80 |
+| Armor | `0.005 q^1.75` | `0.4 q^0.75` | 70–80 |
+| Overguard (gadget) | `0.0015 q^4` | `260 q^0.9` | 45–50 |
+| Outgoing damage (Grineer, then x2) | `0.015 q^1.75` | `0.0075 q^1.55` | 1–25 |
 
 Stat assembly, in the exact order the wiki gadget applies it:
 
@@ -77,19 +82,18 @@ Stat assembly, in the exact order the wiki gadget applies it:
    Jade Shadows):
 
    ```
-   DR = round(sqrt(3 * armor) * 100) / 10000
-      = 0.9 * sqrt(armor / 2700)   (4-decimal rounding; 90% at the 2700 cap)
+   Unrounded enemy DR at armor <= 2700 = 0.9 * sqrt(armor / 2700)
+   Infobox DR display = round(DR * 10000) / 10000
+   Exceptional armor > 2700: DR = armor / (armor + 300)
    ```
 
-   > **Wiki inconsistency:** the prose on wiki.warframe.com/w/Armor and
-   > /w/Damage/Calculation still prints the pre-U36 *linear* formula
-   > `0.9 * armor / 2700` (both pages carry work-in-progress banners). The
-   > maintained infobox gadget, the Fandom mirror and current community
-   > testing all use the square-root form above — which is also what this
-   > repository's `modules/calculator.py` already implements.
+   The direct calculator and simulations use the unrounded DR; the rounded
+   infobox display remains available separately. The Armor page describes the
+   exceptional branch, while normal level-scaled armor is clamped to 2700.
 6. **Overguard** scales on its own curve from base 12 and is **not**
    affected by Steel Path/Empowered/Icebind multipliers. It ignores armor
-   DR and damage-type resistances (Void is the only weakness, x1.5).
+   DR and has neutral intrinsic type multipliers except Void (x1.5); how
+   faction type modifiers interact with that neutrality remains unverified.
 7. **EHP** = `round2(health / (1 - DR) + shields) + overguard`. Overguard
    is added as a raw, unarmored buffer.
 
@@ -103,12 +107,12 @@ curves sit on their upper endpoint `f2`.
 | --- | --- |
 | Eximus base health (`q > 100` branch) | 1,800 |
 | Steel Path x2.5 | base 4,500 (armor untouched) |
-| Health multiplier `f2(142)` | 381.519423x |
+| Health multiplier `1 + f2(142)` | 381.519423x |
 | **Health** | **1,716,837.41** |
-| Armor multiplier `f2(142)` | 17.454180x |
+| Armor multiplier `1 + f2(142)` | 17.454180x |
 | Raw scaled armor `floor(500 x 17.4542)` | 8,727 -> capped |
 | **Armor / damage reduction** | **2,700 / 90.00%** |
-| Overguard multiplier `f2(142)` | 22,493.247716x |
+| Overguard multiplier `1 + f2(142)` | 22,493.247716x |
 | **Overguard** (12 base; SP does not multiply it) | **269,918.97** |
 | Armored-health EHP `health / 0.1` | 17,168,374.10 |
 | **Total EHP** | **17,438,293.07** |
@@ -118,7 +122,7 @@ curves sit on their upper endpoint `f2`.
 
 Icebind enemies are native level 999+ (no Steel Path level shift). The
 Empowered Enemies restriction multiplies health, shields **and armor** by
-`3 + players`. `q = 1000 - 8 = 992`; health multiplier `f2(992)` =
+`3 + players`. `q = 1000 - 8 = 992`; health multiplier `1 + f2(992)` =
 1543.473196x, armor multiplier 71.703961x, Overguard multiplier
 129,371.081847x.
 
@@ -141,12 +145,13 @@ fraction of total EHP here (~1.55% of dummy A, ~0.62% of dummy B).
 ## Practical implications for weapon testing
 
 - **Both dummies cap at 90% armor DR**, so every point of health is worth
-  10 EHP until armor is stripped. A 28%+ armor strip at the cap (540 armor
-  remaining) is the break-even where Viral out-scales raw Corrosive.
-- **Overguard must be burned first** and is unarmored: it takes full
-  damage from every type except it only *resists* nothing — Void deals
-  x1.5 to it, and Magnetic procs amplify Overguard damage. Secondary
-  Fortifier (up to x8) is the dedicated Overguard lever.
+  10 EHP against neutral direct damage until armor is stripped. Comparisons
+  between damage types or statuses also depend on the attack and faction.
+- **Overguard must be burned first** and is unarmored. Its intrinsic damage
+  table is neutral except for Void x1.5, and Magnetic procs amplify damage to
+  it. Whether faction type modifiers also apply to Overguard remains an
+  explicit simulation assumption; see the formula audit. Secondary Fortifier
+  (up to x8) is the dedicated Overguard lever.
 - Grineer faction modifiers apply on the health bar: **Impact and
   Corrosive x1.5**; headshots multiply health-bar damage by x3.
 - Scope note: the model covers the standard **Empowered Enemies**

@@ -1,5 +1,14 @@
 # Jat Kittag Heavy Slam: Last-Slot Mod and Riven Simulation
 
+> **Historical report — results invalidated by the 2026-10-27 formula audit.**
+> The archived TTKs, rankings, recommendations and some formulas below use
+> superseded mechanics. Current simulation output is still experimental and
+> has known errors; see the [formula audit](formula_audit.md) and the newer
+> [direct/combo analysis](jat_kittag_slam_spam_comparison.md) before use.
+
+<details>
+<summary>Show archived, unvalidated report</summary>
+
 Slam-by-slam Monte Carlo simulation for a Jat Kittag heavy-slam build against
 the Steel Path level 150 Eximus Heavy Gunner dummy (1,716,837.41 health,
 2,700 armor / 90% DR, 269,918.97 Overguard). Code:
@@ -417,3 +426,6 @@ result = simulate_room("Corrosive (Shocking Touch)", n_enemies=10,
                        combo_multiplier=5.0, galv_stacks=4, seed=1)
 print(result.clear_time, result.vulcan_explosions)
 ```
+
+
+</details>

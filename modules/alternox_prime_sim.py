@@ -1,5 +1,8 @@
 """Alternox Prime Riven choice simulation (normal-fire, primary slot).
 
+WARNING: Experimental simulation, not a validated TTK or build-ranking model.
+See docs/formula_audit.md for routing assumptions and status approximations.
+
 The user's build is fixed at eight mods plus a Riven:
 
     Serration, Galvanized Aptitude, Galvanized Chamber, Rifle Elementalist,
@@ -46,8 +49,9 @@ Weapon model (wiki Alternox Prime, retrieved 2026-10-27), normal attack:
   snapshot the CO-multiplied Modded Base Damage of their source hit.
 * Element combining with the fixed Cold: a Riven Toxin positive becomes
   Viral, Heat becomes a second Blast source, Electricity becomes
-  Magnetic; with no elemental positive the Cold stays standalone. The
-  innate Electricity never combines. There is only one Cold source, so
+  Magnetic. If Cold is still unpaired it combines with the innate
+  Electricity; innate Electricity also joins a modded Electricity group.
+  There is only one Cold source, so
   pairs containing two of Toxin/Heat/Electricity are rejected
   (``combine_elements`` raises): only one combine is possible and the
   other element would stay standalone, a different build not covered by
@@ -60,11 +64,10 @@ Weapon model (wiki Alternox Prime, retrieved 2026-10-27), normal attack:
   stacks give 2 + 0.25*(n-1) health damage, capped at 10 stacks / 4.25x.
 * Simulation conventions shared with the kuva_nukor/akarius sims: one
   independent status roll per pellet, and a status chance above 100%
-  (Status Chance Riven builds reach ~153%) grants floor(sc) guaranteed
+  (Status Chance Riven builds reach ~113%) grants floor(sc) guaranteed
   procs plus one fractional roll; the 1/32 wiki quantization acts on
-  pre-crit per-type damage with crit applied afterwards; DoT ticks and
-  Blast fuses are evaluated on the integer-second clock (a 1.5 s fuse
-  therefore resolves at the next integer second), and proc damage
+  pre-crit per-type damage with crit applied afterwards; Electricity pulses
+  and Blast fuses use application-relative timestamps, and proc damage
   bypasses quantization using full-precision seeds. Rifle Elementalist
   is +90% Status Damage only (wiki, retrieved 2026-10-27) - it never
   extends proc duration, which stays at the 6 s base.
@@ -79,14 +82,19 @@ from pathlib import Path
 from typing import Optional
 
 from modules.condition_overload import apply_co, resolve_co_behavior
-from modules.enemy_scaling import armor_damage_reduction, steel_path_heavy_gunner
+from modules.constants import FACTION_MULTIPLIERS
+# Preserve the old simulator-level import for external callers.
+from modules.enemy_scaling import (enemy_armor_damage_reduction as armor_damage_reduction,  # noqa: F401
+                                   steel_path_heavy_gunner)
+from modules.trial_statistics import sample_percentile
 from modules.kuva_nukor_sim import (
     BlastProc,
     DummyTarget,
+    MagneticSource,
     viral_magnetic_multiplier,
     wiki_quantized_damage,
 )
-from modules.status_damage import ELEMENTAL_DOT_COEFFICIENT
+from modules.status_damage import ELEMENTAL_DOT_COEFFICIENT, electricity_tick
 
 # --- Weapon base stats (wiki Alternox Prime, Normal Attack) -----------------
 
@@ -181,10 +189,11 @@ def load_rifle_riven_averages(
     column: str = "buff_3_pos_1_neg",
     csv_path: Optional[str | Path] = None,
 ) -> dict[str, float]:
-    """Average Rifle Riven values (fraction, e.g. 1.856 == +185.6%).
+    """Average Rifle Riven values from a vendored layout column.
 
-    Reads the vendored 1.20-disposition table; ``column`` may be any of
-    the layout columns in ``source/riven_stats_average_1_2.csv``.
+    Percent values are fractions (e.g. 1.856 == +185.6%), faction values
+    are bonus multipliers, and plain values retain their native units (e.g.
+    meters). Traits unavailable in the requested sign/layout are omitted.
     """
     path = Path(csv_path) if csv_path else _source_dir() / _RIVEN_CSV
     out: dict[str, float] = {}
@@ -192,7 +201,13 @@ def load_rifle_riven_averages(
         for row in csv.DictReader(handle):
             if row["riven_type"] != _RIVEN_TYPE:
                 continue
-            out[row["stat_name"]] = float(row[column]) / 100.0
+            value = row[column]
+            if not value:
+                continue
+            unit = row["unit"]
+            if unit not in {"percent", "plain", "faction_bonus"}:
+                raise ValueError(f"unknown Riven table unit {unit!r}")
+            out[row["stat_name"]] = float(value) / 100.0 if unit == "percent" else float(value)
     if not out:
         raise ValueError(f"no {_RIVEN_TYPE} rows found in {path}")
     return out
@@ -231,15 +246,17 @@ def combine_elements(riven: dict[str, float]) -> ElementMix:
             "one Cold source can combine with only one Riven element; "
             f"got {elements}")
     cold = PRIMED_CRYO_COLD
-    factors: dict[str, float] = {"ELEC": 1.0, "BLAST": riven.get(R_BLAST, 0.0)}
+    factors: dict[str, float] = {"BLAST": riven.get(R_BLAST, 0.0)}
     if R_TOXIN in riven:
         factors["VIRAL"] = cold + riven[R_TOXIN]
+        factors["ELEC"] = 1.0
     elif R_HEAT in riven:
         factors["BLAST"] += cold + riven[R_HEAT]
-    elif R_ELEC in riven:
-        factors["MAG"] = cold + riven[R_ELEC]
+        factors["ELEC"] = 1.0
     else:
-        factors["COLD"] = cold
+        # Innate Electricity comes after modded Cold, and merges into any
+        # earlier Electricity group. Both therefore become Magnetic.
+        factors["MAG"] = cold + riven.get(R_ELEC, 0.0) + 1.0
     # Only positive factors can actually proc and count as GunCO types.
     types = tuple(name for name, factor in factors.items() if factor > 0.0)
     return ElementMix(factors, types)
@@ -323,12 +340,12 @@ def build_alternox(
     crit_multiplier = BASE_CRIT_MULT * (
         1.0 + VITAL_SENSE_CD + riven.get(R_CD, 0.0))
     fire_rate = BASE_FIRE_RATE * (
-        1.0 - CRIT_DELAY_ROF_PENALTY) * (1.0 + riven.get(R_FIRE_RATE, 0.0))
+        1.0 - CRIT_DELAY_ROF_PENALTY + riven.get(R_FIRE_RATE, 0.0))
     multishot = (1.0 + CHAMBER_BASE_MS
                  + CHAMBER_PER_STACK * chamber_stacks
                  + riven.get(R_MS, 0.0))
     status_per_pellet = BASE_STATUS * (
-        1.0 + GALV_APTITUDE_STATUS) * (1.0 + riven.get(R_STATUS, 0.0))
+        1.0 + GALV_APTITUDE_STATUS + riven.get(R_STATUS, 0.0))
     base_bracket = 1.0 + SERRATION + riven.get(R_DAMAGE, 0.0)
     mix = combine_elements(riven)
     behavior = resolve_co_behavior(WEAPON, NORMAL_ATTACK)
@@ -365,8 +382,9 @@ class DpsReport:
 
 
 def _crit_expectation(build: AlternoxBuild) -> float:
-    cc = build.crit_chance
-    return 1.0 + min(cc, 1.0) * (build.crit_multiplier - 1.0)
+    # Every full 100% crit chance adds another tier, with the fractional
+    # remainder rolling the next tier.
+    return 1.0 + max(build.crit_chance, 0.0) * (build.crit_multiplier - 1.0)
 
 
 def expected_dps(
@@ -397,17 +415,19 @@ def expected_dps(
     direct_dps = per_pellet * pellets_per_s
 
     # Proc seeds snapshot the CO-multiplied Modded Base Damage.
-    seed_mbd = build.modded_base * (1.0 + co_bonus)
+    seed_mbd = apply_co(ELEC_BASE, co_bonus, build.base_bracket, 1.0,
+                        mode=build.co_behavior_mode, scale=build.co_scale)
     procs_per_s = pellets_per_s * build.status_per_pellet
-    elec_bonus = 1.0  # no standalone Electricity mod (innate does not combine)
+    elec_bonus = 1.0  # standalone innate Electricity has no +Electricity mod
     electric_dps = (
         procs_per_s * weights.get("ELEC", 0.0)
-        * ELEC_TICK_COEF * seed_mbd * elec_bonus * sd_mult
+        * ELEC_TICK_COEF * (seed_mbd * crit + 1.0) * elec_bonus * sd_mult
         * ELEC_PROC_TICKS)
-    # Blast fuses average out to one 0.3x MBD detonation per proc.
+    # Procs inherit their source hit's critical multiplier; Blast has no
+    # weapon-DoT accumulator. This is still a steady-state approximation.
     blast_dps = (
         procs_per_s * weights.get("BLAST", 0.0)
-        * BLAST_SINGLE_COEF * seed_mbd * sd_mult)
+        * BLAST_SINGLE_COEF * seed_mbd * crit * sd_mult)
 
     total = (direct_dps + electric_dps + blast_dps) * viral
     mag_seconds = MAGAZINE / build.fire_rate
@@ -445,6 +465,11 @@ class ElectricProc:
     start: float
     seed: float
     crit_factor: float
+    next_tick: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.next_tick is None:
+            self.next_tick = self.start
 
 
 class AlternoxTarget(DummyTarget):
@@ -456,9 +481,8 @@ class AlternoxTarget(DummyTarget):
         self.cold_expiries: list[float] = []
 
     def live_electric(self, now: float) -> list[ElectricProc]:
-        self.electric_procs = [p for p in self.electric_procs
-                               if now - p.start < PROC_DURATION]
-        return self.electric_procs
+        return [p for p in self.electric_procs
+                if p.start <= now < p.start + PROC_DURATION]
 
     def live_blast(self, now: float) -> list[BlastProc]:
         return [p for p in self.blast_stacks if p.fuse_end > now]
@@ -508,10 +532,9 @@ def simulate(
     elementalist: float = RIFLE_ELEMENTALIST_SD,
     trace: bool = False,
 ) -> AlternoxTrial:
-    """Hit-by-hit normal-fire trial with reloads, procs and GunCO per hit."""
+    """Hit-by-hit normal-fire trial with timed procs and GunCO per hit."""
     rng = random.Random(seed)
     now = 0.0
-    next_tick = 1.0
     ammo = MAGAZINE
     shots = pellets_total = reloads = 0
     viral_procs = elec_procs = blast_procs = detonations = 0
@@ -519,36 +542,76 @@ def simulate(
     sd_mult = 1.0 + elementalist
     weights = build.mix.weights()
     proc_types = list(weights)
+    faction_types = FACTION_MULTIPLIERS["Grineer"]
+    source = MagneticSource(status_damage_bonus=elementalist,
+                            electricity_bonus=build.riven.get(R_ELEC, 0.0))
 
-    def resolve_ticks(when: float) -> None:
-        """Electricity DoT ticks and Blast fuses scheduled at integer secs."""
-        for proc in target.live_electric(when):
-            amount = (ELEC_TICK_COEF * proc.seed * proc.crit_factor
-                      * sd_mult)
-            amount *= 1.0 - armor_damage_reduction(
-                target.current_armor(when, 1.0))
-            amount *= viral_magnetic_multiplier(target.viral_stacks(when))
-            target.health -= amount
-        fused = [p for p in target.blast_stacks if p.fuse_end <= when]
-        if fused:
-            amount = sum(BLAST_SINGLE_COEF * p.seed * p.crit_factor
-                         for p in fused) * sd_mult
-            amount *= 1.0 - armor_damage_reduction(
-                target.current_armor(when, 1.0))
-            amount *= viral_magnetic_multiplier(target.viral_stacks(when))
-            target.health -= amount
-            target.blast_stacks = [
-                p for p in target.blast_stacks if p.fuse_end > when]
+    def process_magnetic(when: float) -> None:
+        target.process_magnetic_electric_until(
+            when, 1.0, faction_type_modifiers=faction_types)
+
+    def route(damage: dict[str, float], when: float) -> None:
+        result = target.absorb(damage, when, 1.0,
+                               faction_type_modifiers=faction_types)
+        if result.broke_overguard:
+            process_magnetic(when)
+
+    def advance_events(until: float) -> float | None:
+        """Process Electricity pulses and Blast fuses at their own times."""
+        nonlocal detonations
+        while target.health > 0:
+            next_break = target.next_magnetic_electric_tick()
+            next_elec = min((p.next_tick for p in target.electric_procs
+                             if p.next_tick < p.start + PROC_DURATION),
+                            default=math.inf)
+            next_blast = min((p.fuse_end for p in target.blast_stacks),
+                             default=math.inf)
+            event = min(next_break, next_elec, next_blast)
+            if event > until:
+                break
+            if next_break <= min(next_elec, next_blast):
+                process_magnetic(event)
+            elif next_elec <= next_blast:
+                due = [p for p in target.electric_procs
+                       if p.next_tick == event and p.next_tick < p.start + PROC_DURATION]
+                seeds = sum(p.seed * p.crit_factor for p in due)
+                for proc in due:
+                    proc.next_tick += 1.0
+                target.electric_procs = [p for p in target.electric_procs
+                                         if p.next_tick < p.start + PROC_DURATION]
+                tick = electricity_tick(seeds,
+                    elemental_bonus=build.riven.get(R_ELEC, 0.0),
+                    status_damage_bonus=elementalist)
+                route({"ELEC": tick}, event)
+            else:
+                due = [p for p in target.blast_stacks if p.fuse_end <= event]
+                for proc in due:
+                    target.blast_stacks.remove(proc)
+                    detonations += 1
+                    amount = BLAST_SINGLE_COEF * proc.seed * proc.crit_factor * sd_mult
+                    route({"BLAST": amount}, event)
+                    if target.health <= 0:
+                        break
+            if target.health <= 0:
+                return event
+        return None
 
     while now < max_time and target.health > 0:
-        while next_tick <= now and target.health > 0:
-            resolve_ticks(next_tick)
-            next_tick += 1.0
-        if target.health <= 0:
+        death_time = advance_events(now)
+        if death_time is not None:
+            now = death_time
             break
         if ammo <= 0:
-            now += build.reload_time
+            reload_end = now + build.reload_time
             reloads += 1
+            death_time = advance_events(min(reload_end, max_time))
+            if death_time is not None:
+                now = death_time
+                break
+            if reload_end >= max_time:
+                now = max_time
+                break
+            now = reload_end
             ammo = MAGAZINE
             continue
 
@@ -556,39 +619,22 @@ def simulate(
         ammo -= 1
         for _ in range(_pellet_count(rng, build.multishot)):
             pellets_total += 1
-            # GunCO recomputes per hit from statuses currently on target.
-            live_types = set(build.mix.status_types)
-            if "VIRAL" in build.mix.factors and not target.viral_stacks(now):
-                live_types.discard("VIRAL")
-            if "MAG" in build.mix.factors and not target.mag_stacks(now):
-                live_types.discard("MAG")
-            if not target.live_electric(now):
-                live_types.discard("ELEC")
-            if not target.live_blast(now):
-                live_types.discard("BLAST")
-            if "COLD" in build.mix.factors and not target.cold_stacks(now):
-                live_types.discard("COLD")
-            co_bonus = gunco_bonus(len(live_types), build.galv_kill_stacks)
+            # Count all live status types, including forced Electricity from
+            # a Magnetic break and statuses applied by preceding pellets.
+            co_bonus = gunco_bonus(target.unique_status_count(now),
+                                   build.galv_kill_stacks)
             cf = _crit_factor(rng, build)
-
-            # Repo convention (akarius/kuva_nukor): 1/32 quantization acts
-            # on the pre-crit type value, the crit multiplier lands after.
-            direct = 0.0
-            for factor in build.mix.factors.values():
+            direct = {}
+            for kind, factor in build.mix.factors.items():
                 uncritted = apply_co(
                     ELEC_BASE, co_bonus,
                     build.base_bracket * factor, 1.0,
                     mode=build.co_behavior_mode, scale=build.co_scale)
-                direct += wiki_quantized_damage(
-                    uncritted, build.modded_base) * cf
-            direct *= (1.0 - armor_damage_reduction(
-                target.current_armor(now, 1.0)))
-            direct *= viral_magnetic_multiplier(target.viral_stacks(now))
-            target.health -= direct
+                direct[kind] = wiki_quantized_damage(uncritted, build.modded_base) * cf
+            route(direct, now)
+            if target.health <= 0:
+                break
 
-            # Status chance above 100% guarantees floor(sc) procs plus one
-            # fractional roll (same convention as the Kuva Nukor sim); the
-            # base 72% build always takes the single fractional path.
             guaranteed_procs = int(math.floor(build.status_per_pellet))
             n_procs = guaranteed_procs + (
                 1 if rng.random()
@@ -597,42 +643,42 @@ def simulate(
                 ptype = rng.choices(proc_types,
                                     weights=[weights[t] for t in proc_types],
                                     k=1)[0]
-                proc_seed = build.modded_base * (1.0 + co_bonus)
+                proc_seed = apply_co(ELEC_BASE, co_bonus, build.base_bracket,
+                                     1.0, mode=build.co_behavior_mode,
+                                     scale=build.co_scale)
                 if ptype == "ELEC":
-                    target.electric_procs.append(
-                        ElectricProc(now, proc_seed, cf))
+                    target.record_status("ELEC", now, PROC_DURATION)
+                    target.electric_procs.append(ElectricProc(now, proc_seed, cf))
                     elec_procs += 1
                 elif ptype == "BLAST":
+                    target.record_status("BLAST", now, BLAST_FUSE)
                     target.blast_stacks.append(
                         BlastProc(now, now + BLAST_FUSE, proc_seed, cf))
                     blast_procs += 1
                     if len(target.blast_stacks) >= BLAST_STACK_CAP:
-                        # All ten stacks detonate at 0.3x MBD each.
-                        amount = sum(BLAST_SINGLE_COEF * p.seed
-                                     * p.crit_factor
+                        amount = sum(BLAST_SINGLE_COEF * p.seed * p.crit_factor
                                      for p in target.blast_stacks) * sd_mult
-                        amount *= (1.0 - armor_damage_reduction(
-                            target.current_armor(now, 1.0)))
-                        amount *= viral_magnetic_multiplier(
-                            target.viral_stacks(now))
-                        target.health -= amount
-                        detonations += 1
                         target.blast_stacks.clear()
+                        target.clear_status("BLAST")
+                        route({"BLAST": amount}, now)
+                        detonations += 1
                 elif ptype == "VIRAL":
+                    target.record_status("VIRAL", now, PROC_DURATION)
                     target.viral_expiries.append(now + PROC_DURATION)
                     target.viral_expiries = target.viral_expiries[-VIRAL_CAP:]
                     viral_procs += 1
                 elif ptype == "MAG":
-                    target.mag_expiries.append(now + PROC_DURATION)
-                    target.mag_expiries = target.mag_expiries[-VIRAL_CAP:]
+                    target.add_magnetic(now, PROC_DURATION, source)
                 elif ptype == "COLD":
-                    # Slow has no single-target DPS effect, but Cold is a
-                    # live status type for Galvanized Aptitude/GunCO.
+                    target.record_status("COLD", now, PROC_DURATION)
                     target.cold_expiries.append(now + PROC_DURATION)
+            if target.health > 0:
+                advance_events(now)  # Electricity's first tick is immediate.
             if target.health <= 0:
-                # Remaining multishot pellets of this pull never land.
                 break
 
+        if target.health <= 0:
+            break
         now += 1.0 / build.fire_rate
         if trace and shots % 5 == 0:
             log.append(
@@ -641,6 +687,9 @@ def simulate(
                 f"elec={len(target.live_electric(now)):2d} "
                 f"blast={len(target.live_blast(now)):2d}")
 
+    if target.health > 0 and now >= max_time:
+        death_time = advance_events(max_time)
+        now = death_time if death_time is not None else max_time
     ttk = now if target.health <= 0 else math.inf
     return AlternoxTrial(
         ttk=ttk, shots=shots, pellets=pellets_total, reloads=reloads,
@@ -657,7 +706,9 @@ def run_trials(positions: tuple[str, ...],
                base_seed: int = 20261027,
                galv_kill_stacks: int = APTITUDE_STACK_CAP,
                factory=alternox_dummy_factory) -> dict:
-    """Median TTK over stochastic trials for one Riven configuration."""
+    """Summarize successful trials and count timeouts for one Riven configuration."""
+    if trials < 1:
+        raise ValueError("trials must be positive")
     build = build_alternox(positions, galv_kill_stacks)
     ttks, reloads, viral = [], [], []
     for i in range(trials):
@@ -666,30 +717,15 @@ def run_trials(positions: tuple[str, ...],
             ttks.append(result.ttk)
             reloads.append(result.reloads)
             viral.append(result.final_viral_stacks)
-    ttks.sort()
-    if not ttks:
-        # Every trial timed out (e.g. max_time too short for the build).
-        return {
-            "positions": positions,
-            "build": build,
-            "trials": 0,
-            "ttk_median": math.inf,
-            "ttk_mean": math.inf,
-            "ttk_p90": math.inf,
-            "reloads_median": 0,
-            "viral_median": 0,
-        }
-
-    def pct(p: float) -> float:
-        return ttks[min(len(ttks) - 1, int(round(p * (len(ttks) - 1))))]
-
     return {
         "positions": positions,
         "build": build,
         "trials": len(ttks),
-        "ttk_median": pct(0.5),
-        "ttk_mean": sum(ttks) / len(ttks),
-        "ttk_p90": pct(0.9),
-        "reloads_median": reloads[len(reloads) // 2],
-        "viral_median": viral[len(viral) // 2],
+        "trials_attempted": trials,
+        "timed_out": trials - len(ttks),
+        "ttk_median": sample_percentile(ttks, 0.5, empty=math.inf),
+        "ttk_mean": sum(ttks) / len(ttks) if ttks else math.inf,
+        "ttk_p90": sample_percentile(ttks, 0.9, empty=math.inf),
+        "reloads_median": sample_percentile(reloads, 0.5),
+        "viral_median": sample_percentile(viral, 0.5),
     }

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from .constants import DAMAGE_TYPES, SEARCH_LIMIT
-from .models import Mod, Weapon
+from .mod_effect_policy import usable_direct_effect
+from .models import Mod, ModEffect, Weapon
 
 
 class DatabaseSession:
@@ -29,7 +31,7 @@ class WeaponRepository(DatabaseSession):
         sql += " ORDER BY weapon COLLATE NOCASE LIMIT ?"
         params.append(limit)
         try:
-            with self.connect() as connection:
+            with closing(self.connect()) as connection:
                 rows = connection.execute(sql, params).fetchall()
             return [str(row["weapon"]) for row in rows]
         except sqlite3.OperationalError:
@@ -37,7 +39,7 @@ class WeaponRepository(DatabaseSession):
 
     def get_weapon(self, weapon_name: str) -> Optional[Weapon]:
         try:
-            with self.connect() as connection:
+            with closing(self.connect()) as connection:
                 row = connection.execute("SELECT * FROM weapons WHERE weapon = ?", (weapon_name,)).fetchone()
         except sqlite3.OperationalError:
             return None
@@ -72,49 +74,95 @@ class ModRepository(DatabaseSession):
             params.append(f"%{query}%")
         sql += " ORDER BY name COLLATE NOCASE LIMIT ?"
         params.append(limit)
-        with self.connect() as connection:
+        with closing(self.connect()) as connection:
             rows = connection.execute(sql, params).fetchall()
-        return [self._row_to_mod(row) for row in rows]
+            return self._visible_mods(connection, rows)
 
     def list_mods_for_slot(self, slot_group: str, limit: int = 2000) -> List[Mod]:
         try:
-            with self.connect() as connection:
+            with closing(self.connect()) as connection:
                 rows = connection.execute(
                     "SELECT * FROM mods WHERE supported = 1 AND (slot_group = ? OR slot_group = 'ANY') ORDER BY name COLLATE NOCASE LIMIT ?",
                     (slot_group, limit),
                 ).fetchall()
-            return [self._row_to_mod(row) for row in rows]
+                return self._visible_mods(connection, rows)
         except sqlite3.OperationalError:
             return []
 
+    def _visible_mods(self, connection: sqlite3.Connection, rows: Iterable[sqlite3.Row]) -> List[Mod]:
+        """Hide official rows whose only parsed effects are out of scope.
+
+        Legacy exports may have marked e.g. Blast Range as supported damage.
+        Recheck their max-rank effects in batches; user-defined rows stay
+        available even if their custom labels do not resemble export text.
+        """
+        mods = [self._row_to_mod(row) for row in rows]
+        official = [mod for mod in mods if mod.unique_name.startswith('/Lotus/')]
+        keys = list(dict.fromkeys((mod.unique_name, mod.fusion_limit) for mod in official))
+        effects = self._fetch_ranked_effects_many(connection, keys)
+        return [mod for mod in mods if not mod.unique_name.startswith('/Lotus/')
+                or effects[(mod.unique_name, mod.fusion_limit)]]
+
     def get_mod(self, unique_name: str) -> Optional[Mod]:
         try:
-            with self.connect() as connection:
+            with closing(self.connect()) as connection:
                 row = connection.execute("SELECT * FROM mods WHERE unique_name = ?", (unique_name,)).fetchone()
             return self._row_to_mod(row) if row else None
         except sqlite3.OperationalError:
             return None
 
-    def fetch_ranked_effects(self, unique_name: str, rank: int):
-        from .models import ModEffect
-
+    def fetch_ranked_effects(self, unique_name: str, rank: int) -> List[ModEffect]:
         try:
-            with self.connect() as connection:
+            with closing(self.connect()) as connection:
                 rows = connection.execute(
                     "SELECT effect_code, effect_value, effect_text, position FROM mod_effects WHERE unique_name = ? AND rank = ? ORDER BY position",
                     (unique_name, rank),
                 ).fetchall()
         except sqlite3.OperationalError:
             rows = []
-        return [
-            ModEffect(
-                code=str(row["effect_code"]),
-                value=float(row["effect_value"]),
-                text=str(row["effect_text"]),
-                position=int(row["position"]),
+        effects = [self._row_to_effect(row) for row in rows]
+        return [effect for effect in effects if usable_direct_effect(unique_name, effect)]
+
+    def fetch_ranked_effects_many(self, selections: Iterable[tuple[str, int]]) -> dict[tuple[str, int], List[ModEffect]]:
+        """Fetch all equipped slot effects using one connection.
+
+        Duplicate selections share a result, and chunks stay below SQLite's
+        traditional 999-variable limit for callers requesting large batches.
+        """
+        keys = list(dict.fromkeys(selections))
+        if not keys:
+            return {}
+        try:
+            with closing(self.connect()) as connection:
+                return self._fetch_ranked_effects_many(connection, keys)
+        except sqlite3.OperationalError:
+            return {key: [] for key in keys}
+
+    def _fetch_ranked_effects_many(self, connection: sqlite3.Connection,
+                                   keys: list[tuple[str, int]]) -> dict[tuple[str, int], List[ModEffect]]:
+        result: dict[tuple[str, int], List[ModEffect]] = {key: [] for key in keys}
+        for start in range(0, len(keys), 400):
+            chunk = keys[start:start + 400]
+            # OR terms use the (unique_name, rank) index; SQLite's
+            # row-value IN (VALUES ...) can scan the whole table.
+            predicates = " OR ".join("(unique_name = ? AND rank = ?)" for _ in chunk)
+            params = [value for key in chunk for value in key]
+            rows = connection.execute(
+                "SELECT unique_name, rank, effect_code, effect_value, effect_text, position "
+                "FROM mod_effects WHERE " + predicates + " ORDER BY unique_name, rank, position",
+                params,
             )
-            for row in rows
-        ]
+            for row in rows:
+                unique_name = str(row["unique_name"])
+                effect = self._row_to_effect(row)
+                if usable_direct_effect(unique_name, effect):
+                    result[(unique_name, int(row["rank"]))].append(effect)
+        return result
+
+    @staticmethod
+    def _row_to_effect(row: sqlite3.Row) -> ModEffect:
+        return ModEffect(code=str(row["effect_code"]), value=float(row["effect_value"]),
+                         text=str(row["effect_text"]), position=int(row["position"]))
 
     def _row_to_mod(self, row: sqlite3.Row) -> Mod:
         return Mod(

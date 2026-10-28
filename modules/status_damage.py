@@ -1,6 +1,6 @@
 """Status Effect (proc) damage formulas from the WARFRAME wiki.
 
-Pure-Python port of the formulas documented on:
+Approximate Python implementations of formulas documented on:
 
 * https://wiki.warframe.com/w/Damage/Calculation (section "Damage Over Time")
 * https://wiki.warframe.com/w/Damage_over_Time
@@ -27,6 +27,8 @@ elemental damage bonuses:
 
 Faction bonuses therefore apply twice to damaging procs (once inside the
 seed, once as an explicit multiplier), which the wiki calls double dipping.
+Python floats are binary64, not the wiki's binary32 intermediate arithmetic;
+these helpers do not reproduce exact game rounding or crit quantization.
 """
 from __future__ import annotations
 
@@ -76,7 +78,9 @@ def proc_tick_damage(
 
     Implements ``(sum(S_i) + 1) * C * M`` from Damage/Calculation. Use
     ``extra_seeds`` when several procs consolidate into the same tick group;
-    the +1 accumulator is then still counted exactly once.
+    it must already include each extra proc's own crit/body-part multipliers.
+    The primary seed is multiplied by its crit/body-part multipliers before
+    adding the one shared +1 accumulator.
 
     ``elemental_bonus`` is the matching literal-element bonus only
     (Hellfire for Heat, Leaded Gas/Valence Formation for Gas, ...). Component
@@ -85,18 +89,17 @@ def proc_tick_damage(
 
     ``accumulator=False`` reproduces the simplified formula shown on the
     per-damage-type wiki pages (Slash/Heat/Toxin/Electricity/Gas), which omit
-    the engine's +1 seed accumulator; the Damage/Calculation page documents
-    the exact binary32 accumulator behavior used in game.
+    the +1 seed accumulator described by Damage/Calculation. This helper
+    uses binary64 arithmetic and is not an exact binary32 engine emulation.
     """
     if coefficient <= 0:
         raise ValueError("coefficient must be positive")
-    base = seed_damage + extra_seeds + (1.0 if accumulator else 0.0)
+    base = (seed_damage * crit_multiplier * body_part_multiplier
+            + extra_seeds + (1.0 if accumulator else 0.0))
     modifiers = (
         (1.0 + elemental_bonus)
         * (1.0 + faction_bonus)
         * (1.0 + status_damage_bonus)
-        * crit_multiplier
-        * body_part_multiplier
     )
     return base * coefficient * modifiers
 
@@ -127,6 +130,28 @@ def gas_tick(seed_damage: float, **modifiers) -> float:
     return proc_tick_damage(seed_damage, ELEMENTAL_DOT_COEFFICIENT, **modifiers)
 
 
+def magnetic_break_electric_tick(max_defense: float, stacks: int, *,
+                                  status_damage_bonus: float = 0.0,
+                                  faction_bonus: float = 0.0,
+                                  electricity_bonus: float = 0.0) -> float:
+    """Pre-defense Electricity damage per second from a Magnetic break.
+
+    The dedicated Magnetic page describes 3% of maximum shield/Overguard per
+    stack over the six-second base Electricity duration. Status damage and
+    faction bonuses each apply twice; literal Electricity bonuses apply once.
+    Duration affects the number of ticks, not the base tick amount. This
+    approximation does not add the normal weapon DoT's +1 accumulator to the
+    special max-defense seed; the page does not specify that interaction.
+    """
+    if max_defense < 0:
+        raise ValueError("max_defense must not be negative")
+    count = min(max(stacks, 0), 10)
+    return (max_defense * 0.03 * count / PROC_DURATION
+            * max(0.0, 1.0 + status_damage_bonus) ** 2
+            * max(0.0, 1.0 + faction_bonus) ** 2
+            * max(0.0, 1.0 + electricity_bonus))
+
+
 def total_ticks(duration: float = PROC_DURATION,
                 delay: float = SINGLE_TARGET_DELAY,
                 tick_rate: float = DEFAULT_TICK_RATE) -> int:
@@ -136,16 +161,26 @@ def total_ticks(duration: float = PROC_DURATION,
     Electricity/Gas (no delay, 6 s) -> 7 nominal ticks, but the final tick at
     t = 6 s deals no damage, so only 6 damaging ticks (t = 0..5 s).
     """
-    return math.floor(tick_rate * (duration - delay)) + 1
+    if tick_rate <= 0 or delay < 0:
+        raise ValueError("tick_rate must be positive and delay non-negative")
+    return max(0, math.floor(tick_rate * (duration - delay)) + 1)
 
 
 def damaging_ticks(duration: float = PROC_DURATION,
                    delay: float = SINGLE_TARGET_DELAY,
                    tick_rate: float = DEFAULT_TICK_RATE,
                    last_tick_empty: bool = False) -> int:
-    """Number of ticks that actually deal damage."""
+    """Number of damaging ticks, excluding an AoE tick exactly at expiry.
+
+    When duration is fractional, an AoE pulse strictly before expiry still
+    deals damage; the last scheduled pulse is not automatically empty.
+    """
     ticks = total_ticks(duration, delay, tick_rate)
-    return ticks - 1 if last_tick_empty else ticks
+    span = tick_rate * (duration - delay)
+    if (last_tick_empty and ticks
+            and math.isclose(span, round(span), rel_tol=0.0, abs_tol=1e-12)):
+        ticks -= 1
+    return ticks
 
 
 def proc_type_chances(damage_distribution: Mapping[str, float]) -> dict[str, float]:
@@ -155,9 +190,11 @@ def proc_type_chances(damage_distribution: Mapping[str, float]) -> dict[str, flo
     the removed 0.25x elemental multiplier makes every damage point count
     equally. Enemy status immunities remove the exempt type and renormalize.
     """
+    if any(not math.isfinite(value) or value < 0 for value in damage_distribution.values()):
+        raise ValueError("damage weights must be finite and non-negative")
     total = sum(damage_distribution.values())
-    if total <= 0:
-        raise ValueError("damage distribution must have a positive total")
+    if not math.isfinite(total) or total <= 0:
+        raise ValueError("damage distribution must have a finite positive total")
     return {name: value / total for name, value in damage_distribution.items()}
 
 
@@ -198,7 +235,8 @@ def wiki_quantized_damage(type_damage: float, modded_base_damage: float) -> floa
 
     ``Quantized(x) = sign(x) * floor(|x| * 32 + 0.5) / 32`` where
     ``x = type_damage / modded_base_damage``. DoT ticks bypass this
-    quantization and use full-precision binary32 seeds instead.
+    quantization. The wiki describes binary32 DoT intermediates, whereas
+    the separate DoT helpers in this module use Python binary64 arithmetic.
     """
     if modded_base_damage <= 0:
         raise ValueError("modded_base_damage must be positive")
