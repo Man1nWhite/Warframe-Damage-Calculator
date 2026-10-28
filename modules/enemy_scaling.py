@@ -10,9 +10,9 @@ Faithful Python port of the live gadget behind every enemy infobox
 * https://wiki.warframe.com/w/The_Steel_Path and /w/Empowered_Enemies
 * https://wiki.warframe.com/w/Heavy_Gunner
 
-The gadget is the authoritative implementation: its checkboxes (Eximus,
-Steel Path, Archon Hunt/Netracell/Archimedea, The Icebind + player count)
-match the two target-dummy configurations requested.
+The gadget is the chosen reference for these target-dummy configurations;
+the wiki scaling article differs on Overguard. Python binary64 calculations
+and rounded display figures are not exact in-game binary32 emulation.
 
 Pipeline (order matters and mirrors the gadget exactly)
 -------------------------------------------------------
@@ -46,13 +46,11 @@ Pipeline (order matters and mirrors the gadget exactly)
    Void takes a x1.5 modifier against it) and is never multiplied by the
    Steel Path / Empowered / Icebind modifiers.
 
-Note on the armor formula: the prose on wiki.warframe.com/w/Armor and
-/w/Damage/Calculation still shows the pre-U36 linear formula
-``0.9 * armor / 2700`` (both pages carry "work in progress" banners). The
-current in-game formula since Update 36 (Jade Shadows, 2024) is the square
-root form above, confirmed by the maintained infobox gadget, the Fandom
-mirror wiki and current community testing -- and it is what this
-repository's ``modules/calculator.py`` already implements.
+The Armor article and gadget use the square-root formula for standard enemies.
+The Armor article specifies a different formula for exceptional armor above
+2700.  The scaling article uses level - 1 for Overguard, whereas the infobox
+gadget uses level - base_level; this module intentionally follows the gadget.
+
 """
 from __future__ import annotations
 
@@ -130,6 +128,18 @@ class ScalingCurve:
 # Heavy Gunner infobox parameter string and Enemy_Level_Scaling.
 GRINEER_HEALTH = ScalingCurve(0.015, 2.12, 10.7332, 0.72, 70, 80)
 GRINEER_ARMOR = ScalingCurve(0.005, 1.75, 0.4, 0.75, 70, 80)
+# Wiki shield curves differ by faction; unknown shielded factions require an
+# explicit curve rather than silently reusing the health curve.
+SHIELD_CURVES = {
+    "Corpus": ScalingCurve(0.02, 1.76, 2.0, 0.76, 70, 80),
+    "Amalgam": ScalingCurve(0.02, 1.76, 2.0, 0.76, 70, 80),
+    "Orokin": ScalingCurve(0.02, 1.75, 2.0, 0.75, 70, 80),
+    "Corrupted": ScalingCurve(0.02, 1.75, 2.0, 0.75, 70, 80),
+    "Anarchs": ScalingCurve(0.02, 1.75, 2.0, 0.75, 70, 80),
+    "Grineer": ScalingCurve(0.02, 1.75, 1.6, 0.75, 70, 80),
+    "Sentient": ScalingCurve(0.02, 1.75, 1.6, 0.75, 70, 80),
+    "Techrot": ScalingCurve(0.02, 1.76, 3.5, 0.76, 70, 80),
+}
 OVERGUARD = ScalingCurve(0.0015, 4.0, 260.0, 0.9, 45, 50)
 # Grineer outgoing damage curve; the gadget applies a final x2 faction factor.
 GRINEER_DAMAGE = ScalingCurve(0.015, 1.75, 0.0075, 1.55, 1, 25)
@@ -156,9 +166,8 @@ class EnemyBase:
     overguard_curve: ScalingCurve = OVERGUARD
     damage_curve: Optional[ScalingCurve] = GRINEER_DAMAGE
     damage_final_mult: float = GRINEER_DAMAGE_FINAL_MULT
-    # Note: shielded enemies would use a separate shield scaling curve in the
-    # gadget; the Heavy Gunner has no shields, so none is modeled here and
-    # shields reuse the health curve in scale_enemy (0 stays 0 regardless).
+    # If omitted, use the wiki faction curve where known.
+    shield_curve: Optional[ScalingCurve] = None
     # Eximus-specific base stats; None means the ordinary base stat is kept.
     eximus_health: Optional[float] = None
     eximus_armor: Optional[float] = None
@@ -204,6 +213,23 @@ def eximus_base_health(base_health: float, q: int, armored: bool = True) -> floa
     return max(base_health * 1.1, coef * (base_health + 900.0) * ramp)
 
 
+def eximus_base_shields(base_shields: float, q: int) -> float:
+    """Eximus base shield increase, before faction shield-level scaling."""
+    if q <= 15:
+        ramp = 1.1
+    elif q <= 25:
+        ramp = 1.0 + 0.025 * (q - 15)
+    elif q <= 35:
+        ramp = 1.25 + 0.125 * (q - 25)
+    elif q <= 50:
+        ramp = 2.5 + (2.0 / 15.0) * (q - 35)
+    elif q <= 100:
+        ramp = 4.5 + 0.03 * (q - 50)
+    else:
+        ramp = 6.0
+    return base_shields * max(1.1, ramp)
+
+
 def empowered_multiplier(players: int) -> float:
     """Archon Hunt / Netracell / Archimedea health/shield multiplier."""
     if not 1 <= players <= 4:
@@ -218,15 +244,25 @@ def icebind_multiplier(players: int) -> float:
     return 3.0 + 1.0 * players
 
 
+def enemy_armor_damage_reduction(armor: float) -> float:
+    """Unrounded enemy DR, including the wiki's exceptional >2700 branch."""
+    if armor <= 0:
+        return 0.0
+    if armor > ARMOR_CAP:
+        return armor / (armor + 300.0)
+    return 0.9 * math.sqrt(armor / ARMOR_CAP)
+
+
 def armor_damage_reduction(armor: float) -> float:
     """Enemy armor DR: ``round(sqrt(3 * armor) * 100) / 10000``.
 
-    Equivalent to ``0.9 * sqrt(armor / 2700)`` with 4-decimal rounding;
-    returns 0 for unarmored targets and caps at 0.9 for the 2700 armor cap.
+    This is the rounded infobox display; for health damage use
+    ``enemy_armor_damage_reduction`` for the unrounded value and >2700 branch.
     """
     if armor <= 0:
         return 0.0
-    return js_round(math.sqrt(3.0 * armor) * 100.0) / 10000.0
+    # Rounded infobox display, retained for gadget parity and its EHP figure.
+    return js_round(enemy_armor_damage_reduction(armor) * 10000.0) / 10000.0
 
 
 def enemy_damage_multiplier(curve: ScalingCurve, q: int,
@@ -307,6 +343,7 @@ def scale_enemy(enemy: EnemyBase,
     if eximus:
         armored = base_armor > 0 or base_shields > 0
         base_health = eximus_base_health(base_health, q, armored=armored)
+        base_shields = eximus_base_shields(base_shields, q)
 
     # 4. Mission multipliers on the base stats (before level scaling).
     if mode == MODE_STEEL_PATH:
@@ -327,7 +364,12 @@ def scale_enemy(enemy: EnemyBase,
     health_mult = enemy.health_curve.multiplier(q)
     armor_mult = enemy.armor_curve.multiplier(q)
     health = round2(base_health * health_mult)
-    shields = round2(base_shields * health_mult) if base_shields > 0 else 0.0
+    shields = 0.0
+    if base_shields > 0:
+        shield_curve = enemy.shield_curve or SHIELD_CURVES.get(enemy.faction)
+        if shield_curve is None:
+            raise ValueError(f"No shield curve for {enemy.faction!r}; provide shield_curve")
+        shields = round2(base_shields * shield_curve.multiplier(q))
 
     # 6. Armor: floor, then clamp to [200, 2700] (only when armored).
     raw_armor = math.floor(base_armor * armor_mult)

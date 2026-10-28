@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+import stat
 import zipfile
+from contextlib import closing
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List
 
 import openpyxl
 
 from .constants import DAMAGE_TYPES, JSON_DAMAGE_INDEX_MAP, WEAPON_SLOT_MAP
+from .database_backup import create_database_backup
+from .database_revision import CURRENT_DATABASE_REVISION, require_supported_revision
+from .export_safety import require_complete_exports
+from .mod_effect_policy import is_supported_export_mod
 from .mod_parser import parse_effects
+from .weapon_export_policy import order_export_weapons
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
-    connection.executescript(
-        """
+    # executescript implicitly commits; execute the static DDL statements
+    # separately so the caller can roll the entire rebuild back.
+    schema = """
         CREATE TABLE IF NOT EXISTS weapons (
             weapon TEXT PRIMARY KEY,
             unique_name TEXT,
@@ -71,7 +81,9 @@ def create_schema(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_mod_effects_unique_rank ON mod_effects(unique_name, rank);
         """
-    )
+    for statement in schema.split(";"):
+        if statement.strip():
+            connection.execute(statement)
 
 
 def upsert_weapon_rows(connection: sqlite3.Connection, rows: List[Dict[str, float | str]]) -> None:
@@ -111,9 +123,18 @@ def upsert_weapon_rows(connection: sqlite3.Connection, rows: List[Dict[str, floa
     connection.executemany(sql, rows)
 
 
-def replace_mod_rows(connection: sqlite3.Connection, mod_rows: List[Dict[str, object]], effect_rows: List[Dict[str, object]]) -> None:
-    connection.execute("DELETE FROM mods")
-    connection.execute("DELETE FROM mod_effects")
+def replace_mod_rows(connection: sqlite3.Connection, mod_rows: List[Dict[str, object]],
+                     effect_rows: List[Dict[str, object]], *,
+                     preserve_unmatched: bool = False) -> None:
+    if preserve_unmatched:
+        # Refresh exported mods without deleting user-added entries absent
+        # from the saved export. Effects of refreshed mods are rebuilt.
+        keys = [(row["unique_name"],) for row in mod_rows]
+        connection.executemany("DELETE FROM mod_effects WHERE unique_name = ?", keys)
+        connection.executemany("DELETE FROM mods WHERE unique_name = ?", keys)
+    else:
+        connection.execute("DELETE FROM mod_effects")
+        connection.execute("DELETE FROM mods")
     connection.executemany(
         """
         INSERT INTO mods (
@@ -143,42 +164,46 @@ def _empty_damage_row() -> Dict[str, float]:
 
 
 def rows_from_spreadsheet(xlsx_path: str | Path) -> List[Dict[str, float | str]]:
-    workbook = openpyxl.load_workbook(xlsx_path, data_only=True)
-    sheet = workbook["Weapon-Data"]
-    output: List[Dict[str, float | str]] = []
+    with closing(openpyxl.load_workbook(xlsx_path, data_only=True)) as workbook:
+        sheet = workbook["Weapon-Data"]
+        output: List[Dict[str, float | str]] = []
 
-    for row in sheet.iter_rows(min_row=3, values_only=True):
-        if not row or not row[0]:
-            continue
-        payload = _empty_damage_row()
-        payload.update(
-            {
-                "weapon": str(row[0]),
-                "unique_name": "",
-                "product_category": "",
-                "slot_group": _slot_group_from_category(""),
-                "dmg": float(row[1] or 0),
-                "critchan": float(row[16] or 0),
-                "critmult": float(row[17] or 0),
-                "statchan": float(row[18] or 0),
-                "firerate": float(row[19] or 0),
-                "multi": float(row[20] or 0),
-            }
-        )
-        for idx, damage_type in enumerate(DAMAGE_TYPES, start=2):
-            payload[damage_type.lower()] = float(row[idx] or 0)
-        output.append(payload)
+        for row in sheet.iter_rows(min_row=3, values_only=True):
+            if not row or not row[0]:
+                continue
+            payload = _empty_damage_row()
+            payload.update(
+                {
+                    "weapon": str(row[0]),
+                    "unique_name": "",
+                    "product_category": "",
+                    "slot_group": _slot_group_from_category(""),
+                    "dmg": float(row[1] or 0),
+                    "critchan": float(row[16] or 0),
+                    "critmult": float(row[17] or 0),
+                    "statchan": float(row[18] or 0),
+                    "firerate": float(row[19] or 0),
+                    "multi": float(row[20] or 0),
+                }
+            )
+            for idx, damage_type in enumerate(DAMAGE_TYPES, start=2):
+                payload[damage_type.lower()] = float(row[idx] or 0)
+            output.append(payload)
 
-    return output
+        return output
 
 
 def rows_from_cleaned_json(zip_path: str | Path) -> List[Dict[str, float | str]]:
     with zipfile.ZipFile(zip_path) as archive:
         names = archive.namelist()
-        json_name = next(name for name in names if name.lower().endswith(".json"))
+        json_name = next((name for name in names if name.lower().endswith(".json")), None)
+        if json_name is None:
+            raise ValueError(f"Weapon export ZIP contains no JSON: {zip_path}")
         payload = json.loads(archive.read(json_name))
 
-    weapons = payload.get("ExportWeapons", [])
+    if not isinstance(payload, dict) or not isinstance(payload.get("ExportWeapons"), list):
+        raise ValueError(f"Weapon export is missing its ExportWeapons list: {zip_path}")
+    weapons = payload["ExportWeapons"]
     output: List[Dict[str, float | str]] = []
     for item in weapons:
         name = item.get("name")
@@ -209,14 +234,20 @@ def rows_from_cleaned_json(zip_path: str | Path) -> List[Dict[str, float | str]]
 
         output.append(row)
 
-    return output
+    return order_export_weapons(output)
 
 
-def mods_from_cleaned_json(zip_path: str | Path) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+def mods_from_cleaned_json(
+    zip_path: str | Path,
+    *,
+    source_stats: dict[tuple[str, int], tuple[str, ...]] | None = None,
+) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     with zipfile.ZipFile(zip_path) as archive:
         payload = json.loads(archive.read("ExportUpgrades_en_Cleaned.json"))
 
-    upgrades = payload.get("ExportUpgrades", [])
+    if not isinstance(payload, dict) or not isinstance(payload.get("ExportUpgrades"), list):
+        raise ValueError(f"Upgrade export is missing its ExportUpgrades list: {zip_path}")
+    upgrades = payload["ExportUpgrades"]
     mod_rows: List[Dict[str, object]] = []
     effect_rows: List[Dict[str, object]] = []
 
@@ -233,6 +264,8 @@ def mods_from_cleaned_json(zip_path: str | Path) -> tuple[List[Dict[str, object]
 
         for rank, entry in enumerate(rank_entries):
             stat_lines = entry.get("stats") or []
+            if source_stats is not None:
+                source_stats[(unique_name, rank)] = tuple(str(line) for line in stat_lines)
             next_position = 1
             for stat_line in stat_lines:
                 effects = parse_effects(str(stat_line))
@@ -266,7 +299,8 @@ def mods_from_cleaned_json(zip_path: str | Path) -> tuple[List[Dict[str, object]
                 "base_drain": int(item.get("baseDrain") or 0),
                 "description": description,
                 "effect_summary": ", ".join(summary_bits),
-                "supported": 1 if supported and slot_group in {"PRIMARY", "SECONDARY", "MELEE", "ANY"} else 0,
+                "supported": 1 if (supported and is_supported_export_mod(unique_name)
+                                   and slot_group in {"PRIMARY", "SECONDARY", "MELEE", "ANY"}) else 0,
             }
         )
 
@@ -288,7 +322,9 @@ def _slot_group_from_mod(item: dict) -> str:
     if mod_type == "MELEE":
         return "MELEE"
 
-    if compat in {"RIFLE", "SHOTGUN", "BOW", "SNIPER", "ASSAULT RIFLE", "PRIMARY", "TOME"}:
+    # Tome compatibility alone is not a generic primary slot (Grimoire is a
+    # secondary; Noctua is exalted). Without an explicit type, leave it OTHER.
+    if compat in {"RIFLE", "SHOTGUN", "BOW", "SNIPER", "ASSAULT RIFLE", "PRIMARY"}:
         return "PRIMARY"
     if compat in {"PISTOL", "SECONDARY"}:
         return "SECONDARY"
@@ -300,22 +336,141 @@ def _slot_group_from_mod(item: dict) -> str:
     return "OTHER"
 
 
+@dataclass(frozen=True)
+class ImportPayload:
+    spreadsheet_weapons: List[Dict[str, float | str]]
+    export_weapons: List[Dict[str, float | str]]
+    mods: List[Dict[str, object]]
+    effects: List[Dict[str, object]]
+    # Original rank lines are retained for legacy coverage checks even when
+    # the current parser deliberately does not model a former false positive.
+    source_mod_stats: dict[tuple[str, int], tuple[str, ...]] = field(default_factory=dict)
+
+
+def load_import_payload(
+    cleaned_weapons_zip_path: str | Path,
+    cleaned_upgrades_zip_path: str | Path,
+    spreadsheet_xlsx_path: str | Path | None = None,
+) -> ImportPayload:
+    """Parse and validate all source files before changing a database."""
+    require_complete_exports(cleaned_weapons_zip_path, cleaned_upgrades_zip_path)
+    spreadsheet = (rows_from_spreadsheet(spreadsheet_xlsx_path)
+                   if spreadsheet_xlsx_path and Path(spreadsheet_xlsx_path).exists()
+                   else [])
+    weapons = rows_from_cleaned_json(cleaned_weapons_zip_path)
+    source_mod_stats: dict[tuple[str, int], tuple[str, ...]] = {}
+    mods, effects = mods_from_cleaned_json(cleaned_upgrades_zip_path, source_stats=source_mod_stats)
+    if not weapons or not mods or not effects:
+        raise ValueError("Export data is incomplete: weapons, mods and parsed mod effects are required.")
+    for row in (*spreadsheet, *weapons, *mods, *effects):
+        if any(isinstance(value, (int, float)) and not math.isfinite(value)
+               for value in row.values()):
+            raise ValueError("Export data contains a non-finite number.")
+    return ImportPayload(spreadsheet, weapons, mods, effects, source_mod_stats)
+
+
+def apply_import_payload(connection: sqlite3.Connection, payload: ImportPayload,
+                         *, preserve_unmatched_mods: bool = False) -> None:
+    """Write parsed data within the caller's transaction."""
+    upsert_weapon_rows(connection, payload.spreadsheet_weapons)
+    upsert_weapon_rows(connection, payload.export_weapons)
+    replace_mod_rows(connection, payload.mods, payload.effects,
+                     preserve_unmatched=preserve_unmatched_mods)
+    connection.execute(f"PRAGMA user_version = {CURRENT_DATABASE_REVISION}")
+
+
+def apply_mod_import_payload(connection: sqlite3.Connection, payload: ImportPayload) -> None:
+    """Reparse exported mods without rewriting weapon or unmatched custom rows.
+
+    The caller owns the transaction and must validate source coverage first.
+    """
+    replace_mod_rows(connection, payload.mods, payload.effects, preserve_unmatched=True)
+    connection.execute(f"PRAGMA user_version = {CURRENT_DATABASE_REVISION}")
+
+
+class DatabaseRebuildError(RuntimeError):
+    """A full rebuild failed; ``backup_path`` identifies any retained copy."""
+
+    def __init__(self, message: str, backup_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.backup_path = backup_path
+
+
 def build_database(
     db_path: str | Path,
     cleaned_weapons_zip_path: str | Path,
     cleaned_upgrades_zip_path: str | Path,
     spreadsheet_xlsx_path: str | Path | None = None,
-) -> None:
+) -> Path | None:
+    """Fully rebuild the catalog and return the existing database's backup.
+
+    Parse sources first, snapshot an existing database via SQLite's backup
+    API, and only then start a write transaction. Existing custom mod/effect
+    rows are replaced, but the backup retains them. A new database has no
+    previous state to back up. Concurrent readers/writers are not globally
+    locked; changes detected between the snapshot and write abort the rebuild.
+    """
+    payload = load_import_payload(cleaned_weapons_zip_path, cleaned_upgrades_zip_path,
+                                  spreadsheet_xlsx_path)
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(db_path) as connection:
-        create_schema(connection)
+    if str(db_path) == ":memory:":
+        with closing(sqlite3.connect(":memory:")) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            create_schema(connection)
+            apply_import_payload(connection, payload)
+        return None
 
-        if spreadsheet_xlsx_path and Path(spreadsheet_xlsx_path).exists():
-            upsert_weapon_rows(connection, rows_from_spreadsheet(spreadsheet_xlsx_path))
+    # Reserve a new filename exclusively, or treat any pre-existing file as a
+    # database to back up. mode=rw avoids recreating it if it disappears later.
+    try:
+        with db_path.open("xb"):
+            pass
+    except FileExistsError:
+        pass
+    original_stat = db_path.stat()
+    if not stat.S_ISREG(original_stat.st_mode):
+        raise DatabaseRebuildError(f"The database path is not a regular file: {db_path}")
 
-        upsert_weapon_rows(connection, rows_from_cleaned_json(cleaned_weapons_zip_path))
-        mod_rows, effect_rows = mods_from_cleaned_json(cleaned_upgrades_zip_path)
-        replace_mod_rows(connection, mod_rows, effect_rows)
-        connection.commit()
+    backup_path: Path | None = None
+    with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=rw", uri=True)) as connection:
+        # Observe the version before testing whether a placeholder is empty:
+        # a concurrent commit during that test must trigger the later guard.
+        before = connection.execute("PRAGMA data_version").fetchone()[0]
+        revision = require_supported_revision(connection)
+        # GUI startup can leave a zero-byte SQLite placeholder. It has no
+        # prior data to save, unless committed WAL pages already exist.
+        page_count = connection.execute("PRAGMA page_count").fetchone()[0]
+        size = db_path.stat().st_size
+        is_existing = bool(size or page_count)
+        if is_existing:
+            try:
+                backup_path = create_database_backup(connection, db_path,
+                                                     label=f"pre-rebuild-v{revision}")
+            except Exception as exc:
+                raise DatabaseRebuildError(
+                    f"Could not back up the existing database; rebuild was not started: {exc}"
+                ) from exc
+        try:
+            # SQLite's transaction context commits/rolls back, but does not
+            # close. The outer context deterministically releases it.
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                after = connection.execute("PRAGMA data_version").fetchone()[0]
+                current_stat = db_path.stat()
+                replaced = ((original_stat.st_dev, original_stat.st_ino)
+                            != (current_stat.st_dev, current_stat.st_ino))
+                if before != after or replaced or require_supported_revision(connection) != revision:
+                    raise DatabaseRebuildError(
+                        "The database changed during backup; close other instances and retry.", backup_path)
+                create_schema(connection)
+                apply_import_payload(connection, payload)
+        except Exception as exc:
+            if backup_path is None:
+                raise
+            raise DatabaseRebuildError(
+                f"Database rebuild failed; no rebuild changes were committed: {exc}\nBackup: {backup_path}",
+                backup_path,
+            ) from exc
+    return backup_path

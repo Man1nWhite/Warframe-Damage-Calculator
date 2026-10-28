@@ -2,35 +2,35 @@ riven_type,riven_name,tag,stat_name,unit,wdc_code,buff_2_pos,buff_3_pos,buff_2_p
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,118.7,89.9,148.4,112.4,-59.3,-89.9
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,95.2,72.1,118.9,90.1,-47.6,-72.1
-LotusArchgunRandomModRare,Archgun Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,142.2,107.7,177.8,134.7,-71.1,-107.7
-LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,142.2,107.7,177.8,134.7,-71.1,-107.7
+LotusArchgunRandomModRare,Archgun Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,142.2,107.7,177.8,134.7,,
+LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,142.2,107.7,177.8,134.7,,
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFireRateMod,Fire Rate / Attack Speed,percent,,71.3,54.0,89.1,67.5,-35.7,-54.0
-LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,142.2,107.7,177.8,134.7,-71.1,-107.7
+LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,142.2,107.7,177.8,134.7,,
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponStunChanceMod,Status Chance,percent,,71.6,54.3,89.5,67.8,-35.8,-54.3
-LotusArchgunRandomModRare,Archgun Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,142.2,107.7,177.8,134.7,-71.1,-107.7
+LotusArchgunRandomModRare,Archgun Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,142.2,107.7,177.8,134.7,,
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponAmmoMaxMod,Ammo Maximum,percent,,118.7,89.9,148.4,112.4,-59.3,-89.9
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponClipMaxMod,Magazine Capacity,percent,,71.6,54.3,89.5,67.8,-35.8,-54.3
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponDamageAmountMod,Damage,percent,TRUE,118.7,89.9,148.4,112.4,-59.3,-89.9
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFireIterationsMod,Multishot,percent,,71.6,54.3,89.5,67.8,-35.8,-54.3
-LotusArchgunRandomModRare,Archgun Riven Mod,WeaponPunctureDepthMod,Punch Through,percent,,320.8,243.0,401.0,303.8,-160.4,-243.0
+LotusArchgunRandomModRare,Archgun Riven Mod,WeaponPunctureDepthMod,Punch Through,plain,,3.2,2.4,4.0,3.0,,
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponRecoilReductionMod,Weapon Recoil,percent,,-106.9,-81.0,-133.7,-101.2,53.5,81.0
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponReloadSpeedMod,Reload Speed,percent,,118.7,89.9,148.4,112.4,-59.3,-89.9
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponFactionDamageGrineer,Damage to Grineer,faction_bonus,BANE_GRINEER,0.53,0.41,0.67,0.51,-0.27,-0.4
 LotusArchgunRandomModRare,Archgun Riven Mod,WeaponZoomFovMod,Zoom,percent,,71.3,54.0,89.1,67.5,-35.6,-54.0
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeDamageMod,Melee Damage,percent,TRUE,195.7,148.2,244.6,185.3,-97.8,-148.2
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeDamageMod,Melee Damage,percent,TRUE,195.7,148.2,244.6,185.3,,
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,213.8,162.0,267.3,202.5,-106.9,-162.0
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,,
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,,
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,,
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,,
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeFactionDamageGrineer,Damage to Grineer,faction_bonus,BANE_GRINEER,0.53,0.41,0.67,0.51,-0.27,-0.4
@@ -42,27 +42,27 @@ LotusModularMeleeRandomModRare,Zaw Riven Mod,SlideAttackCritChanceMod,Slide Atta
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeRangeIncMod,Range,plain,,2.3,1.7,2.9,2.2,-1.2,-1.7
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeFinisherDamageMod,Finisher Damage,percent,,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboEfficiencyMod,Heavy Attack Efficiency,percent,,87.2,66.1,109.1,82.6,-43.6,-66.1
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboInitialBonusMod,Initial Combo,plain,,29.1,22.1,36.4,27.6,-14.6,-22.1
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboPointsOnHitMod,Chance to Gain Combo Count,percent,,-124.6,-94.4,-155.7,-118.0,62.3,94.4
-LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboBonusOnHitMod,Additional Combo Count Chance,percent,,69.8,52.9,87.3,66.1,-34.9,-52.9
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboInitialBonusMod,Initial Combo,plain,,29.1,22.1,36.4,27.6,,
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboPointsOnHitMod,Chance to Gain Combo Count,percent,,,,,,-62.3,-94.4
+LotusModularMeleeRandomModRare,Zaw Riven Mod,WeaponMeleeComboBonusOnHitMod,Additional Combo Count Chance,percent,,69.8,52.9,87.3,66.1,,
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,142.5,108.0,178.2,135.0,-71.3,-108.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,178.2,135.0,222.7,168.7,-89.1,-135.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,,
+LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,,
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFireRateMod,Fire Rate / Attack Speed,percent,,88.7,67.2,110.9,84.0,-44.4,-67.2
-LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,,
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponStunChanceMod,Status Chance,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,,
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponAmmoMaxMod,Ammo Maximum,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponClipMaxMod,Magazine Capacity,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponDamageAmountMod,Damage,percent,TRUE,260.9,197.6,326.1,247.1,-130.4,-197.6
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFireIterationsMod,Multishot,percent,,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponProjectileSpeedMod,Projectile Speed,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponPunctureDepthMod,Punch Through,percent,,320.8,243.0,401.0,303.8,-160.4,-243.0
+LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponPunctureDepthMod,Punch Through,plain,,3.2,2.4,4.0,3.0,,
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponRecoilReductionMod,Weapon Recoil,percent,,-106.9,-81.0,-133.7,-101.2,53.5,81.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponReloadSpeedMod,Reload Speed,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
@@ -72,21 +72,21 @@ LotusModularPistolRandomModRare,Kitgun Riven Mod,WeaponZoomFovMod,Zoom,percent,,
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,142.5,108.0,178.2,135.0,-71.3,-108.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,178.2,135.0,222.7,168.7,-89.1,-135.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusPistolRandomModRare,Pistol Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusPistolRandomModRare,Pistol Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusPistolRandomModRare,Pistol Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,,
+LotusPistolRandomModRare,Pistol Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,,
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponFireRateMod,Fire Rate / Attack Speed,percent,,88.7,67.2,110.9,84.0,-44.4,-67.2
-LotusPistolRandomModRare,Pistol Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusPistolRandomModRare,Pistol Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,,
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponStunChanceMod,Status Chance,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusPistolRandomModRare,Pistol Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusPistolRandomModRare,Pistol Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,,
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponAmmoMaxMod,Ammo Maximum,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponClipMaxMod,Magazine Capacity,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponDamageAmountMod,Damage,percent,TRUE,260.9,197.6,326.1,247.1,-130.4,-197.6
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponFireIterationsMod,Multishot,percent,,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponProjectileSpeedMod,Projectile Speed,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusPistolRandomModRare,Pistol Riven Mod,WeaponPunctureDepthMod,Punch Through,percent,,320.8,243.0,401.0,303.8,-160.4,-243.0
+LotusPistolRandomModRare,Pistol Riven Mod,WeaponPunctureDepthMod,Punch Through,plain,,3.2,2.4,4.0,3.0,,
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponRecoilReductionMod,Weapon Recoil,percent,,-106.9,-81.0,-133.7,-101.2,53.5,81.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponReloadSpeedMod,Reload Speed,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusPistolRandomModRare,Pistol Riven Mod,WeaponFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
@@ -96,21 +96,21 @@ LotusPistolRandomModRare,Pistol Riven Mod,WeaponZoomFovMod,Zoom,percent,,95.2,72
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,142.5,108.0,178.2,135.0,-71.3,-108.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,178.2,135.0,222.7,168.7,-89.1,-135.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,142.6,108.0,178.2,135.0,-71.3,-108.0
-LotusRifleRandomModRare,Rifle Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusRifleRandomModRare,Rifle Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusRifleRandomModRare,Rifle Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,,
+LotusRifleRandomModRare,Rifle Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,,
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponFireRateMod,Fire Rate / Attack Speed,percent,,71.3,54.0,89.1,67.5,-35.7,-54.0
-LotusRifleRandomModRare,Rifle Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusRifleRandomModRare,Rifle Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,,
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponStunChanceMod,Status Chance,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusRifleRandomModRare,Rifle Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusRifleRandomModRare,Rifle Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,,
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponAmmoMaxMod,Ammo Maximum,percent,,59.3,45.0,74.2,56.2,-29.7,-45.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponClipMaxMod,Magazine Capacity,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponDamageAmountMod,Damage,percent,TRUE,196.0,148.5,245.0,185.6,-98.0,-148.5
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponFireIterationsMod,Multishot,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponProjectileSpeedMod,Projectile Speed,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusRifleRandomModRare,Rifle Riven Mod,WeaponPunctureDepthMod,Punch Through,percent,,320.8,243.0,401.0,303.8,-160.4,-243.0
+LotusRifleRandomModRare,Rifle Riven Mod,WeaponPunctureDepthMod,Punch Through,plain,,3.2,2.4,4.0,3.0,,
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponRecoilReductionMod,Weapon Recoil,percent,,-106.9,-81.0,-133.7,-101.2,53.5,81.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponReloadSpeedMod,Reload Speed,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusRifleRandomModRare,Rifle Riven Mod,WeaponFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
@@ -120,36 +120,36 @@ LotusRifleRandomModRare,Rifle Riven Mod,WeaponZoomFovMod,Zoom,percent,,71.3,54.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,142.5,108.0,178.2,135.0,-71.3,-108.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,,
+LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,,
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFireRateMod,Fire Rate / Attack Speed,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,,
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,142.6,108.0,178.2,135.0,-71.3,-108.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponStunChanceMod,Status Chance,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,-53.5,-81.0
+LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,,
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponAmmoMaxMod,Ammo Maximum,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponClipMaxMod,Magazine Capacity,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponDamageAmountMod,Damage,percent,TRUE,195.7,148.2,244.6,185.3,-97.8,-148.2
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFireIterationsMod,Multishot,percent,,142.2,107.7,177.8,134.7,-71.1,-107.7
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponProjectileSpeedMod,Projectile Speed,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponPunctureDepthMod,Punch Through,percent,,320.8,243.0,401.0,303.8,-160.4,-243.0
+LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponPunctureDepthMod,Punch Through,plain,,3.2,2.4,4.0,3.0,,
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponRecoilReductionMod,Weapon Recoil,percent,,-106.9,-81.0,-133.7,-101.2,53.5,81.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponReloadSpeedMod,Reload Speed,percent,,59.4,45.0,74.2,56.2,-29.7,-45.0
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFactionDamageGrineer,Damage to Grineer,faction_bonus,BANE_GRINEER,0.53,0.41,0.67,0.51,-0.27,-0.4
 LotusShotgunRandomModRare,Shotgun Riven Mod,WeaponFactionDamageInfested,Damage to Infested,faction_bonus,BANE_INFESTED,0.53,0.41,0.67,0.51,-0.27,-0.4
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeDamageMod,Melee Damage,percent,TRUE,195.7,148.2,244.6,185.3,-97.8,-148.2
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeDamageMod,Melee Damage,percent,TRUE,195.7,148.2,244.6,185.3,,
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponArmorPiercingDamageMod,Puncture,percent,PUNC,142.2,107.7,177.8,134.7,-71.1,-107.7
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponImpactDamageMod,Impact,percent,IMPACT,142.2,107.7,177.8,134.7,-71.1,-107.7
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponSlashDamageMod,Slash,percent,SLASH,142.2,107.7,177.8,134.7,-71.1,-107.7
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponCritChanceMod,Critical Chance,percent,,213.8,162.0,267.3,202.5,-106.9,-162.0
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponCritDamageMod,Critical Damage,percent,,106.9,81.0,133.7,101.3,-53.5,-81.0
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,-53.5,-81.0
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,-53.5,-81.0
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,-53.5,-81.0
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,-53.5,-81.0
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponElectricityDamageMod,Electricity,percent,ELEC,106.9,81.0,133.7,101.3,,
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponFireDamageMod,Heat,percent,HEAT,106.9,81.0,133.7,101.3,,
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponFreezeDamageMod,Cold,percent,COLD,106.9,81.0,133.7,101.3,,
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponToxinDamageMod,Toxin,percent,TOXIN,106.9,81.0,133.7,101.3,,
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponProcTimeMod,Status Duration,percent,,118.8,90.0,148.5,112.5,-59.4,-90.0
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeFactionDamageCorpus,Damage to Corpus,faction_bonus,BANE_CORPUS,0.53,0.41,0.67,0.51,-0.27,-0.4
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeFactionDamageGrineer,Damage to Grineer,faction_bonus,BANE_GRINEER,0.53,0.41,0.67,0.51,-0.27,-0.4
@@ -161,6 +161,6 @@ PlayerMeleeWeaponRandomModRare,Melee Riven Mod,SlideAttackCritChanceMod,Slide At
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeRangeIncMod,Range,plain,,2.3,1.7,2.9,2.2,-1.2,-1.7
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeFinisherDamageMod,Finisher Damage,percent,,142.2,107.7,177.8,134.7,-71.1,-107.7
 PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboEfficiencyMod,Heavy Attack Efficiency,percent,,87.2,66.1,109.1,82.6,-43.6,-66.1
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboInitialBonusMod,Initial Combo,plain,,29.1,22.1,36.4,27.6,-14.6,-22.1
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboPointsOnHitMod,Chance to Gain Combo Count,percent,,-124.6,-94.4,-155.7,-118.0,62.3,94.4
-PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboBonusOnHitMod,Additional Combo Count Chance,percent,,69.8,52.9,87.3,66.1,-34.9,-52.9
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboInitialBonusMod,Initial Combo,plain,,29.1,22.1,36.4,27.6,,
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboPointsOnHitMod,Chance to Gain Combo Count,percent,,,,,,-62.3,-94.4
+PlayerMeleeWeaponRandomModRare,Melee Riven Mod,WeaponMeleeComboBonusOnHitMod,Additional Combo Count Chance,percent,,69.8,52.9,87.3,66.1,,

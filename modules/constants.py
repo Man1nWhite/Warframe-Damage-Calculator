@@ -53,19 +53,30 @@ FACTION_MULTIPLIERS = {
     "Infested": {"IMPACT": 1, "PUNC": 1, "SLASH": 1.5, "HEAT": 1.5, "COLD": 1, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 1, "GAS": 1, "MAG": 1, "VIRAL": 1, "CORR": 1, "VOID": 1, "TRUE": 1},
     "Deimos": {"IMPACT": 1, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1, "ELEC": 1, "TOXIN": 1, "BLAST": 1.5, "RAD": 1, "GAS": 1.5, "MAG": 1, "VIRAL": 0.5, "CORR": 1, "VOID": 1, "TRUE": 1},
     "Orokin": {"IMPACT": 1, "PUNC": 1.5, "SLASH": 1, "HEAT": 1, "COLD": 1, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 0.5, "GAS": 1, "MAG": 1, "VIRAL": 1.5, "CORR": 1, "VOID": 1, "TRUE": 1},
-    "Sentient": {"IMPACT": 1, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1.5, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 1.5, "GAS": 1, "MAG": 1, "VIRAL": 1, "CORR": 1, "VOID": 1, "TRUE": 1},
+    "Sentient": {"IMPACT": 1, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1.5, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 1.5, "GAS": 1, "MAG": 1, "VIRAL": 1, "CORR": 0.5, "VOID": 1, "TRUE": 1},
     "Narmer": {"IMPACT": 1, "PUNC": 1, "SLASH": 1.5, "HEAT": 1, "COLD": 1, "ELEC": 1, "TOXIN": 1.5, "BLAST": 1, "RAD": 1, "GAS": 1, "MAG": 0.5, "VIRAL": 1, "CORR": 1, "VOID": 1, "TRUE": 1},
     "Murmur": {"IMPACT": 1, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1, "ELEC": 1.5, "TOXIN": 1, "BLAST": 1, "RAD": 1.5, "GAS": 1, "MAG": 1, "VIRAL": 0.5, "CORR": 1, "VOID": 1, "TRUE": 1},
-    "Zairman": {"IMPACT": 1, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 1, "GAS": 1, "MAG": 1, "VIRAL": 1, "CORR": 1, "VOID": 1.5, "TRUE": 1},
+    "Zariman": {"IMPACT": 1, "PUNC": 1, "SLASH": 1, "HEAT": 1, "COLD": 1, "ELEC": 1, "TOXIN": 1, "BLAST": 1, "RAD": 1, "GAS": 1, "MAG": 1, "VIRAL": 1, "CORR": 1, "VOID": 1.5, "TRUE": 1},
 }
+
+# Factions added after the workbook; unspecified damage types are neutral.
+def _faction_multipliers(**changes: float) -> dict[str, float]:
+    return {kind: changes.get(kind, 1.0) for kind in [*DAMAGE_TYPES, "TRUE"]}
+
+FACTION_MULTIPLIERS.update({
+    "Scaldra": _faction_multipliers(IMPACT=1.5, CORR=1.5, GAS=0.5),
+    "Techrot": _faction_multipliers(GAS=1.5, MAG=1.5, COLD=0.5),
+    "Anarchs": _faction_multipliers(IMPACT=1.5, ELEC=1.5, RAD=0.5),
+})
 
 JSON_DAMAGE_INDEX_MAP = {
     "IMPACT": 0,
     "PUNC": 1,
     "SLASH": 2,
-    "COLD": 3,
-    "ELEC": 4,
-    "HEAT": 5,
+    # DE's damagePerShot indices: Heat, Cold, Electricity, Toxin.
+    "HEAT": 3,
+    "COLD": 4,
+    "ELEC": 5,
     "TOXIN": 6,
     "BLAST": 7,
     "RAD": 8,
@@ -83,10 +94,14 @@ BANE_CODE_MAP = {
     "Infested": {"BANE_INFESTED"},
     "Deimos": {"BANE_INFESTED"},
     "Orokin": {"BANE_CORRUPTED"},
-    "Sentient": set(),
-    "Narmer": {"BANE_GRINEER", "BANE_CORPUS"},
-    "Murmur": set(),
-    "Zairman": set(),
+    "Sentient": {"BANE_SENTIENT"},
+    "Narmer": set(),
+    "Murmur": {"BANE_MURMUR"},
+    "Zariman": set(),
+    "Zairman": set(),  # old saved spelling
+    "Scaldra": {"BANE_SCALDRA"},  # spliced Riven traits
+    "Techrot": {"BANE_TECHROT"},  # spliced Riven traits
+    "Anarchs": set(),
 }
 
 ELEMENT_COMBINATIONS = {

@@ -1,0 +1,88 @@
+"""Approximate damage routing for shieldless enemy simulation targets.
+
+The WARFRAME Wiki describes Overguard as a layer before health, with no enemy
+Overguard depletion gate. Magnetic stacks amplify only Overguard; Viral
+stacks amplify only health. Void has an additional 1.5x Overguard modifier.
+See https://wiki.warframe.com/w/Overguard and
+https://wiki.warframe.com/w/Damage/Calculation.
+
+The wiki does not specify the exact distribution of a mixed damage instance
+that breaks Overguard. This model assumes that the same fraction of each
+component remains for health. It also applies faction type modifiers to both
+layers, treating the Overguard-specific table as an additional modifier;
+that interpretation remains unverified by the reviewed sources. It does not model shields,
+other enemy defenses, or exact engine float/rounding order.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping
+
+from .enemy_scaling import enemy_armor_damage_reduction
+
+
+def status_vulnerability(stacks: int) -> float:
+    """Magnetic-to-Overguard or Viral-to-health multiplier, capped at 10."""
+    return 1.0 if stacks <= 0 else 2.0 + 0.25 * (min(stacks, 10) - 1)
+
+
+@dataclass(frozen=True)
+class RoutedDamage:
+    """Actual damage to each layer, before clamping the health at zero."""
+
+    overguard: float
+    health: float
+    broke_overguard: bool
+
+
+def route_enemy_hit(
+    damage_by_type: Mapping[str, float],
+    *,
+    overguard: float,
+    armor: float,
+    magnetic_stacks: int = 0,
+    viral_stacks: int = 0,
+    faction_type_modifiers: Mapping[str, float] | None = None,
+    armor_bypass: bool = False,
+) -> RoutedDamage:
+    """Route a single mixed hit through Overguard and health.
+
+    Values in ``damage_by_type`` include the attack's own multipliers but not
+    target defenses or faction type modifiers. If the hit breaks Overguard,
+    the proportion of the *original* hit not consumed by that layer proceeds
+    to health; Magnetic's Overguard-only multiplier does not carry over.
+    """
+    modifiers = faction_type_modifiers or {}
+    typed = {
+        kind: max(0.0, amount) * max(0.0, modifiers.get(kind, 1.0))
+        for kind, amount in damage_by_type.items()
+        if amount > 0
+    }
+    mag_mult = status_vulnerability(magnetic_stacks)
+    potential_og = mag_mult * sum(
+        amount * (1.5 if kind == "VOID" else 1.0)
+        for kind, amount in typed.items()
+    )
+    remaining_og = max(0.0, overguard)
+    if remaining_og and potential_og:
+        absorbed = min(remaining_og, potential_og)
+        fraction_for_health = 1.0 - absorbed / potential_og
+        broke = potential_og >= remaining_og
+    else:
+        absorbed = 0.0
+        fraction_for_health = 1.0 if not remaining_og else 0.0
+        broke = False
+
+    health_mult = status_vulnerability(viral_stacks)
+    armor_mult = 1.0 - enemy_armor_damage_reduction(armor)
+    health_damage = 0.0
+    for kind, amount in typed.items():
+        remaining = amount * fraction_for_health
+        if remaining <= 0:
+            continue
+        bypass = armor_bypass or kind in {"TRUE", "CINEMATIC"}
+        dealt = remaining * health_mult
+        if armor > 0 and not bypass:
+            dealt = max(1.0, dealt * armor_mult)
+        health_damage += dealt
+    return RoutedDamage(absorbed, health_damage, broke)

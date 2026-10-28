@@ -1,5 +1,13 @@
 # Alternox Prime Riven Choice: Blast Is Fixed — Which Two Other Positives?
 
+> **Historical report — results invalidated by the 2026-10-27 formula audit.**
+> The archived TTKs, rankings, recommendations and some formulas below use
+> superseded mechanics. Current simulation output is still experimental and
+> has known errors; see the [formula audit](formula_audit.md) before use.
+
+<details>
+<summary>Show archived, unvalidated report</summary>
+
 Analytic expected-DPS ranking plus a tick-by-tick Monte Carlo simulation for
 an Alternox Prime normal-fire build against the plain Steel Path level 150
 Heavy Gunner dummy (286,139.57 health, 2,700 armor / 90% DR, no Overguard).
@@ -275,3 +283,6 @@ print(summary["ttk_median"], trial.trace)
   — normalized 1.20-disposition Rifle Riven averages (`LotusRifleRandomModRare`).
 * [`source/gunco_mechanic.json`](../source/gunco_mechanic.json) — curated
   GunCO behavior catalog; Alternox Prime Normal Attack `multiply` rule.
+
+
+</details>

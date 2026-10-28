@@ -1,5 +1,14 @@
 # Kuva Nukor Test Build — Last Mod Choice vs Eximus Heavy Gunner L150 (Steel Path)
 
+> **Historical report — results invalidated by the 2026-10-27 formula audit.**
+> The archived TTKs, rankings, recommendations and some formulas below use
+> superseded mechanics. Current simulation output is still experimental and
+> has known errors; see the [formula audit](formula_audit.md) and the newer
+> [three-mod comparison](kuva_nukor_three_mod_comparison.md) before use.
+
+<details>
+<summary>Show archived, unvalidated report</summary>
+
 Tick-by-tick Monte Carlo simulation for the requested build against dummy A
 ([target dummy model](target_dummy_models.md): 1,716,837.41 health, 2,700
 armor / 90% DR, 269,918.97 Overguard). Code:
@@ -221,3 +230,6 @@ print(result.ttk, result.trace)
 room = simulate_room(build_nukor("Frostbite"), 10, seed=7000, trace=True)
 print(room.clear_time, room.radial_events, room.kill_times)
 ```
+
+
+</details>

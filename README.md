@@ -14,11 +14,17 @@ Desktop Warframe damage calculator built around the calculator engine and packag
 
 ## Current Features
 
+> **Scope:** results are estimates, not a complete combat model. See the
+> [formula audit](docs/formula_audit.md) for verified examples, wiki source
+> disagreements, unsupported mechanics and known simulation errors.
+
 - PyQt6 dark mode UI
 - SQLite database for weapons and mods
 - Real mod selection with rank support
 - Slot-order elemental combining
-- Accurate HUD and final damage calculation flow with Warframe-style rounding
+- Arsenal-style totals and a wiki-sourced, non-critical health-damage estimate
+  treating each exported row as one hit. Some rows combine separate direct and
+  radial attacks, so their displayed Final value is not a reliable per-hit result.
 - Built-in FAQ dialog that explains the calculator logic
 - Settings dialog for:
   - refreshing Warframe data from DE
@@ -26,6 +32,12 @@ Desktop Warframe damage calculator built around the calculator engine and packag
   - showing where the app stores its AppData-backed files
 - App data stored in the user's AppData-backed calculator folder for easier packaging later
 - Save and load build files as JSON
+
+The bundled player Grimoire export, for example, lists 150 Electricity: the
+[Wiki](https://wiki.warframe.com/w/Grimoire) separates its primary attack into
+100 direct plus 50 radial damage. WDC currently treats that 150 as one hit;
+it does not model the separate hits, radial falloff, or alternate fire. This
+limitation also applies to other aggregated attack rows.
 
 ## App Data Layout
 
@@ -37,6 +49,8 @@ The app stores its working files in:
 Inside that folder the app keeps:
 
 - `data/weapons.db`
+- `data/backups/weapons-pre-v*.sqlite3` (created before a legacy upgrade)
+- `data/backups/weapons-pre-rebuild-v*.sqlite3` (created before a full rebuild of an existing database)
 - `source/ExportWeapons_en_Cleaned.zip`
 - `source/ExportKeys_en_Cleaned.zip`
 - `source/Warframe-Damage-Calculator_v2.xlsx`
@@ -50,7 +64,55 @@ pip install -r requirements.txt
 python main.py
 ```
 
-If the app does not detect a ready database on startup, it prompts to build initial data from DE and falls back to bundled backup export files when needed.
+If there is no database, the app prompts before attempting to download fresh
+DE data; the Settings dialog can also rebuild offline using saved local export
+files. On first use, the two exports are seeded together from the bundled
+snapshot. If only one saved export is present, WDC does **not** fill the other
+from a potentially different snapshot: restore a known matching pair or use a
+fresh download before rebuilding. Other independent reference files are seeded
+individually.
+
+## Existing Databases And Backups
+
+On startup, legacy databases are upgraded **before** weapon values are shown.
+The upgrade corrects the older Heat/Cold/Electricity export mapping, reparses
+mod effects and repairs the known Grimoire export collision when safe, using
+the saved local exports; it makes no network request. SQLite's backup API first
+creates a uniquely named, consistent copy
+in `data/backups/`, including committed WAL data. The import and version mark
+are committed together; on failure the database is left unmodified by the
+upgrade, and startup stops with an error rather than displaying stale data.
+Databases from a newer, unsupported app version are also refused.
+
+Build JSON, settings, unrelated tables, and unmatched custom weapon/mod/effect
+rows are retained. A revision-0 upgrade refreshes matching exported weapons
+and mods; a revision-1 upgrade refreshes matching mods and only the specific
+Grimoire correction below. Manual edits to other refreshed official entries are
+replaced but retained in the backup. A revision-2 upgrade changes no mods and
+only repairs the known Grimoire row. The repair requires both player and
+Doppelganger entries in the saved export and an exact match between the current
+row and the old Doppelganger entry; otherwise it refuses to overwrite the row.
+Custom or already-correct Grimoire rows are not replaced. If the row was edited
+or the matching export is unavailable, first copy the database and source files
+to a safe location; restore the matching export or preserve the edited row under
+a non-DE identifier before retrying. Do not blindly rebuild: a full rebuild
+can overwrite matching names.
+
+Both saved export ZIPs must be readable and free of an interrupted-publication
+marker. The upgrade refuses an older or partial export that does not cover the
+official mod rows/effect fragments it would refresh; revision 0 also requires
+coverage of official weapon rows. Restore matching exports and restart if this
+check fails. The spreadsheet is optional. Custom rows using a `/Lotus/`
+identifier may need a non-DE identifier before upgrading. Future same-name
+export entries with conflicting modeled fields are rejected for review rather
+than silently selected, except for the explicitly identified Grimoire pair.
+
+Backups are retained until removed manually. To restore one, close all WDC and
+other SQLite connections. Move the current `data/weapons.db` and any
+`data/weapons.db-wal` / `data/weapons.db-shm` sidecars together into a separate
+safe folder; do not leave the old sidecars beside the restored file. Then copy
+the desired standalone backup to `data/weapons.db`. A restored legacy backup
+will attempt the upgrade again on the next startup.
 
 ## Rebuilding The Database Manually
 
@@ -58,16 +120,62 @@ If the app does not detect a ready database on startup, it prompts to build init
 python build_database.py
 ```
 
+The command reads saved local exports without downloading. For a legacy
+database it performs the same backed-up upgrade described above instead of a
+full rebuild. For a current or new database it performs a full rebuild. The
+two Settings rebuild actions also perform a full catalog rebuild (the download
+option tries DE first). A full rebuild **replaces the mod/effect catalog**,
+including custom rows, and overwrites weapon entries with matching names;
+unmatched weapons are retained. Builds and settings are separate files, and
+Settings asks for confirmation.
+
+Before changing an existing database, a full rebuild uses SQLite's backup API
+to create a uniquely named copy in `data/backups/`, including committed WAL
+data, and reports its path. If backup fails, the rebuild is not started; if a
+later write fails, its transaction rolls back and the backup is retained. A
+new or empty database has no prior data to back up. Close other WDC instances
+before rebuilding: detected writes during backup abort the rebuild, but this
+is not a general cross-process locking protocol. Backups are not automatically
+pruned. For extra protection, keep a separate copy outside the app-data folder.
+
+## Recovering An Interrupted Data Refresh
+
+The two saved export ZIPs cannot be replaced as one atomic filesystem operation.
+If a refresh or first-time seed is interrupted during publication, or rollback
+fails, WDC retains `source/.wdc-refresh-*/PUBLISHING.json` and refuses to
+import or refresh the possibly mixed files. To recover:
+
+1. Close **all** WDC instances. Make a separate copy of the whole app-data
+   `source` folder, including the hidden `.wdc-refresh-*` directories; do not
+   rebuild or refresh yet.
+2. In the reported staging directory, inspect `PUBLISHING.json`. For each
+   entry, copy its `previous_copy` from that directory over its `destination`
+   in `source`. If `previous_copy` is `null`, that destination did not exist
+   before this refresh and should be removed instead. Restore **both** entries,
+   even if only one appears changed. Keep the staged copies until recovery is
+   complete.
+3. If a required previous copy is missing, the marker is unreadable, or there
+   are multiple interrupted stages and their order is unclear, do not guess or
+   simply delete the marker: retain the copies and obtain a known-good matching
+   pair of exports. Once the saved pair is verified and restored, remove the
+   resolved staging directory (including its marker), then retry.
+
+The marker and rollback protect against ordinary exceptions and many process
+interruptions; they are **not** a cross-process lock or a power-loss durability
+guarantee. Do not run multiple refreshes or rebuilds concurrently. Export
+publication and the database rebuild are separate operations: if the rebuild
+fails after a successful refresh, the saved exports can be newer than the
+unchanged database; retry the rebuild after resolving the error.
+
 ## Riven Stat Tables
 
 Riven stat data is not present in the cleaned DE export (the Riven
 `upgradeEntries` tables are stripped), so WDC vendors a community-verified
 Riven stat table and ports the in-game value formula in `modules/riven.py`.
-The vendored base values are byte-identical to the current official DE export
-(`warframe-public-export-plus`), and every generated range matches the
+The vendored base values come from a community-maintained DE export mirror.
+Selected generated range endpoints and layout weights are checked against the
 [WARFRAME Wiki Riven Mods page](https://wiki.warframe.com/w/Riven_Mods)
-("Attribute Value Formula" and rank-8 base value tables; see
-`tests/test_riven_wiki.py`).
+(see `tests/test_riven_wiki.py`); not every possible stat or roll was audited.
 
 - `source/riven_tags.json` - per-tag base values for all seven Riven types
   (Rifle, Shotgun, Pistol, Kitgun, Melee, Zaw, Archgun), derived from DE's
@@ -88,9 +196,14 @@ The vendored base values are byte-identical to the current official DE export
   are labeled but not yet consumed by the calculator
 - Riven Disposition was retired in Hotfix 44.1.3 (2026-10-22): all weapons are
   now normalized to the 1.2x these tables use
+- Unrollable signs are `null` in JSON and blank in CSV: for example, elemental
+  damage cannot be a negative trait. Punch Through values are plain meters;
+  faction values are bonuses, so add 1 for the displayed multiplier. The
+  table does not filter weapon-specific restrictions
 - Splicing-system attributes (weakpoint damage, combined elemental damage,
   ammo efficiency, etc.) are not part of the Riven upgrade tables and are not
-  included
+  included. Calculations use Python binary64, not bit-exact game binary32
+  arithmetic
 
 Regenerate the tables (any disposition works):
 
@@ -102,11 +215,11 @@ python build_riven_tables.py --disposition 1.0
 ## Condition Overload (GunCO) Stacking Tables
 
 CO-type bonuses (the melee Condition Overload mod, Galvanized
-Aptitude/Shot/Savvy, Secondary Shiver, the Cedo's innate alt-fire, Shattering
+Aptitude/Shot/Savvy, Secondary Shiver, the Cedo's innate bonus, Shattering
 Frost and Incarnon Genesis perks) are intended to stack **additively** with
 ordinary +% damage mods, but many projectile attacks instead apply them
 **multiplicatively** - a long-standing, wiki-documented engine quirk. The
-catalog of every discrepant attack is vendored from the
+catalog is a curated snapshot of the
 [Condition Overload (Mechanic) wiki page](https://wiki.warframe.com/w/Condition_Overload_(Mechanic))
 (last edited 2026-10-05, retrieved 2026-10-27) and cross-checked against the
 community GunCO rule table in `source/conditionOverload.ts` (wiki pull Oct
@@ -128,7 +241,7 @@ such as Serration, `c` = total CO-type bonus fraction, `s` = per-attack scale):
 
 | Mode | Formula | Wiki behavior |
 | --- | --- | --- |
-| Multiplying | `B x M x (1 + c) x other` | #1, mostly projectiles, not intended |
+| Multiplying | `B x M x (1 + c x s) x other` | #1, mostly projectiles, not intended |
 | Adding | `B x (M x other + c x s)` | #2-#4, intended, most hitscan weapons |
 | Does not apply | CO contribution is 0 | #5, explosion radii and known bugs |
 
@@ -144,203 +257,114 @@ Regenerate the tables after updating the vendored TS source:
 python build_gunco_tables.py
 ```
 
-## Damage Formula And Status Damage Reference
+## Mod Selection And Compatibility
 
-`docs/damage_formula_reference.md` is a wiki-sourced (retrieved 2026-10-27)
-reference covering the full damage pipeline and every weapon delivery type:
+The desktop screen models unconditional, non-critical direct damage. It does
+not apply crit, status, modded multishot, trigger-dependent, set-bonus, or other
+unsupported effects. Its stricter parser avoids interpreting Blast radius,
+physical conversion, conditional bonuses, and Conclave mods as permanent
+PvE damage; it can also omit valid effects it cannot safely interpret.
 
-- direct damage: Arsenal total, 1/32 quantization, armor modifier
-  (`1 - 0.9*AR/(AR+2700)`), crit average shots, AoE/direct-hit split, weak
-  points and burst/sustained DPS by trigger type
-- hitscan vs projectile vs beam (continuous weapon) differences: trace
-  registration, per-pellet proc rolls, beam ticking at `1/fire rate`, the
-  0.6 s damage ramp, and multishot merging where a beam tick's damage and
-  status chance are the sum of the merged beams (DoTs double dip multishot)
-- status chance: per-pellet rolls, >100% unique procs, damage-distribution
-  proc weighting (the 0.25x elemental weight was removed in Update 27.2),
-  average procs per shot/second
-- the five damaging procs (Slash, Heat, Toxin, Electricity, Gas): tick
-  timing, the exact `(sum(S_i)+1) x C x M` tick formula, the simplified
-  per-type formulas, modded-base seeds, faction double dipping and which
-  mods can buff each proc
-- a Gas status change log: the mechanical rework was Update 27.2
-  (2020-03-05, cloud deals Gas DoT instead of forcing Toxin procs); Update
-  36.0 (2024) only changed VFX and faction resistances, not damage numbers
+Mod filtering is **partial**, not a complete Arsenal legality check:
 
-The formulas are ported into `modules/status_damage.py` (pure functions, no
-data files) and pinned against the wiki's worked examples in
-`tests/test_status_damage.py`.
+- A pinned, offline [WFCD primary-class snapshot](source/weapon_mod_classes.json)
+  separates rifle and shotgun mod families. The Wiki explicitly says
+  [Coda Bubonico](https://wiki.warframe.com/w/Coda_Bubonico) uses shotgun mods,
+  so its conflicting WFCD Rifle classification is overridden. The snapshot is
+  attributed under [WFCD's MIT license](source/WFCD_LICENSE.txt); its pinned
+  source and reproduction command are in `tools/build_weapon_mod_classes.py`.
+- Selected weapon augments, known melee subclasses and non-player categories
+  are checked conservatively. Unknown official primary families and unknown
+  restricted classes are hidden rather than guessed. Custom non-`/Lotus/`
+  mods are retained; generic rifle/shotgun mods remain available for custom
+  weapons with unknown families, with a warning. Companion, Archwing and other
+  unsupported categories expose custom mods only.
+- The three known Cannonade mods are hidden until their semi-auto/Incarnon eligibility is
+  modeled. The picker does **not** enforce duplicates, conflicting mod variants,
+  capacity, every augment restriction, or every conditional. Verify the build
+  independently. An old saved build with a now-hidden mod is rejected with a
+  warning; its JSON and the current UI are not changed.
 
-## Target Dummy Models (Eximus Heavy Gunner)
+## Formula Reference and Enemy Scaling
 
-`docs/target_dummy_models.md` documents the full level-scaling model for the
-two benchmark dummies — an Eximus Heavy Gunner at level 150 on The Steel
-Path and at level 1000 in The Icebind (all 1–6 player squad sizes):
+- [Formula audit](docs/formula_audit.md) — findings, source disagreements,
+  tested scope and known limitations.
+- [Damage and status reference](docs/damage_formula_reference.md) — the
+  wiki's direct-hit, armor, trigger, status and DoT formulas. The Python DoT
+  helpers use binary64, not exact in-game binary32 arithmetic.
+- [Target dummy models](docs/target_dummy_models.md) — Heavy Gunner level
+  scaling and the explicit article-versus-gadget Overguard disagreement.
 
-- Grineer health/armor S-curves with the 70–80 smoothstep, Eximus base-health
-  scaler, armor floor/cap of 200/2700 and the current square-root armor DR
-  formula `0.9*sqrt(armor/2700)` (90% at the cap)
-- Steel Path x2.5 health/shields and Icebind Empowered Enemies x4–x9
-  (health/shields/armor) mission multipliers, applied in the exact order used
-  by the wiki's live infobox calculator
-- Eximus Overguard scaling from base 12 on its own curve (unarmored,
-  mission-multiplier independent), plus combined EHP for both dummies
+The desktop calculator is limited to a non-critical direct hit on health; it
+is not a complete TTK, shield, Overguard, crit, or status simulator. The wiki's
+ordinary enemy armor reduction is `0.9*sqrt(armor/2700)` at or below 2700;
+exceptional armor above 2700 uses `armor/(armor+300)`.
 
-The model lives in `modules/enemy_scaling.py` (pure functions, no data
-files) and is pinned in `tests/test_enemy_scaling.py`, including the live
-Heavy Gunner infobox anchor (500 armor -> 38.73% DR, EHP 489.64).
+## Experimental Weapon Simulations
 
-## Kuva Nukor Build Simulation (Last Mod Choice)
+The repository also contains simulations for [Kuva Nukor](docs/kuva_nukor_build_sim.md),
+[Akarius Prime](docs/akarius_prime_riven_sim.md),
+[Ocucor](docs/ocucor_riven_sim.md),
+[Jat Kittag](docs/jat_kittag_heavy_slam_sim.md), and
+[Alternox Prime](docs/alternox_prime_riven_sim.md). Newer, explicitly
+experimental comparisons for [Kuva Nukor](docs/kuva_nukor_three_mod_comparison.md),
+[Akarius Prime](docs/akarius_prime_viral_corrosive_comparison.md), and
+[Ocucor](docs/ocucor_enervate_flare_comparison.md) record their assumptions,
+sensitivity checks, and reproducible results. An additional
+[Ocucor Riven follow-up](docs/ocucor_viral_dilution_comparison.md) tests the
+Viral/Heat weighting and Reload Speed tradeoff. The new
+[Jat Kittag heavy-slam analysis](docs/jat_kittag_slam_spam_comparison.md)
+compares combo recovery, Gas and Riven options without claiming a validated
+TTK or crowd-clear ranking. A separate [Gas / Cold / Damage build analysis](docs/jat_kittag_gas_cold_damage_build.md)
+examines Fever + Focus Energy without Primed Pressure Point. An experimental
+[slam-count comparison](docs/jat_kittag_expected_slams.md) contrasts that build
+with Gas / Crit Damage / Crit Chance and Primed Pressure Point, showing how
+unverified Afflictions and status-timing hypotheses change the results.
 
-`docs/kuva_nukor_build_sim.md` covers a tick-by-tick Monte Carlo simulation of
-the requested Kuva Nukor build (Magnetic progenitor, Secondary Enervate,
-Galvanized Diffusion/Shot, Lethal Torrent, Primed Heated Charge, Primed
-Target Cracker, Pistol Elementalist, Viral/Crit Damage/Status Duration Riven)
-against the Steel Path level 150 Eximus Heavy Gunner dummy:
+**Do not treat simulated TTKs or rankings as validated in-game results.**
+Historical reports predate corrected mechanics and are retained only as marked
+archives. Several simulations model Overguard overflow and Magnetic break ticks;
+the new Jat slam-count experiment instead assumes no overflow at the user's
+request. All still rely on unverified routing assumptions, simplified status timing and
+weapon-specific approximations; see the
+[formula audit](docs/formula_audit.md) before interpreting any output. Trial
+summaries report attempted and timed-out runs; their TTK statistics include
+successful kills only.
 
-- full beam mechanics: 0.6 s damage ramp, merged multishot ticks (summed
-  damage/status, single crit roll), per-tick proc rolls weighted by damage
-  distribution, Secondary Enervate averaged with the wiki's AFCC formula
-- live status state: Heat consolidation and its 15/30/40/50% per-proc armor
-  strip (ramp intervals slowed by Status Duration), Viral/Magnetic 10-stack
-  multipliers, Overguard Magnetic amplification and break damage, Heat/Toxin
-  DoTs, magazine reloads, 1/32 direct-hit quantization
-- ranks six last-slot candidates over 500 seeded trials: Scorch, Hornet
-  Strike and Anemic Agility all hit a 2.000 s median TTK (Scorch/Hornet
-  recommended), beating Hollow Point (2.25 s) and Primed Pistol Gambit
-  (2.38 s); Frostbite (Heat+Cold -> Blast) is intentionally weak single
-  target (11.7 s) but a room-clear option
-- room-clear simulation with beam chaining (2 extra targets at 50%) and
-  Blast 5 m radials: Heat builds win packs up to ~5 enemies, Frostbite wins
-  from ~7 enemies up and is ~3x faster in a room of 20 (5.4 s vs 16.0 s)
+## Tests
 
-Code: `modules/kuva_nukor_sim.py`; pinned in `tests/test_kuva_nukor_sim.py`.
+For the current audit, safe workflows, open issues, and next steps, see the
+[development handoff](docs/next_session_handoff.md).
 
-## Akarius Prime Riven Simulation (Viral vs Corrosive)
+Install `requirements.txt`, then run:
 
-`docs/akarius_prime_riven_sim.md` covers a tick-by-tick simulation of an
-Akarius Prime (dual burst-fire rocket launchers: 68 Impact Rocket Impact +
-509 Blast Rocket Detonation, separate crit/status rolls per instance) with
-Secondary Enervate, Galvanized Diffusion/Shot, Hornet Strike, Lethal Torrent,
-Primed Heated Charge, Primed Target Cracker, Pistol Elementalist and a
-Crit Damage/-Zoom Riven whose third stat is either Viral or Corrosive:
+```bash
+python -m unittest discover -s tests -q
+```
 
-- confirms via the repository's own GunCO tables that Galvanized Shot's CO
-  bonus **multiplies** against Hornet Strike on the Rocket Impact
-  (bracket ×7.04) while the detonation radius gets no CO (bracket ×3.2)
-- models Corrosive's 26%+6%/stack current-armor strip (80% cap) alongside
-  the Heat strip, Viral's 4.25x health multiplier, 8-round magazines with
-  2.4 s reloads, burst timing and Blast fuses
-- Viral wins: mean TTK 3.69 s vs 4.33 s on the SP150 dummy (20% of runs
-  kill in the first magazine at 1.50 s; Corrosive never does) and 9.53 s
-  vs 25.46 s on the Icebind L1000 stress dummy — Corrosive's strip is
-  redundant once Heat is in the build
+The Qt integration tests exercise real widgets, ordered mod selection,
+save/load/compare, offline rebuild, and migration startup. They run with Qt's
+`offscreen` platform, not a physical display or GPU. They skip if PyQt6 or its
+native libraries are missing; set `WDC_REQUIRE_GUI_TESTS=1` to make that a
+failure instead. On headless Linux, install the system GL/EGL, xkbcommon and
+D-Bus libraries (for example Ubuntu packages `libgl1`, `libegl1`,
+`libxkbcommon0`, and `libdbus-1-3`), then run:
 
-Code: `modules/akarius_sim.py`; pinned in `tests/test_akarius_sim.py`.
+```bash
+QT_QPA_PLATFORM=offscreen WDC_REQUIRE_GUI_TESTS=1 python -m unittest discover -s tests -q
+```
 
-## Ocucor Arcane and Riven Simulation (Enervate vs Cascadia Flare)
+The repository's GitHub Actions workflow is configured to run the full suite
+with Qt required on Linux and Windows; its presence does not mean a particular
+commit has passed remote CI. Offscreen widget tests do not validate native
+desktop rendering or gameplay. Windows packaging work is very low priority,
+possibly for 2028; the currently defined workflow still automatically schedules
+its Windows packaging-smoke job on pushes and pull requests. For the focused CI
+lint check, install `requirements-dev.txt` and run:
 
-`docs/ocucor_riven_sim.md` covers a tick-by-tick simulation of an Ocucor
-continuous beam (11 base Radiation/Puncture, 19.2 ticks/s, 20%→100% ramp,
-magazine 60 / 1.6 s reload) with Galvanized Diffusion/Shot, Lethal Torrent,
-Primed Heated Charge, Primed Target Cracker, Pistol Elementalist, Sentient
-Surge and a fixed +Viral/−Zoom Riven whose second positive is chosen from
-six candidates, run under both Secondary Enervate and Cascadia Flare:
-
-- Ocucor is absent from the GunCO exception table, so Galvanized Shot's CO
-  bonus **adds** to the ordinary damage bracket — the same bracket Flare
-  and a Damage Riven feed, which drives the Riven-stat ranking
-- Enervate is averaged through the AFCC formula; Flare's +12%/Heat-proc
-  stacks (one per beam tick, +480% cap, 10 s) are simulated with their
-  real ~3 s ramp, alongside Heat armor strip, Viral stacks, Overguard and
-  merged-multishot Heat DoT seeds
-- single-target winner: **Enervate + Damage Riven**, median TTK 6.04 s on
-  the SP150 dummy vs 9.05 s for the best Flare roll; in dense rooms the
-  ordering flips — Flare + Multishot clears 10/20 enemies in 25.0/33.0 s
-  vs 34.2/45.0 s for Enervate + Damage, because Flare stays capped and
-  feeds the Tendril beams spawned after kills (Sentient Surge is inert
-  until a kill, so it contributes nothing on a single dummy)
-
-Code: `modules/ocucor_sim.py`; pinned in `tests/test_ocucor_sim.py`.
-
-## Jat Kittag Heavy-Slam Simulation (Last Slot and Riven)
-
-`docs/jat_kittag_heavy_slam_sim.md` covers a slam-by-slam simulation of a
-Jat Kittag heavy-slam build (600 Blast heavy slam, 100% status, forced
-Lifted, 1/s, no wind-up) with Primed Pressure Point, Seismic Wave,
-Galvanized Elementalist/Reflex/Steel, Vulcan Blitz, Primed Fever Strike
-and Melee Afflictions, comparing nine normal mods (incl. Focus Energy and
-the 60/60 Virulent Scourge/Volcanic Edge) and eight average-grade Riven
-rolls for the open 8th slot. Full
-Galvanized stacks are assumed active: Reflex's 81.4 Initial Combo gives a
-free 5x combo floor, Steel adds +120% crit damage and Elementalist +120%
-status chance:
-
-- models the full heavy-slam damage chain (Seismic Wave's separate x3.0
-  bracket, Killing Blow additive with Pressure Point, Galvanized Steel and
-  Riven crit chance doubled on heavy attacks), Corrosive armor strip,
-  Toxin DoTs (shield-bypass only, armor-mitigated), Gas clouds, Viral
-  stacks, Overguard and Melee Afflictions' post-Overguard stack
-  injections (12 per Lifted trigger per the wiki bug, gated behind a
-  live Gas/Toxin DoT), plus a worked Gas-vs-Toxin tick calculation
-- stateful combo model (`combo_recovery=True`): after each slam, Heavy
-  Attack Efficiency retains its fraction of the counter and Initial Combo
-  regenerates at 40 points/s (heavy slams add no points); a 3-positive
-  CC/CD/AS Riven's 0.618 s cadence collapses the 50%-efficiency floor
-  5x -> 4x -> a steady 3x, while 90%-efficiency Focus Energy holds 5x
-- **Gas is the worst option on armored SP Grineer** (68 s median TTK at
-  the 5x floor vs 7.4 s for the winner): Gas ticks are armor-mitigated,
-  their seed ignores Heat/Toxin mods, and combining away Heat removes the
-  only armor strip — a Toxin tick is exactly 2.65x a Gas tick before
-  armor; Gas only makes sense vs unarmored Infested or external strip
-- winners: the **3-positive Riven Crit Chance + Crit Damage + Attack
-  Speed** (7.4 s single target), then **Riven Melee Damage + Attack
-  Speed** (8.3 s) and **Riven Crit Chance + Crit Damage** (10 s,
-  guaranteed crits); without a Riven, **Corrosive/Shocking Touch** is the
-  best mod slot (14 s; 10-12 s room clears) but never triggers Melee
-  Afflictions because it has no damaging DoT; Focus Energy (90%
-  efficiency cap) beats it in light-attack rotations rebuilding toward
-  12x (11.9 s vs 23.5 s end-to-end); Initial Combo Rivens only lift the
-  Reflex floor from 5x to 6x and are not worth rolling
-- **three-way table on a plain SP150 Heavy Gunner** (286,140 HP, 2,700
-  armor, no Overguard) with the 3-positive +202.5% CC / +101.3% CD /
-  +61.8% AS Riven: **Focus Energy (Corrosive) wins at 1.85 s median TTK**
-  vs Virulent Scourge 60/60 Toxin 2.47 s and Volcanic Edge 60/60 Heat
-  (Gas) 4.94 s — Focus holds the 5x combo floor where the 50%-efficiency
-  builds fall to 3x, and Corrosive strips armor from the first slam;
-  without the Riven the same ordering holds at 5.0 / 6.0 / 13.0 s
-
-Code: `modules/jat_kittag_sim.py`; pinned in `tests/test_jat_kittag_sim.py`.
-
-## Alternox Prime Riven Simulation (Blast Roll, Two Open Positives)
-
-`docs/alternox_prime_riven_sim.md` covers an analytic expected-DPS ranking and
-a hit-by-hit Monte Carlo of an Alternox Prime normal-fire build (75 pure
-Electricity projectile, 5.33/s, 3.3 multishot) with Serration, Galvanized
-Aptitude/Chamber, Rifle Elementalist, Primed Cryo Rounds, Vital Sense,
-Critical Delay and a 3-positive Riven whose Blast trait (a Riven Splicer
-combined element since Update 44.1) is fixed:
-
-- reads Rifle Riven averages from `source/riven_stats_average_1_2.csv` and
-  resolves combined-element names (Blast/Viral/Magnetic/...) to the
-  identical wiki base-element range; a specific rolled value can be passed
-  via `blast_value`
-- resolves Galvanized Aptitude through the GunCO catalog: the Alternox
-  Prime Normal Attack is an explicit `multiply` rule (×3.4 at 2 stacks /
-  3 status types), and Electric/Blast proc seeds snapshot the multiplied
-  modded base while radials and alt-fire get no GunCO
-- ranks all 20 candidate pairs: every Viral (Riven Toxin + Cryo Cold) build
-  beats every non-Viral build; **Damage + Toxin leads on sustained DPS**
-  (1,128,031 burst / 953,742 sustained) while Fire Rate + Toxin wins the
-  in-magazine stochastic TTK (3.08 s vs 3.28 s median, 200 trials) on the
-  plain SP150 Heavy Gunner dummy
-- checks cold-open (zero kill stacks), single-Viral-stack and
-  single-positive marginals; Heat and Electricity Riven positives are
-  flagged as traps (Blast merge loses a GunCO type; Magnetic does nothing
-  to Grineer health), and −Punch Through is the free curse
-
-Code: `modules/alternox_prime_sim.py`; pinned in
-`tests/test_alternox_prime_sim.py`.
+```bash
+python -m ruff check --select F,E9 modules gui tests tools main.py build_database.py build_gunco_tables.py build_riven_tables.py
+```
 
 ## Notes
 
@@ -366,6 +390,20 @@ Typical build flow:
 build_exe.bat
 build_installer.bat
 ```
+
+A separate, test-only PyInstaller smoke check builds an instrumented bundle in
+a temporary directory, uses isolated app data, and exercises offscreen widget
+calculations, build save/load, and an offline database rebuild:
+
+```bash
+python -m pip install -r requirements-build.txt
+python tests/run_packaging_smoke.py
+```
+
+The test hook is not included in the production bundle. This smoke test does
+not replace a native-display check, an Inno Setup installer test, or a live DE
+refresh. The CI workflow defines a Windows packaging job, but a local or remote
+run must pass before claiming a particular build is verified.
 
 ## License
 

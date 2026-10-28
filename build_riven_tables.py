@@ -53,7 +53,7 @@ def write_csv(tables: dict, disposition: float) -> Path:
     )
 
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for riven_type, payload in tables["riven_types"].items():
             for stat in payload["stats"]:
@@ -66,9 +66,11 @@ def write_csv(tables: dict, disposition: float) -> Path:
                     "wdc_code": stat["wdc_code"] or "",
                 }
                 for key, _, _ in BUFF_LAYOUTS:
-                    row[f"buff_{key}"] = stat["buffs"][key]["display"]
+                    value = stat["buffs"][key]
+                    row[f"buff_{key}"] = value["display"] if value is not None else ""
                 for key, _, _ in CURSE_LAYOUTS:
-                    row[f"curse_{key}"] = stat["curses"][key]["display"]
+                    value = stat["curses"][key]
+                    row[f"curse_{key}"] = value["display"] if value is not None else ""
                 writer.writerow(row)
     return path
 

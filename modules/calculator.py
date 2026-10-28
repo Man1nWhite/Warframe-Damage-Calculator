@@ -1,68 +1,86 @@
+"""Direct-hit calculation for the selected weapon and mod layout.
+
+The wiki's damage calculation page describes quantization in units of 1/32
+of modded base damage.  Display rounding is deliberately not part of the
+health-damage calculation. This model treats the exported damage row as one
+non-critical hit against health (not shields or Overguard). Some rows already
+combine separate direct and radial attacks; those are not modeled per hit.
+Weapon-specific mechanics, crits, status effects and additional multishot are
+outside this screen's scope.
+"""
 from __future__ import annotations
 
-import math
+from collections import OrderedDict
 from typing import Dict
 
 from .constants import (
+    BASE_ELEMENT_TYPES,
     DAMAGE_TYPES,
-    DEFAULT_HUD_DECIMALS,
+    ELEMENT_COMBINATIONS,
     FACTION_MULTIPLIERS,
-    FINAL_DAMAGE_DECIMALS,
-    HUD_ROUNDING_PRECISION,
     PHYSICAL_DAMAGE_TYPES,
 )
+from .enemy_scaling import enemy_armor_damage_reduction
+from .mod_engine import ordered_mod_effects
 from .models import CalculationInputs, CalculationResults, Weapon
-from .rounding import excel_round
+from .status_damage import wiki_quantized_damage
+
+# Innate primary elements follow equipped mods in this order.
+INNATE_ELEMENT_ORDER = ("HEAT", "COLD", "ELEC", "TOXIN")
 
 
 class DamageCalculator:
     def calculate(self, weapon: Weapon, inputs: CalculationInputs) -> CalculationResults:
         base_weapon_damage = float(weapon.dmg)
-        valence_multiplier = (float(inputs.valence_base) / base_weapon_damage) if base_weapon_damage else 0.0
-        weapon_total_damage = base_weapon_damage + (base_weapon_damage * valence_multiplier)
-        quanta = weapon_total_damage / 16 if weapon_total_damage else 0.0
+        element = (inputs.lich_element or "").strip().upper()
+        if element and element not in DAMAGE_TYPES:
+            raise ValueError(f"Unknown progenitor damage type: {element}")
+        # A value without a selected type is not a damage component.
+        valence_damage = max(0.0, float(inputs.valence_base)) if element else 0.0
+        valence_multiplier = valence_damage / base_weapon_damage if base_weapon_damage > 0 else 0.0
+        weapon_total_damage = base_weapon_damage + valence_damage
+        base_multiplier = max(0.0, 1.0 + inputs.mod_for("TRUE"))
+        modded_base = weapon_total_damage * base_multiplier
+        quanta = modded_base / 32.0
 
-        lich_damage = self._build_lich_damage(weapon, inputs, base_weapon_damage, valence_multiplier)
+        base_by_type, lich_damage, resolved_mods = self._resolve_elements(
+            weapon, inputs, element, valence_damage
+        )
         faction_modifiers = self._build_faction_modifiers(inputs.faction)
         armor_modifiers = self._build_armor_modifiers(inputs.armor_value, faction_modifiers)
+        bane_multiplier = max(0.0, 1.0 + inputs.mod_for("BANE"))
 
         hud_damage_by_type: Dict[str, float] = {}
         final_damage_by_type: Dict[str, float] = {}
-
-        true_mod = inputs.mod_for("TRUE")
-        bane_mod = inputs.mod_for("BANE")
-
+        bane_final_by_type: Dict[str, float] = {}
         for damage_type in DAMAGE_TYPES:
-            hud_damage_by_type[damage_type] = self._calculate_hud_damage_for_type(
-                weapon=weapon,
-                damage_type=damage_type,
-                quanta=quanta,
-                weapon_total_damage=weapon_total_damage,
-                lich_damage=lich_damage,
-                mod_value=inputs.mod_for(damage_type),
-                true_mod=true_mod,
+            base_value = base_by_type[damage_type] + lich_damage[damage_type]
+            mod_value = resolved_mods.get(damage_type, 0.0)
+            if damage_type in PHYSICAL_DAMAGE_TYPES:
+                raw = base_value * (1.0 + mod_value)
+            else:
+                raw = base_value + weapon_total_damage * mod_value
+            hud_damage_by_type[damage_type] = raw * base_multiplier
+            quantized = (
+                wiki_quantized_damage(hud_damage_by_type[damage_type], modded_base)
+                if modded_base > 0 else 0.0
             )
-            final_damage_by_type[damage_type] = self._calculate_final_damage_for_type(
-                weapon=weapon,
-                damage_type=damage_type,
-                quanta=quanta,
-                weapon_total_damage=weapon_total_damage,
-                lich_damage=lich_damage,
-                mod_value=inputs.mod_for(damage_type),
-                armor_modifier=armor_modifiers[damage_type],
-                true_mod=true_mod,
-            )
+            dealt = quantized * armor_modifiers[damage_type]
+            bane_dealt = dealt * bane_multiplier
+            # The wiki's armor article states a minimum of 1 per positive
+            # damage type reduced by armor.  Zero-quantized types stay zero.
+            if inputs.armor_value > 0:
+                if dealt > 0:
+                    dealt = max(1.0, dealt)
+                if bane_dealt > 0:
+                    bane_dealt = max(1.0, bane_dealt)
+            final_damage_by_type[damage_type] = dealt
+            bane_final_by_type[damage_type] = bane_dealt
 
-        hud_total = sum(hud_damage_by_type.values()) * weapon.multi
-        # Bane stats are aggregated as fractional bonuses (0.30 for +30%), so
-        # they multiply the totals by (1 + bonus); multiple bane mods stack additively.
-        hud_total_with_bane = (hud_total * (1.0 + bane_mod)) if bane_mod > 0 else hud_total
-
-        final_total = excel_round(sum(final_damage_by_type.values()), 0)
-        final_total_with_bane = (
-            excel_round(final_total * (1.0 + bane_mod), 0) if bane_mod > 0 else final_total
-        )
-
+        # Arsenal-style totals include innate multishot, whereas final totals
+        # treat the exported row as one damage instance. Some export rows
+        # combine distinct hit components. Additional multishot is not modeled.
+        hud_total = sum(hud_damage_by_type.values()) * (weapon.multi if weapon.multi > 0 else 1.0)
         return CalculationResults(
             base_weapon_damage=base_weapon_damage,
             quanta=quanta,
@@ -73,134 +91,83 @@ class DamageCalculator:
             armor_modifiers=armor_modifiers,
             hud_damage_by_type=hud_damage_by_type,
             final_damage_by_type=final_damage_by_type,
-            aggregated_mods=dict(inputs.mods),
+            aggregated_mods=resolved_mods,
             hud_total=hud_total,
-            hud_total_with_bane=hud_total_with_bane,
-            final_total=final_total,
-            final_total_with_bane=final_total_with_bane,
+            hud_total_with_bane=hud_total * bane_multiplier,
+            final_total=sum(final_damage_by_type.values()),
+            final_total_with_bane=sum(bane_final_by_type.values()),
         )
 
-    def _build_faction_modifiers(self, faction: str) -> Dict[str, float]:
-        return {damage_type: float(FACTION_MULTIPLIERS[faction][damage_type]) for damage_type in DAMAGE_TYPES}
+    @staticmethod
+    def _resolve_elements(weapon: Weapon, inputs: CalculationInputs,
+                          lich_element: str, valence_damage: float
+                          ) -> tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+        """Combine ordered primary mods, then innate and progenitor primaries.
 
-    def _build_armor_modifiers(self, armor_value: float, faction_modifiers: Dict[str, float]) -> Dict[str, float]:
-        armor_term = (1 - (0.9 * math.sqrt(max(armor_value, 0.0) / 2700.0))) if armor_value > 0 else 1.0
-        return {damage_type: armor_term * faction_modifiers[damage_type] for damage_type in DAMAGE_TYPES}
-
-    def _build_lich_damage(
-        self,
-        weapon: Weapon,
-        inputs: CalculationInputs,
-        base_weapon_damage: float,
-        valence_multiplier: float,
-    ) -> Dict[str, float]:
-        lich_element = (inputs.lich_element or "").strip().upper()
-        if not lich_element or valence_multiplier <= 0:
-            return {damage_type: 0.0 for damage_type in DAMAGE_TYPES}
-
-        lich_damage = {damage_type: 0.0 for damage_type in DAMAGE_TYPES}
-        bonus_value = base_weapon_damage * valence_multiplier
-
-        if lich_element in PHYSICAL_DAMAGE_TYPES:
-            lich_damage[lich_element] = bonus_value
-            return lich_damage
-
-        mod_heat = inputs.mod_for("HEAT") > 0
-        mod_cold = inputs.mod_for("COLD") > 0
-        mod_elec = inputs.mod_for("ELEC") > 0
-        mod_toxin = inputs.mod_for("TOXIN") > 0
-        mod_blast = inputs.mod_for("BLAST") > 0
-        mod_rad = inputs.mod_for("RAD") > 0
-        mod_gas = inputs.mod_for("GAS") > 0
-        mod_mag = inputs.mod_for("MAG") > 0
-        mod_viral = inputs.mod_for("VIRAL") > 0
-        mod_corr = inputs.mod_for("CORR") > 0
-
-        base_blast = weapon.damage_for("BLAST") > 0
-        base_rad = weapon.damage_for("RAD") > 0
-        base_gas = weapon.damage_for("GAS") > 0
-        base_mag = weapon.damage_for("MAG") > 0
-        base_viral = weapon.damage_for("VIRAL") > 0
-        base_corr = weapon.damage_for("CORR") > 0
-
-        if lich_element == "BLAST" or (lich_element in {"HEAT", "COLD"} and (base_blast or (mod_heat and mod_cold) or mod_blast)):
-            lich_damage["BLAST"] = bonus_value
-        if lich_element == "RAD" or (lich_element in {"HEAT", "ELEC"} and (base_rad or (mod_heat and mod_elec) or mod_rad)):
-            lich_damage["RAD"] = bonus_value
-        if lich_element == "GAS" or (lich_element in {"HEAT", "TOXIN"} and (base_gas or (mod_heat and mod_toxin) or mod_gas)):
-            lich_damage["GAS"] = bonus_value
-        if lich_element == "MAG" or (lich_element in {"COLD", "ELEC"} and (base_mag or (mod_cold and mod_elec) or mod_mag)):
-            lich_damage["MAG"] = bonus_value
-        if lich_element == "VIRAL" or (lich_element in {"COLD", "TOXIN"} and (base_viral or (mod_cold and mod_toxin) or mod_viral)):
-            lich_damage["VIRAL"] = bonus_value
-        if lich_element == "CORR" or (lich_element in {"ELEC", "TOXIN"} and (base_corr or (mod_elec and mod_toxin) or mod_corr)):
-            lich_damage["CORR"] = bonus_value
-
-        if lich_element == "HEAT":
-            blocked = base_blast or base_rad or base_gas or (mod_heat and mod_cold) or (mod_heat and mod_toxin) or (mod_heat and mod_elec) or lich_damage["BLAST"] > 0 or lich_damage["RAD"] > 0 or lich_damage["GAS"] > 0
-            if not blocked:
-                lich_damage["HEAT"] = bonus_value
-        if lich_element == "COLD":
-            blocked = base_blast or base_mag or base_viral or (mod_heat and mod_cold) or (mod_cold and mod_elec) or (mod_cold and mod_toxin) or mod_blast or mod_mag or mod_viral
-            if not blocked:
-                lich_damage["COLD"] = bonus_value
-        if lich_element == "ELEC":
-            blocked = base_rad or base_mag or base_corr or (mod_heat and mod_elec) or (mod_cold and mod_elec) or (mod_elec and mod_toxin) or mod_rad or mod_mag or mod_corr
-            if not blocked:
-                lich_damage["ELEC"] = bonus_value
-        if lich_element == "TOXIN":
-            blocked = base_gas or base_viral or base_corr or (mod_heat and mod_toxin) or (mod_cold and mod_toxin) or (mod_elec and mod_toxin) or mod_gas or mod_viral or mod_corr
-            if not blocked:
-                lich_damage["TOXIN"] = bonus_value
-        if lich_element == "VOID":
-            lich_damage["VOID"] = bonus_value
-
-        return lich_damage
-
-    def _calculate_hud_damage_for_type(
-        self,
-        weapon: Weapon,
-        damage_type: str,
-        quanta: float,
-        weapon_total_damage: float,
-        lich_damage: Dict[str, float],
-        mod_value: float,
-        true_mod: float,
-    ) -> float:
-        if quanta <= 0:
-            return 0.0
-
-        base_value = weapon.damage_for(damage_type) + lich_damage[damage_type]
-        if damage_type in PHYSICAL_DAMAGE_TYPES:
-            raw = base_value * (1 + mod_value)
+        Already-combined elemental mods and innate secondary elements remain
+        independent.  For callers without equipped_mods, the mod dictionary is
+        considered already resolved; primary values have the deterministic
+        HEAT/COLD/ELEC/TOXIN order, since a plain dictionary cannot express the
+        origin of a pre-combined bonus.
+        """
+        base = {kind: weapon.damage_for(kind) for kind in DAMAGE_TYPES}
+        lich = {kind: 0.0 for kind in DAMAGE_TYPES}
+        mods = dict(inputs.mods)
+        # Each first occurrence establishes a group's hierarchy.  Values are
+        # [mod percentage, innate damage, progenitor damage].
+        groups: OrderedDict[str, list[float]] = OrderedDict()
+        if inputs.equipped_mods is not None:
+            for kind in BASE_ELEMENT_TYPES:
+                mods[kind] = 0.0
+            # Aggregator totals already include paired primary mods; rebuild
+            # elemental values from source effects to retain their provenance.
+            for kind in ("BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"):
+                mods[kind] = 0.0
+            for equipped in inputs.equipped_mods:
+                for effect in ordered_mod_effects(equipped):
+                    if effect.code in BASE_ELEMENT_TYPES:
+                        groups.setdefault(effect.code, [0.0, 0.0, 0.0])[0] += effect.value
+                    elif effect.code in {"BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"}:
+                        mods[effect.code] = mods.get(effect.code, 0.0) + effect.value
         else:
-            raw = base_value + (weapon_total_damage * mod_value)
+            for kind in INNATE_ELEMENT_ORDER:
+                value = mods.get(kind, 0.0)
+                if value:
+                    groups.setdefault(kind, [0.0, 0.0, 0.0])[0] += value
+                mods[kind] = 0.0
 
-        rounding_digits = HUD_ROUNDING_PRECISION.get(damage_type, DEFAULT_HUD_DECIMALS)
-        mod_screen = excel_round(raw / quanta, rounding_digits) * quanta
-        return mod_screen + (mod_screen * true_mod)
+        for kind in INNATE_ELEMENT_ORDER:
+            innate = base[kind]
+            progenitor = valence_damage if lich_element == kind else 0.0
+            if innate or progenitor:
+                group = groups.setdefault(kind, [0.0, 0.0, 0.0])
+                group[1] += innate
+                group[2] += progenitor
+            base[kind] = 0.0
+        if lich_element and lich_element not in BASE_ELEMENT_TYPES:
+            lich[lich_element] = valence_damage
 
-    def _calculate_final_damage_for_type(
-        self,
-        weapon: Weapon,
-        damage_type: str,
-        quanta: float,
-        weapon_total_damage: float,
-        lich_damage: Dict[str, float],
-        mod_value: float,
-        armor_modifier: float,
-        true_mod: float,
-    ) -> float:
-        if quanta <= 0:
-            return 0.0
+        ordered = list(groups.items())
+        for i in range(0, len(ordered), 2):
+            kind, values = ordered[i]
+            if i + 1 < len(ordered):
+                other, other_values = ordered[i + 1]
+                destination = ELEMENT_COMBINATIONS[frozenset((kind, other))]
+                values = [a + b for a, b in zip(values, other_values)]
+            else:
+                destination = kind
+            mods[destination] = mods.get(destination, 0.0) + values[0]
+            base[destination] += values[1]
+            lich[destination] += values[2]
+        return base, lich, mods
 
-        base_value = weapon.damage_for(damage_type) + lich_damage[damage_type]
-        if damage_type in PHYSICAL_DAMAGE_TYPES:
-            raw = base_value * (1 + mod_value)
-        else:
-            raw = base_value + (weapon_total_damage * mod_value)
+    @staticmethod
+    def _build_faction_modifiers(faction: str) -> Dict[str, float]:
+        if faction == "Zairman":  # compatibility with saved builds
+            faction = "Zariman"
+        return {kind: float(FACTION_MULTIPLIERS[faction][kind]) for kind in DAMAGE_TYPES}
 
-        quantized = excel_round(raw / quanta, 0) * quanta
-        rounded = excel_round(quantized, FINAL_DAMAGE_DECIMALS)
-        scaled = rounded * armor_modifier
-        return scaled + (scaled * true_mod)
+    @staticmethod
+    def _build_armor_modifiers(armor_value: float, faction_modifiers: Dict[str, float]) -> Dict[str, float]:
+        armor_term = 1.0 - enemy_armor_damage_reduction(armor_value)
+        return {kind: armor_term * faction_modifiers[kind] for kind in DAMAGE_TYPES}

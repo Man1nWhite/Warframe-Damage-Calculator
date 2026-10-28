@@ -184,14 +184,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.711018021546,
-              "display": -71.1
-            },
-            "with_3_pos": {
-              "raw": -1.0773,
-              "display": -107.7
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -218,14 +212,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.711018021546,
-              "display": -71.1
-            },
-            "with_3_pos": {
-              "raw": -1.0773,
-              "display": -107.7
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -286,14 +274,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.711018021546,
-              "display": -71.1
-            },
-            "with_3_pos": {
-              "raw": -1.0773,
-              "display": -107.7
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -456,14 +438,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.711018021546,
-              "display": -71.1
-            },
-            "with_3_pos": {
-              "raw": -1.0773,
-              "display": -107.7
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -605,35 +581,29 @@
         {
           "tag": "WeaponPunctureDepthMod",
           "name": "Punch Through",
-          "unit": "percent",
+          "unit": "plain",
           "wdc_code": null,
           "buffs": {
             "2_pos": {
               "raw": 3.2076001458,
-              "display": 320.8
+              "display": 3.2
             },
             "3_pos": {
               "raw": 2.43,
-              "display": 243.0
+              "display": 2.4
             },
             "2_pos_1_neg": {
               "raw": 4.00950018225,
-              "display": 401.0
+              "display": 4.0
             },
             "3_pos_1_neg": {
               "raw": 3.0375,
-              "display": 303.8
+              "display": 3.0
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -1.6038000486000001,
-              "display": -160.4
-            },
-            "with_3_pos": {
-              "raw": -2.43,
-              "display": -243.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -835,14 +805,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.9783180296460001,
-              "display": -97.8
-            },
-            "with_3_pos": {
-              "raw": -1.4823000000000002,
-              "display": -148.2
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1039,14 +1003,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1073,14 +1031,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1107,14 +1059,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1141,14 +1087,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1549,14 +1489,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -14.5539508410288,
-              "display": -14.6
-            },
-            "with_3_pos": {
-              "raw": -22.05144,
-              "display": -22.1
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1565,31 +1499,19 @@
           "unit": "percent",
           "wdc_code": null,
           "buffs": {
-            "2_pos": {
-              "raw": -1.245618056619,
-              "display": -124.6
-            },
-            "3_pos": {
-              "raw": -0.94365,
-              "display": -94.4
-            },
-            "2_pos_1_neg": {
-              "raw": -1.55702257077375,
-              "display": -155.7
-            },
-            "3_pos_1_neg": {
-              "raw": -1.1795625,
-              "display": -118.0
-            }
+            "2_pos": null,
+            "3_pos": null,
+            "2_pos_1_neg": null,
+            "3_pos_1_neg": null
           },
           "curses": {
             "with_2_pos": {
               "raw": 0.622809018873,
-              "display": 62.3
+              "display": -62.3
             },
             "with_3_pos": {
               "raw": 0.94365,
-              "display": 94.4
+              "display": -94.4
             }
           }
         },
@@ -1617,14 +1539,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.3490938105786,
-              "display": -34.9
-            },
-            "with_3_pos": {
-              "raw": -0.52893,
-              "display": -52.9
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         }
       ]
@@ -1758,14 +1674,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1792,14 +1702,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -1860,14 +1764,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -2030,14 +1928,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -2213,35 +2105,29 @@
         {
           "tag": "WeaponPunctureDepthMod",
           "name": "Punch Through",
-          "unit": "percent",
+          "unit": "plain",
           "wdc_code": null,
           "buffs": {
             "2_pos": {
               "raw": 3.2076001458,
-              "display": 320.8
+              "display": 3.2
             },
             "3_pos": {
               "raw": 2.43,
-              "display": 243.0
+              "display": 2.4
             },
             "2_pos_1_neg": {
               "raw": 4.00950018225,
-              "display": 401.0
+              "display": 4.0
             },
             "3_pos_1_neg": {
               "raw": 3.0375,
-              "display": 303.8
+              "display": 3.0
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -1.6038000486000001,
-              "display": -160.4
-            },
-            "with_3_pos": {
-              "raw": -2.43,
-              "display": -243.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -2579,14 +2465,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -2613,14 +2493,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -2681,14 +2555,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -2851,14 +2719,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -3034,35 +2896,29 @@
         {
           "tag": "WeaponPunctureDepthMod",
           "name": "Punch Through",
-          "unit": "percent",
+          "unit": "plain",
           "wdc_code": null,
           "buffs": {
             "2_pos": {
               "raw": 3.2076001458,
-              "display": 320.8
+              "display": 3.2
             },
             "3_pos": {
               "raw": 2.43,
-              "display": 243.0
+              "display": 2.4
             },
             "2_pos_1_neg": {
               "raw": 4.00950018225,
-              "display": 401.0
+              "display": 4.0
             },
             "3_pos_1_neg": {
               "raw": 3.0375,
-              "display": 303.8
+              "display": 3.0
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -1.6038000486000001,
-              "display": -160.4
-            },
-            "with_3_pos": {
-              "raw": -2.43,
-              "display": -243.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -3400,14 +3256,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -3434,14 +3284,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -3502,14 +3346,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -3672,14 +3510,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -3855,35 +3687,29 @@
         {
           "tag": "WeaponPunctureDepthMod",
           "name": "Punch Through",
-          "unit": "percent",
+          "unit": "plain",
           "wdc_code": null,
           "buffs": {
             "2_pos": {
               "raw": 3.2076001458,
-              "display": 320.8
+              "display": 3.2
             },
             "3_pos": {
               "raw": 2.43,
-              "display": 243.0
+              "display": 2.4
             },
             "2_pos_1_neg": {
               "raw": 4.00950018225,
-              "display": 401.0
+              "display": 4.0
             },
             "3_pos_1_neg": {
               "raw": 3.0375,
-              "display": 303.8
+              "display": 3.0
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -1.6038000486000001,
-              "display": -160.4
-            },
-            "with_3_pos": {
-              "raw": -2.43,
-              "display": -243.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -4221,14 +4047,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -4255,14 +4075,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -4323,14 +4137,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -4493,14 +4301,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -4676,35 +4478,29 @@
         {
           "tag": "WeaponPunctureDepthMod",
           "name": "Punch Through",
-          "unit": "percent",
+          "unit": "plain",
           "wdc_code": null,
           "buffs": {
             "2_pos": {
               "raw": 3.2076001458,
-              "display": 320.8
+              "display": 3.2
             },
             "3_pos": {
               "raw": 2.43,
-              "display": 243.0
+              "display": 2.4
             },
             "2_pos_1_neg": {
               "raw": 4.00950018225,
-              "display": 401.0
+              "display": 4.0
             },
             "3_pos_1_neg": {
               "raw": 3.0375,
-              "display": 303.8
+              "display": 3.0
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -1.6038000486000001,
-              "display": -160.4
-            },
-            "with_3_pos": {
-              "raw": -2.43,
-              "display": -243.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -4906,14 +4702,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.9783180296460001,
-              "display": -97.8
-            },
-            "with_3_pos": {
-              "raw": -1.4823000000000002,
-              "display": -148.2
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -5110,14 +4900,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -5144,14 +4928,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -5178,14 +4956,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -5212,14 +4984,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.5346000162,
-              "display": -53.5
-            },
-            "with_3_pos": {
-              "raw": -0.8099999999999999,
-              "display": -81.0
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -5620,14 +5386,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -14.5539508410288,
-              "display": -14.6
-            },
-            "with_3_pos": {
-              "raw": -22.05144,
-              "display": -22.1
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         },
         {
@@ -5636,31 +5396,19 @@
           "unit": "percent",
           "wdc_code": null,
           "buffs": {
-            "2_pos": {
-              "raw": -1.245618056619,
-              "display": -124.6
-            },
-            "3_pos": {
-              "raw": -0.94365,
-              "display": -94.4
-            },
-            "2_pos_1_neg": {
-              "raw": -1.55702257077375,
-              "display": -155.7
-            },
-            "3_pos_1_neg": {
-              "raw": -1.1795625,
-              "display": -118.0
-            }
+            "2_pos": null,
+            "3_pos": null,
+            "2_pos_1_neg": null,
+            "3_pos_1_neg": null
           },
           "curses": {
             "with_2_pos": {
               "raw": 0.622809018873,
-              "display": 62.3
+              "display": -62.3
             },
             "with_3_pos": {
               "raw": 0.94365,
-              "display": 94.4
+              "display": -94.4
             }
           }
         },
@@ -5688,14 +5436,8 @@
             }
           },
           "curses": {
-            "with_2_pos": {
-              "raw": -0.3490938105786,
-              "display": -34.9
-            },
-            "with_3_pos": {
-              "raw": -0.52893,
-              "display": -52.9
-            }
+            "with_2_pos": null,
+            "with_3_pos": null
           }
         }
       ]

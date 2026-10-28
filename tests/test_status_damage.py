@@ -58,6 +58,17 @@ class AccumulatorTickTests(unittest.TestCase):
         tick = proc_tick_damage(40.0, 0.5, extra_seeds=40.0)
         self.assertAlmostEqual(tick, 40.5)
 
+    def test_crit_applies_to_seed_before_single_accumulator(self) -> None:
+        # Wiki's consolidated examples add critical seeds and noncritical
+        # seeds before the one fixed +1, rather than critting that +1.
+        self.assertAlmostEqual(
+            electricity_tick(40.0, crit_multiplier=2.0), (80 + 1) * 0.5)
+        self.assertAlmostEqual(
+            proc_tick_damage(40.0, 0.5, crit_multiplier=2.0, extra_seeds=40),
+            (80 + 40 + 1) * 0.5)
+        self.assertAlmostEqual(
+            toxin_tick(40.0, body_part_multiplier=2.0), (80 + 1) * 0.5)
+
     def test_simplified_formula_without_accumulator(self) -> None:
         # per-type wiki pages omit the +1 accumulator
         simple = proc_tick_damage(40.0, 0.5, accumulator=False)
@@ -112,6 +123,16 @@ class TimingAndStackTests(unittest.TestCase):
         self.assertEqual(
             damaging_ticks(6.0, delay=0.0, last_tick_empty=True), 6)
 
+    def test_fractional_duration_preserves_last_pre_expiry_aoe_pulse(self) -> None:
+        # At 6.1 s, t=6 is still before expiration; at exactly 6 it is empty.
+        self.assertEqual(damaging_ticks(6.1, delay=0, last_tick_empty=True), 7)
+        self.assertEqual(damaging_ticks(6.0, delay=0, last_tick_empty=True), 6)
+        self.assertEqual(damaging_ticks(0.5, delay=0, last_tick_empty=True), 1)
+        self.assertEqual(damaging_ticks(0.5, delay=1), 0)
+        self.assertEqual(damaging_ticks(-2, delay=1), 0)
+        with self.assertRaises(ValueError):
+            damaging_ticks(6, tick_rate=0)
+
     def test_status_proc_reference_table(self) -> None:
         self.assertEqual(STATUS_PROCS["slash"].coefficient, 0.35)
         self.assertTrue(STATUS_PROCS["slash"].armor_bypass)
@@ -137,6 +158,10 @@ class ProcChanceTests(unittest.TestCase):
     def test_empty_distribution_raises(self) -> None:
         with self.assertRaises(ValueError):
             proc_type_chances({})
+        for invalid in ({"A": -1, "B": 2}, {"A": float("nan"), "B": 1},
+                        {"A": float("inf"), "B": 1}, {"A": 1e308, "B": 1e308}):
+            with self.subTest(distribution=invalid), self.assertRaises(ValueError):
+                proc_type_chances(invalid)
 
     def test_average_procs_per_shot_wiki_table(self) -> None:
         # wiki Status_Effect table: 1.9 multishot x 80% status = 1.52

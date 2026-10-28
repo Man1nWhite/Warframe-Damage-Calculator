@@ -1,23 +1,21 @@
 """Regression tests for the damage calculation pipeline.
 
-The reference values come from the bundled workbook
-``source/Warframe-Damage-Calculator_v2.xlsx`` (sheet "Damage-Calculator"),
-whose cached formula outputs were generated from a Tenet Arca Plasmor build.
-The randomized parity test re-implements the workbook formulas independently
-and checks the engine against them across many generated builds.
+Expected values are transcribed from the official WARFRAME Wiki, not the
+historical workbook, which used an outdated 1/16 quantum and rounded damage
+before applying faction bonuses.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
-import random
 import unittest
 
 from modules.calculator import DamageCalculator
-from modules.constants import DAMAGE_TYPES, FACTION_MULTIPLIERS, PHYSICAL_DAMAGE_TYPES
+from modules.constants import DAMAGE_TYPES, FACTION_MULTIPLIERS
 from modules.models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from modules.mod_engine import ModAggregator, _bane_bonus
-from modules.rounding import excel_round
+from modules.mod_parser import parse_effects
 
 
 def make_weapon(damage: dict[str, float], dmg: float | None = None, multi: float = 1.0) -> Weapon:
@@ -54,109 +52,6 @@ def equipped(*pairs: tuple[str, float]) -> list[EquippedMod]:
         EquippedMod(mod=mod, rank=0, effects=[ModEffect(code=code, value=value, text="")])
         for code, value in pairs
     ]
-
-
-class SpreadsheetParityTests(unittest.TestCase):
-    """Exact cached outputs of the workbook's Tenet Arca Plasmor example."""
-
-    def setUp(self) -> None:
-        self.weapon = make_weapon({"RAD": 760.0}, dmg=760.0)
-        self.calculator = DamageCalculator()
-        self.inputs = CalculationInputs(
-            weapon_name=self.weapon.weapon,
-            faction="Grineer",
-            armor_value=2700.0,
-            lich_element="MAG",
-            valence_base=422.3,
-            mods={"MAG": 3.3, "TRUE": 1.65, "BANE": 0.0},
-        )
-        self.results = self.calculator.calculate(self.weapon, self.inputs)
-
-    def test_valence_and_quanta(self) -> None:
-        self.assertAlmostEqual(self.results.valence_multiplier, 0.5556578947368421, places=15)
-        self.assertAlmostEqual(self.results.weapon_total_damage, 1182.3)
-        self.assertAlmostEqual(self.results.quanta, 73.89375)
-
-    def test_lich_routing(self) -> None:
-        self.assertEqual(self.results.lich_damage["MAG"], 422.3)
-        self.assertEqual(sum(self.results.lich_damage.values()), 422.3)
-
-    def test_hud_buckets_match_workbook(self) -> None:
-        self.assertAlmostEqual(self.results.hud_damage_by_type["MAG"], 11458.3158703125)
-        self.assertAlmostEqual(self.results.hud_damage_by_type["RAD"], 2013.9926296875)
-        self.assertAlmostEqual(self.results.hud_total, 13472.3085)
-
-    def test_final_total_matches_workbook(self) -> None:
-        self.assertEqual(self.results.final_total, 1351.0)
-        self.assertEqual(self.results.final_total_with_bane, 1351.0)
-
-    def test_armor_term_at_2700(self) -> None:
-        # Workbook D20: (1 - 0.9 * SQRT(2700/2700)) = 0.1, applied with the
-        # Grineer Corrosive weakness of 1.5.
-        self.assertAlmostEqual(self.results.armor_modifiers["CORR"], 0.1 * 1.5)
-
-    def test_zero_armor_keeps_full_damage(self) -> None:
-        inputs = CalculationInputs(
-            weapon_name=self.weapon.weapon,
-            faction="Grineer",
-            armor_value=0.0,
-            lich_element="",
-            valence_base=0.0,
-            mods={},
-        )
-        results = self.calculator.calculate(self.weapon, inputs)
-        self.assertAlmostEqual(results.armor_modifiers["RAD"], 1.0)
-        self.assertAlmostEqual(results.final_total, 760.0)
-
-
-class BaneTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.aggregator = ModAggregator()
-        self.calculator = DamageCalculator()
-        self.weapon = make_weapon({"SLASH": 100.0})
-
-    def _total_with(self, mods: dict[str, float], faction: str = "Grineer"):
-        results = self.calculator.calculate(
-            self.weapon,
-            CalculationInputs(
-                weapon_name=self.weapon.weapon,
-                faction=faction,
-                armor_value=0.0,
-                mods=dict(mods),
-            ),
-        )
-        return results.hud_total_with_bane, results.final_total_with_bane
-
-    def test_bane_value_normalized_to_bonus(self) -> None:
-        self.assertAlmostEqual(_bane_bonus(1.3), 0.3)
-        self.assertAlmostEqual(_bane_bonus(1.55), 0.55)
-        # Percent-style fractional values pass through unchanged.
-        self.assertAlmostEqual(_bane_bonus(0.3), 0.3)
-
-    def test_single_bane_multiplies_by_full_factor(self) -> None:
-        mods = self.aggregator.aggregate(equipped(("BANE_GRINEER", 1.3)), "Grineer")
-        self.assertAlmostEqual(mods["BANE"], 0.3)
-        hud_total, final_total = self._total_with(mods)
-        self.assertAlmostEqual(hud_total, 130.0)
-        self.assertEqual(final_total, 130.0)
-
-    def test_stacked_banes_add_bonuses(self) -> None:
-        # Narmer targets take both Grineer and Corpus bane mods. Two maxed
-        # +30% banes must total x1.6, never x2.6.
-        mods = self.aggregator.aggregate(
-            equipped(("BANE_GRINEER", 1.3), ("BANE_CORPUS", 1.3)), "Narmer"
-        )
-        self.assertAlmostEqual(mods["BANE"], 0.6)
-        hud_total, final_total = self._total_with(mods, faction="Narmer")
-        # HUD is pre-faction: 100 x 1.6. Final also takes Narmer's 1.5x Slash
-        # weakness: 100 x 1.5 x 1.6 = 240.
-        self.assertAlmostEqual(hud_total, 160.0)
-        self.assertEqual(final_total, 240.0)
-
-    def test_no_bane_leaves_totals_unchanged(self) -> None:
-        hud_total, final_total = self._total_with({"BANE": 0.0})
-        self.assertAlmostEqual(hud_total, 100.0)
-        self.assertEqual(final_total, 100.0)
 
 
 class ElementalCombinationTests(unittest.TestCase):
@@ -220,190 +115,239 @@ class ElementalCombinationTests(unittest.TestCase):
         }
         self.assertStatMapEqual(result, {"BLAST": 1.5, "TRUE": 1.65})
 
+    def test_non_riven_multi_element_mod_keeps_listed_order(self) -> None:
+        mixed = equipped(("ELEC", 0.4))[0]
+        mixed.effects.append(ModEffect(code="TOXIN", value=0.3, text="+30% Toxin"))
+        bonuses = self.aggregator.aggregate(equipped(("HEAT", 0.5)) + [mixed], "Grineer")
+        self.assertStatMapEqual({k: v for k, v in bonuses.items() if v},
+                                {"RAD": 0.9, "TOXIN": 0.3})
 
-# Independent transcription of the workbook formulas for randomized parity checks.
-def _reference_lich(elements, lich_element, mods, base_dmg, valence_multiplier):
-    out = {damage_type: 0.0 for damage_type in DAMAGE_TYPES}
-    element = (lich_element or "").strip().upper()
-    if not element or valence_multiplier <= 0:
-        return out
-    bonus = base_dmg * valence_multiplier
+    def test_aggregator_and_calculator_agree_for_all_four_effect_sequences(self) -> None:
+        elements = ("HEAT", "COLD", "ELEC", "TOXIN")
+        for sequence in itertools.product(elements, repeat=4):
+            prior = equipped((sequence[0], 0.1))
+            riven = equipped((sequence[1], 0.2))[0]
+            riven.mod.name = "Test Riven"
+            riven.effects.append(ModEffect(code=sequence[2], value=0.3, text=""))
+            slots = prior + [riven] + equipped((sequence[3], 0.4))
+            bonuses = self.aggregator.aggregate(slots, "Grineer")
+            weapon = make_weapon({"SLASH": 100})
+            result = DamageCalculator().calculate(weapon, CalculationInputs(
+                weapon_name=weapon.weapon, faction="Grineer", armor_value=0,
+                mods=bonuses, equipped_mods=slots))
+            for kind in (*elements, "BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"):
+                self.assertAlmostEqual(result.aggregated_mods[kind], bonuses[kind],
+                                       msg=f"{sequence}: {kind}")
 
-    def present(code):
-        return mods.get(code, 0.0) > 0
-
-    if element == "IMPACT":
-        out["IMPACT"] = bonus
-    if element == "PUNC":
-        out["PUNC"] = bonus
-    if element == "SLASH":
-        out["SLASH"] = bonus
-    if element == "BLAST" or (
-        element in {"HEAT", "COLD"}
-        and (elements.get("BLAST", 0.0) > 0 or (present("HEAT") and present("COLD")) or present("BLAST"))
-    ):
-        out["BLAST"] = bonus
-    if element == "RAD" or (
-        element in {"HEAT", "ELEC"}
-        and (elements.get("RAD", 0.0) > 0 or (present("HEAT") and present("ELEC")) or present("RAD"))
-    ):
-        out["RAD"] = bonus
-    if element == "GAS" or (
-        element in {"HEAT", "TOXIN"}
-        and (elements.get("GAS", 0.0) > 0 or (present("HEAT") and present("TOXIN")) or present("GAS"))
-    ):
-        out["GAS"] = bonus
-    if element == "MAG" or (
-        element in {"COLD", "ELEC"}
-        and (elements.get("MAG", 0.0) > 0 or (present("COLD") and present("ELEC")) or present("MAG"))
-    ):
-        out["MAG"] = bonus
-    if element == "VIRAL" or (
-        element in {"COLD", "TOXIN"}
-        and (elements.get("VIRAL", 0.0) > 0 or (present("COLD") and present("TOXIN")) or present("VIRAL"))
-    ):
-        out["VIRAL"] = bonus
-    if element == "CORR" or (
-        element in {"ELEC", "TOXIN"}
-        and (elements.get("CORR", 0.0) > 0 or (present("ELEC") and present("TOXIN")) or present("CORR"))
-    ):
-        out["CORR"] = bonus
-    if element == "HEAT" and not any(
-        (
-            elements.get("BLAST", 0.0) > 0,
-            elements.get("RAD", 0.0) > 0,
-            elements.get("GAS", 0.0) > 0,
-            present("HEAT") and present("COLD"),
-            present("HEAT") and present("TOXIN"),
-            present("HEAT") and present("ELEC"),
-            out["BLAST"] > 0,
-            out["RAD"] > 0,
-            out["GAS"] > 0,
+    def test_riven_order_matches_calculator_with_mixed_effects_and_later_slots(self) -> None:
+        # Wiki: the last listed Riven primary has priority; secondary element
+        # and non-elemental effects remain independent. Later copies of Heat
+        # feed the original combination rather than starting a new one.
+        prior = equipped(("HEAT", 0.5))
+        riven = equipped(("ELEC", 0.4))[0]
+        riven.mod.name = "Riven Mod"
+        riven.effects.extend([
+            ModEffect(code="TRUE", value=0.2, text="+20% Damage", position=1),
+            ModEffect(code="TOXIN", value=0.3, text="+30% Toxin", position=2),
+            ModEffect(code="GAS", value=0.1, text="+10% Gas", position=3),
+            ModEffect(code="BANE_GRINEER", value=0.25, text="+25% Damage to Grineer", position=4),
+        ])
+        slots = prior + [riven] + equipped(("COLD", 0.6), ("HEAT", 0.2))
+        original_effects = list(riven.effects)
+        bonuses = self.aggregator.aggregate(slots, "Grineer")
+        self.assertStatMapEqual(
+            {k: v for k, v in bonuses.items() if v},
+            {"GAS": 1.1, "MAG": 1.0, "TRUE": 0.2, "BANE": 0.25},
         )
-    ):
-        out["HEAT"] = bonus
-    if element == "COLD" and not any(
-        (
-            elements.get("BLAST", 0.0) > 0,
-            elements.get("MAG", 0.0) > 0,
-            elements.get("VIRAL", 0.0) > 0,
-            present("HEAT") and present("COLD"),
-            present("COLD") and present("ELEC"),
-            present("COLD") and present("TOXIN"),
-            present("BLAST"),
-            present("MAG"),
-            present("VIRAL"),
-        )
-    ):
-        out["COLD"] = bonus
-    if element == "ELEC" and not any(
-        (
-            elements.get("RAD", 0.0) > 0,
-            elements.get("MAG", 0.0) > 0,
-            elements.get("CORR", 0.0) > 0,
-            present("HEAT") and present("ELEC"),
-            present("COLD") and present("ELEC"),
-            present("ELEC") and present("TOXIN"),
-            present("RAD"),
-            present("MAG"),
-            present("CORR"),
-        )
-    ):
-        out["ELEC"] = bonus
-    if element == "TOXIN" and not any(
-        (
-            elements.get("GAS", 0.0) > 0,
-            elements.get("VIRAL", 0.0) > 0,
-            elements.get("CORR", 0.0) > 0,
-            present("HEAT") and present("TOXIN"),
-            present("COLD") and present("TOXIN"),
-            present("ELEC") and present("TOXIN"),
-            present("GAS"),
-            present("VIRAL"),
-            present("CORR"),
-        )
-    ):
-        out["TOXIN"] = bonus
-    return out
+        self.assertEqual(riven.effects, original_effects)  # do not reorder saved effects
+        weapon = make_weapon({"SLASH": 100})
+        result = DamageCalculator().calculate(weapon, CalculationInputs(
+            weapon_name=weapon.weapon, faction="Grineer", armor_value=0,
+            mods=bonuses, equipped_mods=slots))
+        for code in ("GAS", "MAG", "TRUE", "BANE"):
+            self.assertAlmostEqual(result.aggregated_mods[code], bonuses[code], msg=code)
+        self.assertEqual(result.aggregated_mods["RAD"], 0)
+        self.assertEqual(result.aggregated_mods["VIRAL"], 0)
 
 
-def _reference_calculate(elements, dmg, multi, lich_element, valence_base, faction, armor, mods, bane_bonus):
-    valence_multiplier = valence_base / dmg if dmg else 0.0
-    total = dmg + dmg * valence_multiplier
-    quanta = total / 16 if total else 0.0
-    lich = _reference_lich(elements, lich_element, mods, dmg, valence_multiplier)
-    armor_term = (1 - 0.9 * math.sqrt(max(armor, 0.0) / 2700.0)) if armor > 0 else 1.0
-    faction_modifiers = FACTION_MULTIPLIERS[faction]
-    hud, final = {}, {}
-    for damage_type in DAMAGE_TYPES:
-        base = elements.get(damage_type, 0.0) + lich[damage_type]
-        if damage_type in PHYSICAL_DAMAGE_TYPES:
-            raw = base * (1 + mods.get(damage_type, 0.0))
-        else:
-            raw = base + total * mods.get(damage_type, 0.0)
-        digits = 3 if damage_type == "MAG" else 4
-        mod_screen = excel_round(raw / quanta, digits) * quanta
-        hud[damage_type] = mod_screen + mod_screen * mods.get("TRUE", 0.0)
-        quantized = excel_round(raw / quanta, 0) * quanta
-        scaled = excel_round(quantized, 3) * armor_term * faction_modifiers[damage_type]
-        final[damage_type] = scaled + scaled * mods.get("TRUE", 0.0)
-    hud_total = sum(hud.values()) * multi
-    final_total = excel_round(sum(final.values()), 0)
-    return (
-        lich,
-        hud,
-        final,
-        hud_total * (1 + bane_bonus) if bane_bonus > 0 else hud_total,
-        excel_round(final_total * (1 + bane_bonus), 0) if bane_bonus > 0 else final_total,
-    )
+class DamageFixture:
+    def calculate(self, damage, *, faction="Grineer", armor=0, mods=None,
+                  slots=None, lich="", valence=0, multi=1):
+        weapon = make_weapon(damage, multi=multi)
+        if mods is None:
+            mods = ModAggregator().aggregate(slots or [], faction)
+        return DamageCalculator().calculate(weapon, CalculationInputs(
+            weapon_name=weapon.weapon, faction=faction, armor_value=armor,
+            mods=mods, equipped_mods=slots, lich_element=lich, valence_base=valence))
 
 
-class RandomizedParityTests(unittest.TestCase):
-    def test_engine_matches_workbook_formulas_across_random_builds(self) -> None:
-        rng = random.Random(42)
-        calculator = DamageCalculator()
-        for _ in range(500):
-            components = rng.sample(DAMAGE_TYPES, rng.randint(1, 6))
-            elements = {component: rng.uniform(5.0, 400.0) for component in components}
-            dmg = sum(elements.values())
-            multi = rng.choice([1.0, 1.0, 2.0, 12.0])
-            # The workbook hardcodes lich VOID to zero (Q12), so exclude it here.
-            lich_element = rng.choice(
-                [""] + [damage_type for damage_type in DAMAGE_TYPES if damage_type != "VOID"]
-            )
-            valence_base = rng.uniform(0.0, 0.6) * dmg if lich_element else 0.0
-            faction = rng.choice(list(FACTION_MULTIPLIERS))
-            armor = rng.choice([0, 0, 100, 250, 500, 1500, 2700])
-            mods = {damage_type: rng.choice([0, 0, 0.15, 0.6, 0.9, 1.2, 1.65, 3.3]) for damage_type in DAMAGE_TYPES}
-            mods["TRUE"] = rng.choice([0, 0, 0.5, 1.65])
-            bane_bonus = rng.choice([0, 0, 0.05, 0.3, 0.55])
-            mods["BANE"] = bane_bonus
+class WikiDamageExamplesTests(DamageFixture, unittest.TestCase):
+    """Independent examples from /w/Damage/Calculation and /w/Armor."""
 
-            weapon = make_weapon(elements, dmg=dmg, multi=multi)
-            results = calculator.calculate(
-                weapon,
-                CalculationInputs(
-                    weapon_name=weapon.weapon,
-                    faction=faction,
-                    armor_value=armor,
-                    lich_element=lich_element,
-                    valence_base=valence_base,
-                    mods=dict(mods),
-                ),
-            )
-            ref_lich, ref_hud, ref_final, ref_hud_bane, ref_final_bane = _reference_calculate(
-                elements, dmg, multi, lich_element, valence_base, faction, armor, mods, bane_bonus
-            )
-            self.assertEqual(results.lich_damage, ref_lich)
-            for damage_type in DAMAGE_TYPES:
-                self.assertAlmostEqual(
-                    results.hud_damage_by_type[damage_type], ref_hud[damage_type], places=9
-                )
-                self.assertAlmostEqual(
-                    results.final_damage_by_type[damage_type], ref_final[damage_type], places=9
-                )
-            self.assertAlmostEqual(results.hud_total_with_bane, ref_hud_bane, places=9)
-            self.assertAlmostEqual(results.final_total_with_bane, ref_final_bane, places=9)
+    def test_wiki_100_base_example_and_unrounded_health_damage(self):
+        r = self.calculate({"IMPACT": 30, "PUNC": 30, "SLASH": 40},
+                           faction="Infested")
+        self.assertEqual(r.quanta, 3.125)
+        self.assertEqual(r.final_damage_by_type["IMPACT"], 31.25)
+        self.assertEqual(r.final_damage_by_type["PUNC"], 31.25)
+        self.assertEqual(r.final_damage_by_type["SLASH"], 60.9375)
+        self.assertEqual(r.final_total, 123.4375)  # popup would show 123
+        self.assertEqual(r.hud_total, 100.0)     # Arsenal is not quantized
+
+    def test_wiki_nagantaka_type_distribution(self):
+        slots = equipped(("PUNC", 1.2), ("COLD", 0.9), ("TOXIN", 0.6),
+                         ("HEAT", 0.9), ("GAS", 2.0))
+        r = self.calculate({"IMPACT": 1.73, "PUNC": 15.57, "SLASH": 155.7},
+                           faction="Infested", slots=slots)
+        self.assertEqual(r.quanta, 173 / 32)
+        self.assertEqual(r.final_damage_by_type["IMPACT"], 0)
+        self.assertAlmostEqual(r.final_damage_by_type["PUNC"], 32.4375)
+        self.assertAlmostEqual(r.final_damage_by_type["SLASH"], 156.78125 * 1.5)
+        self.assertAlmostEqual(r.final_damage_by_type["VIRAL"], 259.5)
+        self.assertAlmostEqual(r.final_damage_by_type["HEAT"], 156.78125 * 1.5)
+        self.assertAlmostEqual(r.final_damage_by_type["GAS"], 346)
+        self.assertAlmostEqual(r.final_total, 1108.28125)
+
+    def test_base_damage_changes_quantum_and_damage_not_ratios(self):
+        r = self.calculate({"IMPACT": 30, "PUNC": 30, "SLASH": 40},
+                           faction="Infested", mods={"TRUE": 1.65})
+        self.assertAlmostEqual(r.quanta, 265 / 32)
+        self.assertAlmostEqual(r.final_total, 123.4375 * 2.65)
+
+    def test_bane_applies_before_any_display_rounding_including_penalties(self):
+        r = self.calculate({"IMPACT": 30, "PUNC": 30, "SLASH": 40},
+                           faction="Infested", mods={"BANE": 0.3})
+        self.assertAlmostEqual(r.final_total_with_bane, 123.4375 * 1.3)
+        r = self.calculate({"SLASH": 100}, mods={"BANE": -0.2})
+        self.assertAlmostEqual(r.final_total_with_bane, 80)
+
+    def test_no_three_decimal_intermediate_rounding(self):
+        r = self.calculate({"IMPACT": 0.3, "PUNC": 0.3, "SLASH": 0.4})
+        self.assertEqual(r.final_damage_by_type["SLASH"], 0.40625)
+
+    def test_armor_standard_exception_and_minimum(self):
+        standard = self.calculate({"HEAT": 100}, armor=500)
+        self.assertAlmostEqual(standard.final_total, 100 * (1 - 0.9 * math.sqrt(500 / 2700)))
+        exception = self.calculate({"HEAT": 100}, armor=3000)
+        self.assertAlmostEqual(exception.final_total, 100 * (300 / 3300))
+        tiny = self.calculate({"IMPACT": 0.1, "PUNC": 0.1, "SLASH": 0.1}, armor=2700)
+        self.assertEqual(tiny.final_total, 3.0)
+        # No minimum for types quantized to zero.
+        tiny = self.calculate({"IMPACT": 0.001, "PUNC": 99.999}, armor=2700)
+        self.assertEqual(tiny.final_damage_by_type["IMPACT"], 0)
+
+    def test_innate_multishot_and_melee_arsenal_total(self):
+        # Wiki Hek: 7 pellets x 75 = 525; one projectile is still 75.
+        r = self.calculate({"IMPACT": 11.25, "PUNC": 48.75, "SLASH": 15}, multi=7)
+        self.assertEqual(r.hud_total, 525)
+        self.assertAlmostEqual(sum(r.hud_damage_by_type.values()), 75)
+        melee = self.calculate({"SLASH": 100}, multi=0)
+        self.assertEqual(melee.hud_total, 100)
+
+    def test_valence_without_element_does_not_create_damage(self):
+        r = self.calculate({"SLASH": 100}, valence=60)
+        self.assertEqual(r.weapon_total_damage, 100)
+        self.assertEqual(sum(r.lich_damage.values()), 0)
+
+    def test_zero_damage_multiplier_results_in_zero(self):
+        r = self.calculate({"SLASH": 100}, mods={"TRUE": -1.0})
+        self.assertEqual(r.quanta, 0)
+        self.assertEqual(r.hud_total, 0)
+        self.assertEqual(r.final_total, 0)
+
+
+class WikiElementHierarchyTests(DamageFixture, unittest.TestCase):
+    """Examples from /w/Damage#Modding, including the Tenet Detron case."""
+
+    def test_innate_heat_combines_with_last_unpaired_cold_mod(self):
+        r = self.calculate({"HEAT": 100}, slots=equipped(("COLD", 0.9)))
+        self.assertAlmostEqual(r.hud_damage_by_type["BLAST"], 190)
+        self.assertEqual(r.hud_damage_by_type["HEAT"], 0)
+        self.assertEqual(r.hud_damage_by_type["COLD"], 0)
+
+    def test_wiki_innate_electricity_after_mods(self):
+        slots = equipped(("COLD", 0.9), ("TOXIN", 0.9), ("HEAT", 0.9))
+        r = self.calculate({"ELEC": 100}, slots=slots)
+        self.assertAlmostEqual(r.hud_damage_by_type["VIRAL"], 180)
+        self.assertAlmostEqual(r.hud_damage_by_type["RAD"], 190)
+        self.assertEqual(r.hud_damage_by_type["ELEC"], 0)
+
+    def test_innate_secondary_does_not_absorb_primary_progenitor(self):
+        # Wiki example: Tenet Detron Radiation with Electricity progenitor.
+        r = self.calculate({"RAD": 100}, slots=[], lich="ELEC", valence=60)
+        self.assertEqual(r.hud_damage_by_type["RAD"], 100)
+        self.assertEqual(r.hud_damage_by_type["ELEC"], 60)
+        self.assertEqual(sum(r.lich_damage.values()), 60)
+
+    def test_innate_secondary_does_not_absorb_component_mod(self):
+        r = self.calculate({"RAD": 100}, slots=equipped(("HEAT", 0.9)))
+        self.assertEqual(r.hud_damage_by_type["RAD"], 100)
+        self.assertEqual(r.hud_damage_by_type["HEAT"], 90)
+
+    def test_progenitor_joins_exactly_one_preexisting_primary_pair(self):
+        slots = equipped(("HEAT", 0.9), ("COLD", 0.9),
+                         ("ELEC", 0.6), ("TOXIN", 0.6))
+        r = self.calculate({"IMPACT": 100}, slots=slots, lich="HEAT", valence=60)
+        self.assertEqual(r.lich_damage["BLAST"], 60)
+        self.assertEqual(sum(r.lich_damage.values()), 60)
+        self.assertAlmostEqual(r.hud_damage_by_type["BLAST"], 60 + 160 * 1.8)
+        self.assertAlmostEqual(r.hud_damage_by_type["CORR"], 160 * 1.2)
+
+    def test_riven_last_listed_primary_has_priority(self):
+        prior = equipped(("HEAT", 0.5))
+        riven = equipped(("ELEC", 0.4))[0]
+        riven.mod.name = "Riven Mod"
+        riven.effects.append(ModEffect(code="TOXIN", value=0.3, text="", position=2))
+        r = self.calculate({"IMPACT": 100}, slots=prior + [riven])
+        self.assertAlmostEqual(r.hud_damage_by_type["GAS"], 80)
+        self.assertAlmostEqual(r.hud_damage_by_type["ELEC"], 40)
+        self.assertEqual(r.hud_damage_by_type["RAD"], 0)
+
+
+class FactionWikiTests(unittest.TestCase):
+    def test_faction_matrix(self):
+        # Non-neutral entries from /w/Damage/Overview_Table; all others are 1x.
+        expected = {
+            "Grineer": {"IMPACT": 1.5, "CORR": 1.5},
+            "Kuva": {"IMPACT": 1.5, "CORR": 1.5, "HEAT": 0.5},
+            "Corpus": {"PUNC": 1.5, "MAG": 1.5},
+            "Amalgam": {"ELEC": 1.5, "MAG": 1.5, "BLAST": 0.5},
+            "Infested": {"SLASH": 1.5, "HEAT": 1.5},
+            "Deimos": {"BLAST": 1.5, "GAS": 1.5, "VIRAL": 0.5},
+            "Orokin": {"PUNC": 1.5, "VIRAL": 1.5, "RAD": 0.5},
+            "Sentient": {"COLD": 1.5, "RAD": 1.5, "CORR": 0.5},
+            "Narmer": {"SLASH": 1.5, "TOXIN": 1.5, "MAG": 0.5},
+            "Murmur": {"ELEC": 1.5, "RAD": 1.5, "VIRAL": 0.5},
+            "Zariman": {"VOID": 1.5},
+            "Scaldra": {"IMPACT": 1.5, "CORR": 1.5, "GAS": 0.5},
+            "Techrot": {"GAS": 1.5, "MAG": 1.5, "COLD": 0.5},
+            "Anarchs": {"IMPACT": 1.5, "ELEC": 1.5, "RAD": 0.5},
+        }
+        self.assertEqual(set(FACTION_MULTIPLIERS), set(expected))
+        for faction, non_neutral in expected.items():
+            for kind in DAMAGE_TYPES:
+                self.assertEqual(FACTION_MULTIPLIERS[faction][kind],
+                                 non_neutral.get(kind, 1.0), (faction, kind))
+
+    def test_narmer_does_not_take_grineer_or_corpus_bane(self):
+        slots = equipped(("BANE_GRINEER", 1.3), ("BANE_CORPUS", 1.3))
+        self.assertEqual(ModAggregator().aggregate(slots, "Narmer")["BANE"], 0)
+
+    def test_murmur_orokin_and_sentient_banes_are_parsed(self):
+        for text, code in [("X1.55 damage to the murmur", "BANE_MURMUR"),
+                           ("X1.3 damage to orokin", "BANE_CORRUPTED"),
+                           ("+30% damage to sentients", "BANE_SENTIENT")]:
+            with self.subTest(text=text):
+                self.assertEqual(parse_effects(text)[0].code, code)
+        self.assertAlmostEqual(_bane_bonus(1.55, "X1.55 damage to the murmur"), 0.55)
+        self.assertAlmostEqual(_bane_bonus(1.55, "+155% damage to the murmur"), 1.55)
+        self.assertAlmostEqual(_bane_bonus(1.0, "X1.0 damage to grineer"), 0)
+
+    def test_zariman_legacy_spelling_is_accepted(self):
+        w = make_weapon({"VOID": 100})
+        def calculate(faction):
+            return DamageCalculator().calculate(w, CalculationInputs(w.weapon, faction, 0))
+        self.assertEqual(calculate("Zairman").final_total, calculate("Zariman").final_total)
 
 
 if __name__ == "__main__":

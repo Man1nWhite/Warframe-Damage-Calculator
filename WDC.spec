@@ -1,7 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
 
 project_dir = Path(SPECPATH)
 source_dir = project_dir / "source"
@@ -21,7 +20,10 @@ if (project_dir / "LICENSE").exists():
 if (data_dir / "weapons.db").exists():
     datas.append((str(data_dir / "weapons.db"), "data"))
 
-hiddenimports = collect_submodules("PyQt6")
+# QtCore, QtGui and QtWidgets are imported directly by the application;
+# PyInstaller's Qt hooks collect their platform plugins. Collecting every
+# PyQt6 submodule also bundled unrelated multimedia, QML and network stacks.
+hiddenimports = []
 
 a = Analysis(
     ["main.py"],
