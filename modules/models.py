@@ -68,10 +68,6 @@ class CalculationInputs:
     # Original slot order preserves which primary elements formed a pair.
     equipped_mods: list[EquippedMod] | None = None
 
-    def mod_for(self, damage_type: str) -> float:
-        """Raw pre-aggregated bonus for one stat (no slot aggregation)."""
-        return float(self.mods.get(damage_type, 0.0))
-
 
 @dataclass(slots=True)
 class CalculationResults:

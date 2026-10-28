@@ -50,7 +50,6 @@ AVERAGE_GRADE_T = 0.5
 
 # A Riven mod reaches rank 8 in game; each rank contributes one step.
 MAX_RIVEN_RANK = 8
-RANK_STEPS = MAX_RIVEN_RANK + 1  # lvl + 1 = 9 at max rank
 
 # Attenuation by number of positive stats (index 0 unused, indexes 1..5).
 NUM_BUFFS_ATTEN = [0.0, 1.0, 0.66000003, 0.5, 0.40000001, 0.34999999]

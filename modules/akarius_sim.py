@@ -106,8 +106,7 @@ CORROSIVE_FIRST_STACK = 0.26
 CORROSIVE_PER_STACK = 0.06
 CORROSIVE_CAP = 10
 CORROSIVE_BASE_DURATION = 8.0
-VIRAL_BASE_DURATION = 6.0
-HEAT_BASE_DURATION = 6.0
+HEAT_BASE_DURATION = 6.0  # also the Viral duration the model applies
 
 RIVEN_VIRAL = "Viral"
 RIVEN_CORROSIVE = "Corrosive"
@@ -118,7 +117,7 @@ def corrosive_armor_factor(stacks: int) -> float:
     n = min(max(stacks, 0), CORROSIVE_CAP)
     if n == 0:
         return 1.0
-    return 1.0 - (0.20 + 0.06 * n)
+    return 1.0 - (CORROSIVE_FIRST_STACK + CORROSIVE_PER_STACK * (n - 1))
 
 
 @dataclass(frozen=True)

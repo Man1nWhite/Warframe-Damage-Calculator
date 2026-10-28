@@ -202,6 +202,7 @@ def _spreadsheet_rows_cached(
 ) -> tuple[tuple[tuple[str, float | str], ...], ...]:
     """Parse the workbook once per (path, mtime, size); values are hashable."""
     rows = _read_spreadsheet(Path(path))
+    _reject_non_finite(rows)
     return tuple(tuple(row.items()) for row in rows)
 
 
@@ -256,7 +257,9 @@ def _weapons_cached(
     path: str, mtime_ns: int, size: int,
 ) -> tuple[tuple[tuple[str, float | str], ...], ...]:
     """Memoized parse of the weapon export; see ``rows_from_cleaned_json``."""
-    return tuple(tuple(row.items()) for row in _read_weapons(Path(path)))
+    rows = _read_weapons(Path(path))
+    _reject_non_finite(rows)
+    return tuple(tuple(row.items()) for row in rows)
 
 
 def rows_from_cleaned_json(zip_path: str | Path) -> list[dict[str, float | str]]:
@@ -326,6 +329,8 @@ class _CachedMods(NamedTuple):
 def _mods_cached(path: str, mtime_ns: int, size: int) -> _CachedMods:
     """Memoized parse of the upgrade export; see ``mods_from_cleaned_json``."""
     mods, effects, stats = _read_mods(Path(path))
+    _reject_non_finite(mods)
+    _reject_non_finite(effects)
     return _CachedMods(
         tuple(tuple(row.items()) for row in mods),
         tuple(tuple(row.items()) for row in effects),
@@ -466,7 +471,11 @@ class ImportPayload:
 
 
 def _reject_non_finite(rows: Iterable[Mapping[str, object]]) -> None:
-    """Refuse NaN/inf values before they reach the database."""
+    """Refuse NaN/inf values before they reach the database.
+
+    Called from the source parsers, so an unchanged file is scanned once per
+    process instead of once per rebuild or migration reading it.
+    """
     for row in rows:
         if any(isinstance(value, (int, float)) and not math.isfinite(value)
                for value in row.values()):
@@ -488,8 +497,6 @@ def load_import_payload(
     mods, effects = mods_from_cleaned_json(cleaned_upgrades_zip_path, source_stats=source_mod_stats)
     if not weapons or not mods or not effects:
         raise ValueError("Export data is incomplete: weapons, mods and parsed mod effects are required.")
-    for parsed_rows in (spreadsheet, weapons, mods, effects):
-        _reject_non_finite(parsed_rows)
     return ImportPayload(spreadsheet, weapons, mods, effects, source_mod_stats)
 
 

@@ -215,7 +215,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
    (≤0.2%) but the wiki's quantization section is explicit that the stored
    base value is the decoded 12-bit code.
 3. **New tests** — `tests/test_crit_wiki.py` (26 tests covering the
-   critical-hit page) and `tests/test_wiki_cross_checks.py` (18 tests
+   critical-hit page) and `tests/test_wiki_cross_checks.py` (24 tests
    pinning the proc-timing, Blast, Corrosive, Heat-strip, Magnetic-break,
    Viral/Magnetic, multishot and Enervate constants to the pages cited above).
 4. **Pinned expectations updated** where they encoded an unquantized base

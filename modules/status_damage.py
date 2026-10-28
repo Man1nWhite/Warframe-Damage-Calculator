@@ -43,7 +43,6 @@ ELEMENTAL_DOT_COEFFICIENT = 0.5  # Heat, Toxin, Electricity, Gas
 # Standard proc timing (seconds).
 PROC_DURATION = 6.0
 SINGLE_TARGET_DELAY = 1.0  # Slash / Heat / Toxin
-AOE_PROC_DELAY = 0.0  # Electricity / Gas (last tick deals no damage)
 DEFAULT_TICK_RATE = 1.0  # status DoTs tick once per second
 
 # Stack caps.

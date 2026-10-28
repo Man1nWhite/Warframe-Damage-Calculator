@@ -54,7 +54,6 @@ from modules.constants import (
 from modules.database import ModRepository, WeaponRepository
 from modules.importer import build_database
 from modules.mod_compatibility import ModCompatibility
-from modules.mod_engine import ModAggregator
 from modules.models import CalculationInputs, EquippedMod, Mod, Weapon
 from modules.updater import WarframeDataUpdater
 
@@ -668,7 +667,6 @@ class DamageCalculatorWindow(QMainWindow):
         self.mod_compatibility = ModCompatibility.from_file(project_root / "source" / "weapon_mod_classes.json")
         self.paths = ensure_app_dirs()
         self.calculator = DamageCalculator()
-        self.mod_aggregator = ModAggregator()
         self.selected_weapon: Weapon | None = None
         self.mod_slots: list[ModSlotWidget] = []
         self.available_mods: list[Mod] = []
@@ -1122,14 +1120,12 @@ class DamageCalculatorWindow(QMainWindow):
 
         try:
             equipped_mods = self._build_equipped_mods()
-            aggregated_mods = self.mod_aggregator.aggregate(equipped_mods, self.faction_combo.currentText())
             inputs = CalculationInputs(
                 weapon_name=self.selected_weapon.weapon,
                 faction=self.faction_combo.currentText() or "Grineer",
                 armor_value=self.safe_float(self.armor_edit.text()),
                 lich_element=self.lich_combo.currentText(),
                 valence_base=self.safe_float(self.valence_edit.text()),
-                mods=aggregated_mods,
                 equipped_mods=equipped_mods,
             )
             results = self.calculator.calculate(self.selected_weapon, inputs)
@@ -1384,14 +1380,12 @@ class DamageCalculatorWindow(QMainWindow):
             effects = effects_by_selection[(mod.unique_name, rank)]
             equipped_mods.append(EquippedMod(mod=mod, rank=rank, effects=effects))
 
-        aggregated_mods = self.mod_aggregator.aggregate(equipped_mods, inputs["faction"])
         compare_inputs = CalculationInputs(
             weapon_name=weapon.weapon,
             faction=inputs["faction"],
             armor_value=self.safe_float(inputs["armor"]),
             lich_element=inputs["lich_element"],
             valence_base=self.safe_float(inputs["valence_base"]),
-            mods=aggregated_mods,
             equipped_mods=equipped_mods,
         )
         compare_results = self.calculator.calculate(weapon, compare_inputs)

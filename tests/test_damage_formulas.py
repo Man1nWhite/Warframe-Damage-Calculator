@@ -228,11 +228,23 @@ class CalculationInputConsistencyTests(unittest.TestCase):
         self.assertAlmostEqual(result.final_total_with_bane, 265 * 1.55)
 
     def test_the_legacy_faction_alias_matches_its_canonical_name(self) -> None:
-        weapon, slots = self.build(("TRUE", 0.5))
+        weapon, slots = self.build(("TRUE", 0.5), ("BANE_GRINEER", 0.55))
         legacy = self.calculate(weapon, slots, faction="Zairman")
         canonical = self.calculate(weapon, slots, faction="Zariman")
         self.assertEqual(legacy.faction_modifiers, canonical.faction_modifiers)
         self.assertEqual(legacy.final_total_with_bane, canonical.final_total_with_bane)
+        # The mod engine applies the same alias, so a caller that aggregates
+        # the slots itself cannot end up with a different Bane total.
+        aggregator = ModAggregator()
+        self.assertEqual(aggregator.aggregate(slots, "Zairman"),
+                         aggregator.aggregate(slots, "Zariman"))
+
+    def test_an_unknown_faction_names_the_problem(self) -> None:
+        weapon, slots = self.build(("TRUE", 0.5))
+        with self.assertRaises(ValueError) as caught:
+            self.calculate(weapon, slots, faction="Tenno")
+        self.assertIn("Unknown faction", str(caught.exception))
+        self.assertIn("Tenno", str(caught.exception))
 
 
 class DamageFixture:

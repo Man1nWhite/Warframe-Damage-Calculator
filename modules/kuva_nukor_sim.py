@@ -897,8 +897,6 @@ def steel_path_dummy_factory(*, boss: bool = False) -> DummyTarget:
 
 CHAIN_TARGETS = 2            # Kuva Nukor chains to up to two extra enemies
 CHAIN_DAMAGE_MULT = 0.5      # each chain deals 50% of the main beam
-CHAIN_RANGE_M = 9.0
-BLAST_RADIUS_M = 5.0         # Blast radial radius, no falloff
 
 
 @dataclass

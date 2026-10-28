@@ -14,10 +14,12 @@ from collections import OrderedDict
 
 from .constants import (
     BASE_ELEMENT_TYPES,
+    COMBINED_ELEMENT_TYPES,
     DAMAGE_TYPES,
     ELEMENT_COMBINATIONS,
     FACTION_MULTIPLIERS,
     PHYSICAL_DAMAGE_TYPES,
+    faction_key,
 )
 from .enemy_scaling import enemy_armor_damage_reduction
 from .mod_engine import ModAggregator, ordered_mod_effects
@@ -27,19 +29,10 @@ from .status_damage import wiki_quantized_damage
 # Innate primary elements follow equipped mods in this order.
 INNATE_ELEMENT_ORDER = ("HEAT", "COLD", "ELEC", "TOXIN")
 
-# Saved builds predate the spelling fix for this faction.
-FACTION_ALIASES = {"Zairman": "Zariman"}
-
-
-def _faction_key(faction: str) -> str:
-    """Canonical faction name used by the tables and the bane-code map."""
-    return FACTION_ALIASES.get(faction, faction)
-
-
 class DamageCalculator:
     def calculate(self, weapon: Weapon, inputs: CalculationInputs) -> CalculationResults:
         base_weapon_damage = float(weapon.dmg)
-        faction = _faction_key(inputs.faction)
+        faction = faction_key(inputs.faction)
         element = (inputs.lich_element or "").strip().upper()
         if element and element not in DAMAGE_TYPES:
             raise ValueError(f"Unknown progenitor damage type: {element}")
@@ -147,13 +140,13 @@ class DamageCalculator:
                 mods[kind] = 0.0
             # Aggregator totals already include paired primary mods; rebuild
             # elemental values from source effects to retain their provenance.
-            for kind in ("BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"):
+            for kind in COMBINED_ELEMENT_TYPES:
                 mods[kind] = 0.0
             for equipped in inputs.equipped_mods:
                 for effect in ordered_mod_effects(equipped):
                     if effect.code in BASE_ELEMENT_TYPES:
                         groups.setdefault(effect.code, [0.0, 0.0, 0.0])[0] += effect.value
-                    elif effect.code in {"BLAST", "RAD", "GAS", "MAG", "VIRAL", "CORR"}:
+                    elif effect.code in COMBINED_ELEMENT_TYPES:
                         mods[effect.code] = mods.get(effect.code, 0.0) + effect.value
         else:
             for kind in INNATE_ELEMENT_ORDER:
@@ -189,9 +182,11 @@ class DamageCalculator:
 
     @staticmethod
     def _build_faction_modifiers(faction: str) -> dict[str, float]:
-        if faction == "Zairman":  # compatibility with saved builds
-            faction = "Zariman"
-        return {kind: float(FACTION_MULTIPLIERS[faction][kind]) for kind in DAMAGE_TYPES}
+        try:
+            modifiers = FACTION_MULTIPLIERS[faction_key(faction)]
+        except KeyError:
+            raise ValueError(f"Unknown faction: {faction!r}") from None
+        return {kind: float(modifiers[kind]) for kind in DAMAGE_TYPES}
 
     @staticmethod
     def _build_armor_modifiers(armor_value: float, faction_modifiers: dict[str, float]) -> dict[str, float]:

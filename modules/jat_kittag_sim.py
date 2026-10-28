@@ -89,8 +89,6 @@ BASE_CRIT_CHANCE = 0.15
 BASE_CRIT_MULT = 2.0
 BASE_STATUS = 1.0                             # slams are 100% status
 SLAM_FIRE_RATE = 1.0                          # infobox attacks/sec
-SLAM_RADIUS = 10.0
-COMBO_DURATION = 5.0
 PROC_DURATION = 6.0
 CORROSIVE_DURATION = 8.0
 
@@ -128,8 +126,10 @@ R_ATTACK_SPEED = 0.815
 R_STATUS_CHANCE = 1.337
 R_ELEMENT = 1.337
 R_INITIAL_COMBO = 36.4
-R_EFFICIENCY = 1.091
-# 3 positives + 1 curse (god roll: CC + CD + Attack Speed).
+# 3 positives + 1 curse (god roll: CC + CD + Attack Speed). The 1.0125
+# midpoint of ``jat_kittag_slam_analysis`` is rounded to three decimals here;
+# the trials take an explicit combo multiplier, so the 5 s combo window is not
+# modeled.
 R3_CRIT_CHANCE = 2.025
 R3_CRIT_DAMAGE = 1.013
 R3_ATTACK_SPEED = 0.618

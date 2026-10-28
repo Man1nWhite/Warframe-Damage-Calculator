@@ -123,7 +123,9 @@ Inside that folder the app keeps:
 - `source/ExportKeys_en_Cleaned.zip`
 - `source/Warframe-Damage-Calculator_v2.xlsx`
 - `builds/*.json`
-- `settings.json`
+
+The app does not write a settings file; any other file in this folder (for
+example a `settings.json` left by an earlier build) is left untouched.
 
 ## Running
 
