@@ -1,7 +1,9 @@
 """Tests for the Alternox Prime Riven choice simulation."""
 from __future__ import annotations
 
+import dataclasses
 import math
+import random
 import unittest
 
 import modules.alternox_prime_sim as sim
@@ -342,3 +344,35 @@ class StochasticSimulationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ColdCriticalDamageTests(unittest.TestCase):
+    """Freeze stacks must reach the crit factor (wiki Damage/Cold_Damage)."""
+
+    def test_cold_stacks_raise_every_critical_hit(self) -> None:
+        build = build_alternox((R_BLAST, R_DAMAGE, R_TOXIN))
+        target = sim.alternox_dummy_factory()
+        plain = [sim._crit_factor(random.Random(seed), build, target, 0.0)
+                 for seed in range(200)]
+
+        target.add_cold(0.0, 6.0)
+        self.assertEqual(target.cold_stacks(0.0), 1)
+        primed = [sim._crit_factor(random.Random(seed), build, target, 0.0)
+                  for seed in range(200)]
+
+        # Cold adds a flat +0.10x additive to Critical Damage, so it only
+        # moves the crit multiplier: a non-crit hit stays at 1.0.
+        self.assertIn(1.0, plain)
+        for before, after in zip(plain, primed, strict=True):
+            expected = 1.0 if before == 1.0 else before + 0.10
+            self.assertAlmostEqual(after, expected, places=12)
+
+    def test_crit_tiers_continue_above_one_hundred_percent(self) -> None:
+        base = build_alternox((R_BLAST, R_DAMAGE, R_TOXIN))
+        build = dataclasses.replace(base, crit_chance=2.5)
+        target = sim.alternox_dummy_factory()
+        values = {sim._crit_factor(random.Random(seed), build, target, 0.0)
+                  for seed in range(400)}
+        # 250% crit chance: tier 2 is guaranteed, tier 3 rolls the remainder.
+        self.assertEqual(values, {1.0 + 2.0 * (build.crit_multiplier - 1.0),
+                                  1.0 + 3.0 * (build.crit_multiplier - 1.0)})

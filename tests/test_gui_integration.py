@@ -82,6 +82,18 @@ class GuiIntegrationTests(unittest.TestCase):
         return {table.item(i, 0).text(): float(table.item(i, 1).text())
                 for i in range(table.rowCount())}
 
+    def test_weapon_sidebar_lists_the_whole_catalogue(self):
+        # The sidebar is a browser, not a capped search result: every row of
+        # the database must be reachable without typing a name.
+        with closing(sqlite3.connect(self.paths["db"])) as connection:
+            total = connection.execute("SELECT COUNT(*) FROM weapons").fetchone()[0]
+        self.assertEqual(self.window.weapon_list.count(), total)
+        self.assertGreater(total, 250)
+        self.window.search_edit.setText("Zymos")
+        self.app.processEvents()
+        self.assertEqual(len(self.window.weapon_list.findItems(
+            "Zymos", Qt.MatchFlag.MatchExactly)), 1)
+
     def test_damage_scope_is_visible_for_combined_export_rows(self):
         self.select_weapon("Grimoire")
         self.assertIn("separate direct and radial hits", self.window.damage_scope_notice.text())

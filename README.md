@@ -423,8 +423,9 @@ exceptional armor above 2700 uses `armor/(armor+300)`.
 The repository also contains simulations for [Kuva Nukor](docs/kuva_nukor_build_sim.md),
 [Akarius Prime](docs/akarius_prime_riven_sim.md),
 [Ocucor](docs/ocucor_riven_sim.md),
-[Jat Kittag](docs/jat_kittag_heavy_slam_sim.md), and
-[Alternox Prime](docs/alternox_prime_riven_sim.md). Newer, explicitly
+[Jat Kittag](docs/jat_kittag_heavy_slam_sim.md),
+[Alternox Prime](docs/alternox_prime_riven_sim.md), and
+[Verglas Prime](docs/verglas_prime_sim.md). Newer, explicitly
 experimental comparisons for [Kuva Nukor](docs/kuva_nukor_three_mod_comparison.md),
 [Akarius Prime](docs/akarius_prime_viral_corrosive_comparison.md), and
 [Ocucor](docs/ocucor_enervate_flare_comparison.md) record their assumptions,

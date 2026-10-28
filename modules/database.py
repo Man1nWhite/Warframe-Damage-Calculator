@@ -21,15 +21,25 @@ class DatabaseSession:
 
 
 class WeaponRepository(DatabaseSession):
-    def search_weapons(self, query: str, limit: int = SEARCH_LIMIT) -> list[str]:
+    def search_weapons(self, query: str, limit: int | None = SEARCH_LIMIT) -> list[str]:
+        """Weapon names matching ``query``, alphabetically.
+
+        ``limit`` defaults to ``SEARCH_LIMIT`` so a bare query stays bounded,
+        but callers that browse the catalogue (the GUI sidebar) pass ``None``:
+        silent truncation of the list hid most of the bundled weapons, because
+        the cap applies after the alphabetical sort and the database holds far
+        more rows than the cap.
+        """
         query = query.strip()
         sql = "SELECT weapon FROM weapons"
         params: list[object] = []
         if query:
             sql += " WHERE weapon LIKE ?"
             params.append(f"%{query}%")
-        sql += " ORDER BY weapon COLLATE NOCASE LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY weapon COLLATE NOCASE"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         try:
             with closing(self.connect()) as connection:
                 rows = connection.execute(sql, params).fetchall()
