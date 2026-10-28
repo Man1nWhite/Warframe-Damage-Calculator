@@ -352,10 +352,13 @@ Install `requirements.txt`, then run:
 python -m unittest discover -s tests -q
 ```
 
-The suite is fully offline and takes roughly 13 seconds on a laptop; each
+The suite is fully offline and takes roughly eight seconds on a laptop. Each
 migration or rebuild test parses the same bundled exports, so the workbook and
-mod-export parsers in `modules/importer.py` are memoized on the source file's
-identity (path, mtime, size) and invalidate themselves when the file changes.
+both JSON export parsers in `modules/importer.py` are memoized on the source
+file's identity (path, mtime, size) and invalidate themselves when the file
+changes. A locked-database test exercises the real backup path, so it shortens
+`modules.database_backup.BACKUP_LOCK_DEADLINE_SECONDS` instead of waiting out
+the production five seconds.
 
 ### Code style
 
