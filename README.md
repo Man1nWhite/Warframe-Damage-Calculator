@@ -1,6 +1,70 @@
-# MAJOR NOTE!!
+# Warframe Damage Calculator — a fork kept to test the damage data
 
-## A Note on Development: This app's UI and structure were generated entirely using ChatGPT, but the underlying math is the result of countless hours of manual testing and coding.
+> **This repository is a fork.** The application is
+> [DeadxxSmile/Warframe-Damage-Calculator](https://github.com/DeadxxSmile/Warframe-Damage-Calculator),
+> the TenZeroGG calculator whose math DeadxxSmile (TenZeroGG) and Xadreus built.
+> `Man1nWhite/Warframe-Damage-Calculator` keeps that app and uses it as a test
+> bench for the damage data: every formula is re-read from the
+> [WARFRAME Wiki](https://wiki.warframe.com), pinned by a regression test, and
+> corrected where the code disagreed with the source. Upstream stays the place
+> to download the app, report app bugs and follow feature work.
+
+## What this fork tests
+
+The fork changes what the numbers *do*, not what the app looks like. Every
+check below runs against the bundled data snapshot; only re-reading the wiki
+itself needs network access:
+
+- **Every formula family against the Wiki.**
+  [`docs/wiki_formula_verification.md`](docs/wiki_formula_verification.md)
+  records, page by page (about thirty pages read as raw wikitext on 2026-10-28),
+  what the Wiki says, where the repository implements it and whether the two
+  agree; [`docs/formula_audit.md`](docs/formula_audit.md) holds the scope limits,
+  the source conflicts and the history of the corrections.
+- **A re-runnable check.** `tools/wiki_audit.py` re-reads the audited pages,
+  extracts the numbers next to each claim's keyword and compares them with the
+  code, with `--save-snapshot` / `--baseline` turning two runs into a diff of
+  exactly which numbers appeared or disappeared.
+- **Exact numbers under test.** The suite pins worked examples and regressions
+  (armor reduction, 32-quantization, DoT ticks, crit tiers, Cold/Blast stack
+  caps, Riven values, Condition Overload) instead of asserting that "something
+  changed"; it runs offline in about eight seconds.
+- **Corrections the testing found,** each committed on its own: the 12-bit
+  quantization of the base critical-damage multiplier, Cold's four-stack cap on
+  Overguard, Blast's boss cap and death-triggered detonation, Void's Overguard
+  bonus, the equipped slots being aggregated inside the calculator (callers that
+  passed only `equipped_mods` silently lost their +Damage and Bane bonuses), and
+  the legacy `Zairman` faction spelling.
+
+What the fork does **not** do: it ships no releases or installers, it may lag
+behind upstream, and it is not a support channel for the app. The GPL-3.0
+license and the disclaimer below are the upstream project's and cover this copy
+too; the added documents, tests and `tools/wiki_audit.py` fall under the same
+license.
+
+### Reproducing the damage tests
+
+```bash
+python -m unittest discover -s tests -q     # the whole suite, offline
+python -m ruff check . && python -m mypy    # the gates CI runs
+
+# Re-read the audited pages and record the numbers the code is pinned to.
+python tools/wiki_audit.py --save-snapshot docs/wiki_numbers.json
+# After a game update, show only the numbers that appeared or disappeared.
+python tools/wiki_audit.py --baseline docs/wiki_numbers.json
+```
+
+The snapshot is written by the first command and is not committed, since it
+needs the live pages. `--topic TEXT` narrows the audit to one area (for example
+`--topic "Blast"`) and `--pages DIR` reads saved page text, so a later run can
+be made without network access; the exit codes are documented under
+[Re-running the wiki audit](#re-running-the-wiki-audit).
+
+## A note from the upstream project
+
+*A note on development: this app's UI and structure were generated entirely
+using ChatGPT, but the underlying math is the result of countless hours of
+manual testing and coding.*
 
 Ages ago, I started the TenZero.GG project to make a better site to create and share Warframe builds. While I handled the bulk of the overarching project, my collaborator Xadreus and I teamed up heavily on the incredibly complex damage calculations and the underlying math. Together, we worked our tails off to accurately recreate the game's systems, matching not just the HUD stats, but the real-world values you actually see when using weapons in a mission. We honestly had the most accurate calculations of any model we could find online.
 
@@ -8,9 +72,11 @@ Unfortunately, life loves to get in the way of passion projects. Between college
 
 Instead of letting all the work Xadreus and I put into those accurate damage calculations go to waste, I figured: why not throw our spreadsheet at ChatGPT and see if I could vibe code out a Python app? I wanted to give something back to the amazing Warframe community so our work actually means something, even if the original site never gets built. I absolutely plan to get my hands dirty in the code later to add features and make it look better, but with real life pulling me away, using AI was the best way to get this tool into your hands now. I hope you understand, and I hope you enjoy it!
 
-# Warframe Damage Calculator by TenZeroGG v1.0.1
-
-Desktop Warframe damage calculator built around the calculator engine and packaged as a PyQt6 desktop app.
+**The application (upstream, TenZeroGG v1.0.1).** A desktop Warframe damage
+calculator built around the calculator engine and packaged as a PyQt6 desktop
+app. Everything from here down documents that application; the fork adds the
+verification layer described above and otherwise leaves the app as upstream has
+it.
 
 ## Current Features
 
