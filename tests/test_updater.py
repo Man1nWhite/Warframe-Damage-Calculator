@@ -1,6 +1,8 @@
 """Data refresh must never silently replace usable exports with broken ones."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import lzma
 import os
@@ -154,7 +156,7 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(result["source_mode"], "saved local exports")
         self.assertIn("disk full", result["refresh_error"])
         self.assertEqual((self.weapons.read_bytes(), self.upgrades.read_bytes()), self.old_bytes)
-        with sqlite3.connect(self.root / "fallback.db") as connection:
+        with closing(sqlite3.connect(self.root / "fallback.db")) as connection, connection:
             self.assertEqual(connection.execute("SELECT weapon FROM weapons").fetchone()[0], "Old Weapon")
             self.assertEqual(connection.execute("SELECT name FROM mods").fetchone()[0], "Old Mod")
 
@@ -173,7 +175,7 @@ class UpdaterTests(unittest.TestCase):
         self.assertIn("second replace failed", result["refresh_error"])
         self.assertEqual((self.weapons.read_bytes(), self.upgrades.read_bytes()), self.old_bytes)
         self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
-        with sqlite3.connect(self.root / "fallback.db") as connection:
+        with closing(sqlite3.connect(self.root / "fallback.db")) as connection, connection:
             self.assertEqual(connection.execute("SELECT weapon FROM weapons").fetchone()[0], "Old Weapon")
 
     def test_interrupt_after_replacement_restores_the_old_pair(self) -> None:

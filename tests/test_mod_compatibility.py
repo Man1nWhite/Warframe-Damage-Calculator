@@ -1,6 +1,8 @@
 """Bounded mod-family filtering, grounded in offline snapshot and Wiki pages."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import sqlite3
 import tempfile
@@ -39,7 +41,7 @@ class ModCompatibilityTests(unittest.TestCase):
         snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["source_sha256"], SOURCE_SHA256)
         self.assertEqual(snapshot["classes"][CODA_BUBONICO], "Shotgun")
-        with sqlite3.connect(DB) as connection:
+        with closing(sqlite3.connect(DB)) as connection, connection:
             bundled = {row[0] for row in connection.execute(
                 "SELECT unique_name FROM weapons WHERE product_category='LongGuns'")}
         self.assertTrue(bundled)

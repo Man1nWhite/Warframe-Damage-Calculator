@@ -1,6 +1,8 @@
 """SQLite connection context managers do not themselves close the connection."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import sqlite3
 import tempfile
 import unittest
@@ -110,7 +112,7 @@ class ConnectionLifecycleTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "simulated import failure"):
                     build_database(path, "weapons.zip", "mods.zip")
             self.assertTrue(connections[0].closed)
-            with real_connect(path) as connection:
+            with closing(real_connect(path)) as connection:
                 self.assertIsNone(connection.execute(
                     "SELECT name FROM sqlite_master WHERE name='should_rollback'").fetchone())
 

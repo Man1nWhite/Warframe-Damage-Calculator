@@ -2,10 +2,10 @@
 
 This is a snapshot of the repository audit and the work needed next, not a
 claim that every Warframe mechanic has been verified. Start by checking
-`git status` and reviewing the diff. The working tree at handoff contains
-substantial intentional calculator, test, documentation, database, and
-simulation changes; **do not reset or discard them**. The source files and
-saved reports are the source of truth if this note becomes outdated.
+`git status`, the current PR and any new diff. The audit's calculator, test,
+documentation, database and simulation changes were published in PR #2; do
+not reset or discard subsequent work. The source files and saved reports are
+the source of truth if this note becomes outdated.
 
 ## What the project does
 
@@ -188,16 +188,16 @@ git diff --check
 QT_QPA_PLATFORM=offscreen WDC_REQUIRE_GUI_TESTS=1 python -m unittest discover -s tests -v
 ```
 
-The final local run on Python 3.11 passed **546 tests**, including the real
-Qt integration tests with `WDC_REQUIRE_GUI_TESTS=1`; none were skipped. The
-local log was `/tmp/wdc-audit-final-tests.log` (temporary, not a deliverable).
-On
-Linux install Qt's native GL/EGL, xkbcommon and D-Bus libraries first; see the
+The local Python 3.11 run passed **549 tests**, including the real Qt
+integration tests with `WDC_REQUIRE_GUI_TESTS=1`; none were skipped. CI uses
+`python tools/run_tests_ci.py`, which discovers the same tests and emits failure
+annotations, without retrying or filtering them. On Linux install Qt's native
+GL/EGL, xkbcommon and D-Bus libraries first; see the
 [README tests section](../README.md#tests). On Windows set those two variables
 with the shell's usual syntax. The GitHub Actions matrix specifies Linux
-3.11/3.12 and Windows 3.12 with Qt required, but **remote CI has not been run
-as part of this audit**. The local sandbox used `offscreen` and temporary
-native-library workarounds; it does not establish native display/GPU rendering.
+3.11/3.12 and Windows 3.12 with Qt required; see the remote CI notes below.
+The local sandbox used `offscreen` and temporary native-library workarounds;
+it does not establish native display/GPU rendering.
 A Linux PyInstaller bundle was built with a temporary shared Python runtime.
 A newly rebuilt, instrumented bundle passed offscreen weapon/mod calculation,
 save/load, Coda Bubonico's bundled shotgun classification, Primed Pressure
@@ -208,42 +208,41 @@ from the rebuilt catalog. The temporary log was
 `/tmp/wdc-audit-final-packaging.log`. Reproduce that optional check with
 `python -m pip install -r requirements-build.txt` followed by
 `python tests/run_packaging_smoke.py`. The test-only spec and runtime hook are
-not included in the production bundle. The workflow defines a Windows
-packaging-smoke job, but it has not run remotely. **Windows packaging is very
-low priority**, with a possible revisit in **2028** rather than a current
-requirement. This priority does not disable the existing automatic job: the
-current workflow would still schedule it on pushes and pull requests. Linux
-offscreen success is not a Windows EXE or installer test. Runtime/build
-dependencies are not fully pinned, so results may vary with future releases.
+not included in the production bundle. The separate Windows packaging-smoke
+job passed remotely in the historical run linked below; that is not a Windows
+installer or real-display test. **Windows packaging is very low priority**,
+with a possible revisit in **2028** rather than a current requirement. This
+priority does not disable the existing automatic job: the current workflow
+still schedules it on pushes and pull requests. Runtime/build dependencies are
+not fully pinned, so results may vary with future releases.
 
 ### Remote CI route (checked 2026-10-28)
 
-At a **pre-publication** check, the repository's default branch had no
-registered GitHub Actions workflow, no runs were listed, and the session branch
-was not yet on the remote. Those observations are historical; check Git and
-GitHub again for the current PR, branch, and workflow status. A read-only
-request for Actions repository-permission settings returned HTTP 403 ("Resource
-not accessible by integration"), despite the repo view reporting an admin role;
-this does **not** establish whether Actions is enabled or whether a
-push-triggered run would work. A local PyYAML structural check confirmed the
-expected triggers, matrix, required GUI environment and packaging job; this is
-neither `actionlint` nor a remote Actions execution.
-
-The user subsequently requested a pull request for this work. A push may
-trigger the workflow from the pushed commit if Actions is enabled. Inspect the
-branch's run and failed logs with:
+The audit was published as [PR #2](https://github.com/Man1nWhite/Warframe-Damage-Calculator/pull/2),
+which triggered the existing push and pull-request workflows. In
+[PR run 40684336937](https://github.com/Man1nWhite/Warframe-Damage-Calculator/actions/runs/40684336937),
+Ubuntu 3.11/3.12 and the separate Windows packaging smoke passed, but the
+ordinary Windows 3.12 full suite failed: test SQLite handles remained open when
+temporary directories were removed. Test fixtures now explicitly close those
+handles while preserving transaction commit/rollback semantics, and a
+lifecycle regression retains references to verify closure. Recheck the latest
+PR run to establish whether the fix passes on Windows; the historical run
+itself remains failed. Inspect current status with:
 
 ```bash
+gh pr checks 2
 gh run list --branch arena/2d220a36-warframe-damage-calculator
 gh run watch <run-id> --exit-status
 gh run view <run-id> --log-failed
 ```
 
-Do not claim a remote pass until the run finishes. `workflow_dispatch` cannot
-be used for a workflow that is not present on the default branch. If Actions
-settings or logs remain inaccessible, check the integration's Actions
-permissions or repository settings rather than assuming the code passed. Future
-publication should be approved by the user; the GitHub repository is public.
+GitHub's raw log-download host was blocked in the original sandbox. The CI
+runner reports unittest errors through check-run annotations, which were
+accessible through the GitHub API. Do not infer a pass from a pending run.
+A pre-publication Actions-permission query returned 403 despite an admin role;
+that did not mean Actions was disabled. `workflow_dispatch` requires the
+workflow to exist on the default branch. Future publication should be approved
+by the user; the GitHub repository is public.
 
 The current workflow includes Windows's ordinary test matrix entry **and** a
 separate automatically scheduled Windows packaging job. Packaging is very low
@@ -300,8 +299,8 @@ and timeouts. Seeds and trial counts belong with any new result.
    Electricity totaling 3% of maximum defense per stack over six seconds,
    with source modifiers; other pages differ in wording. See the formula audit
    and the individual reports before changing behavior.
-4. **Remote CI and updater networking.** With approval, publish the current
-   branch and inspect its push-triggered GitHub Actions run as described above.
+4. **Remote CI and updater networking.** Inspect the latest PR and GitHub
+   Actions runs as described above, especially the Windows SQLite cleanup fix.
    Exercise an actual DE refresh later from an environment allowed to access
    its endpoints, using isolated app data. The sandbox's restricted network
    prevented a live refresh; fixtures and a historical manifest sample were

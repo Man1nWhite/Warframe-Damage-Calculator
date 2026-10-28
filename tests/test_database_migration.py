@@ -1,6 +1,8 @@
 """Offline, transactional migration of legacy AppData databases."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import contextlib
 import io
 import json
@@ -39,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
         (self.root / "builds" / "my-build.json").write_text('{"weapon":"Custom Weapon"}')
         (self.root / "settings.json").write_text('{"custom":"value"}')
         shutil.copy2(ROOT / "data" / "weapons.db", self.db)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("PRAGMA user_version = 0")
             # The old index mapping put innate Electricity into Heat.
             connection.execute("UPDATE weapons SET heat=75, cold=0, elec=0 "
@@ -54,9 +56,38 @@ class DatabaseMigrationTests(unittest.TestCase):
     def migrate(self):
         return migration.migrate_database(self.db, WEAPONS, UPGRADES, SPREADSHEET)
 
+    def test_fixture_closes_database_handles_before_directory_cleanup(self):
+        # A SQLite transaction context commits but does not close. Keep the
+        # handles alive to prove the fixture closes them without relying on GC.
+        class TrackingConnection(sqlite3.Connection):
+            closed = False
+            def close(self):
+                self.closed = True
+                super().close()
+
+        real_connect = sqlite3.connect
+        connections = []
+        def tracked_connect(*args, **kwargs):
+            connection = real_connect(*args, factory=TrackingConnection, **kwargs)
+            connections.append(connection)
+            return connection
+
+        fixture = DatabaseMigrationTests(
+            methodName="test_fixture_closes_database_handles_before_directory_cleanup")
+        with patch("sqlite3.connect", side_effect=tracked_connect):
+            fixture.setUp()
+            try:
+                fixture.inspect(fixture.db)
+                fixture.set_legacy_grimoire()
+                fixture.grimoire_row(fixture.db)
+                self.assertGreaterEqual(len(connections), 4)
+                self.assertTrue(all(connection.closed for connection in connections))
+            finally:
+                self.assertTrue(fixture.doCleanups())
+
     @staticmethod
     def inspect(path: Path):
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             return (
                 connection.execute("PRAGMA user_version").fetchone()[0],
                 connection.execute("SELECT heat,cold,elec FROM weapons "
@@ -86,7 +117,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                          {"weapon": "Custom Weapon"})
         self.assertEqual(json.loads((self.root / "settings.json").read_text()),
                          {"custom": "value"})
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA quick_check").fetchone()[0], "ok")
         # A current database doesn't need source files and never makes another backup.
         self.assertEqual(migration.migrate_database(self.db, "missing", "missing").status, "current")
@@ -140,7 +171,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
     def test_missing_effect_rank_cannot_erase_previously_parsed_effects(self):
         old = self.inspect(self.db)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             unique, rank = connection.execute(
                 "SELECT unique_name, rank FROM mod_effects "
                 "WHERE unique_name LIKE '/Lotus/%' LIMIT 1").fetchone()
@@ -159,7 +190,7 @@ class DatabaseMigrationTests(unittest.TestCase):
     def add_legacy_false_positives(self):
         # The bundled revision-2 snapshot is clean; construct actual
         # revision-0/1-style stale rows explicitly instead of depending on it.
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("INSERT INTO mod_effects VALUES (?,3,1,'BLAST',.24,'+24% blast range')",
                                ("/Lotus/Upgrades/Mods/Rifle/WeaponIncreaseRadialExplosionMod",))
             connection.execute("INSERT INTO mod_effects VALUES (?,3,1,'TOXIN',1.0,'+100% toxin damage')",
@@ -170,7 +201,8 @@ class DatabaseMigrationTests(unittest.TestCase):
         proton = "/Lotus/Upgrades/Mods/Sets/Spider/SpiderModC"
         self.add_legacy_false_positives()
         result = self.migrate()
-        with sqlite3.connect(result.backup_path) as old, sqlite3.connect(self.db) as current:
+        with closing(sqlite3.connect(result.backup_path)) as old, old, \
+             closing(sqlite3.connect(self.db)) as current, current:
             for unique in (firestorm, proton):
                 with self.subTest(unique=unique):
                     self.assertGreater(old.execute("SELECT count(*) FROM mod_effects WHERE unique_name=?",
@@ -200,7 +232,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
     def test_missing_fragment_is_rejected_even_if_another_effect_at_rank_survives(self):
         amar = "/Lotus/Upgrades/Mods/Sets/Amar/AmarMeleeMod"
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("INSERT INTO mod_effects VALUES (?, 5, 99, 'TRUE', 0.5, '+50% Damage')", (amar,))
         before = self.inspect(self.db)
         with self.assertRaisesRegex(migration.DatabaseMigrationError, "mod-effect ranks"):
@@ -210,7 +242,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
     def test_revision_one_refreshes_only_official_mods_with_a_backup(self):
         pressure = "/Lotus/Upgrades/Mods/Melee/Expert/WeaponMeleeDamageModExpert"
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("PRAGMA user_version=1")
             connection.execute("DELETE FROM mod_effects WHERE unique_name=?", (pressure,))
             connection.execute("UPDATE mods SET supported=0 WHERE unique_name=?", (pressure,))
@@ -220,7 +252,7 @@ class DatabaseMigrationTests(unittest.TestCase):
         result = self.migrate()
         self.assertEqual((result.status, result.from_revision), ("migrated", 1))
         self.assertEqual(self.inspect(result.backup_path), old)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_DATABASE_REVISION)
             self.assertEqual(connection.execute("SELECT heat FROM weapons WHERE weapon='Alternox Prime'").fetchone()[0], 123)
             self.assertEqual(connection.execute("SELECT supported FROM mods WHERE unique_name=?", (pressure,)).fetchone()[0], 1)
@@ -231,7 +263,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT note FROM personal_notes").fetchone()[0], "keep me")
 
     def test_revision_one_mod_refresh_rolls_back_and_retains_backup(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("PRAGMA user_version=1")
         old = self.inspect(self.db)
         def fail_mid_mod_import(connection, payload):
@@ -244,7 +276,7 @@ class DatabaseMigrationTests(unittest.TestCase):
         self.assertEqual(self.inspect(caught.exception.backup_path), old)
 
     def test_revision_one_preserves_weapons_not_in_the_saved_weapon_export(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("PRAGMA user_version=1")
             connection.execute("UPDATE weapons SET heat=456 WHERE weapon='Alternox Prime'")
         partial = self.root / "partial-weapons.zip"
@@ -256,12 +288,12 @@ class DatabaseMigrationTests(unittest.TestCase):
             archive.writestr(name, json.dumps(payload))
         result = migration.migrate_database(self.db, partial, UPGRADES, SPREADSHEET)
         self.assertEqual(result.from_revision, 1)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("SELECT heat FROM weapons WHERE weapon='Alternox Prime'").fetchone()[0], 456)
             self.assertEqual(connection.execute("SELECT count(*) FROM weapons WHERE weapon='Custom Weapon'").fetchone()[0], 1)
 
     def test_process_exit_during_revision_one_mod_refresh_rolls_back(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("PRAGMA user_version=1")
         old = self.inspect(self.db)
         program = '''
@@ -298,7 +330,7 @@ migration.migrate_database(*sys.argv[1:])
         self.assertEqual(self.inspect(self.db), old)
 
     def test_manual_rebuild_write_failure_rolls_back_schema_and_data(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("DROP INDEX idx_mods_slot_group")
         old = self.inspect(self.db)
         def fail_mid_import(connection, payload, *, preserve_unmatched_mods=False):
@@ -309,7 +341,7 @@ migration.migrate_database(*sys.argv[1:])
             with self.assertRaisesRegex(RuntimeError, "write failed"):
                 build_database(self.db, WEAPONS, UPGRADES, SPREADSHEET)
         self.assertEqual(self.inspect(self.db), old)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertIsNone(connection.execute("SELECT name FROM sqlite_master "
                                                  "WHERE name='idx_mods_slot_group'").fetchone())
 
@@ -317,7 +349,7 @@ migration.migrate_database(*sys.argv[1:])
         original_backup = migration._backup_database
         def backup_then_change(connection, path, revision):
             backup = original_backup(connection, path, revision)
-            with sqlite3.connect(path) as other:
+            with closing(sqlite3.connect(path)) as other, other:
                 other.execute("UPDATE personal_notes SET note='changed elsewhere'")
             return backup
         with patch.object(migration, "_backup_database", side_effect=backup_then_change):
@@ -348,7 +380,7 @@ migration.migrate_database(*sys.argv[1:])
         self.assertEqual(list((self.db.parent / "backups").glob("*.sqlite3")), [])
 
     def test_future_database_is_not_downgraded_or_refreshed(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute(f"PRAGMA user_version = {CURRENT_DATABASE_REVISION + 1}")
         old = self.inspect(self.db)
         with self.assertRaises(UnsupportedDatabaseRevision):
@@ -365,7 +397,7 @@ migration.migrate_database(*sys.argv[1:])
         self.assertFalse((self.db.parent / "backups").exists())
 
     def test_backup_includes_committed_wal_content(self):
-        with sqlite3.connect(self.db) as writer:
+        with closing(sqlite3.connect(self.db)) as writer, writer:
             writer.execute("PRAGMA journal_mode=WAL")
             writer.execute("UPDATE personal_notes SET note='in the WAL'")
             writer.commit()
@@ -407,12 +439,12 @@ migration.migrate_database(*sys.argv[1:])
         self.assertTrue(result.backup_path.is_file())
 
     def test_incompatible_current_schema_is_not_used(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute(f"PRAGMA user_version={CURRENT_DATABASE_REVISION}")
             connection.execute("ALTER TABLE weapons RENAME COLUMN heat TO missing_heat")
         with self.assertRaisesRegex(migration.DatabaseMigrationError, "missing required columns"):
             self.migrate()
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0],
                              CURRENT_DATABASE_REVISION)
         self.assertFalse((self.db.parent / "backups").exists())
@@ -420,19 +452,19 @@ migration.migrate_database(*sys.argv[1:])
     def set_legacy_grimoire(self, revision=2):
         legacy = next(row for row in rows_from_cleaned_json(WEAPONS)
                       if row["unique_name"] == GRIMOIRE_DOPPELGANGER_ID)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             upsert_weapon_rows(connection, [legacy])
             connection.execute(f"PRAGMA user_version={revision}")
 
     @staticmethod
     def grimoire_row(path):
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             return connection.execute("SELECT * FROM weapons WHERE weapon='Grimoire'").fetchone()
 
     def test_revision_two_repairs_only_unedited_legacy_grimoire_with_backup(self):
         self.set_legacy_grimoire()
         legacy = self.grimoire_row(self.db)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             before_weapons = connection.execute(
                 "SELECT * FROM weapons WHERE weapon!='Grimoire' ORDER BY weapon").fetchall()
             before_mods = connection.execute("SELECT * FROM mods ORDER BY unique_name").fetchall()
@@ -444,7 +476,7 @@ migration.migrate_database(*sys.argv[1:])
         row = self.grimoire_row(self.db)
         self.assertEqual(row[1], GRIMOIRE_PLAYER_ID)
         self.assertEqual(row[4], 150)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_DATABASE_REVISION)
             self.assertEqual(connection.execute(
                 "SELECT * FROM weapons WHERE weapon!='Grimoire' ORDER BY weapon").fetchall(), before_weapons)
@@ -471,7 +503,7 @@ migration.migrate_database(*sys.argv[1:])
 
     def test_revision_two_preserves_custom_grimoire(self):
         self.set_legacy_grimoire()
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("UPDATE weapons SET unique_name='custom/grimoire', dmg=42 "
                                "WHERE weapon='Grimoire'")
         custom = self.grimoire_row(self.db)
@@ -482,13 +514,13 @@ migration.migrate_database(*sys.argv[1:])
 
     def test_revision_two_does_not_overwrite_edited_legacy_grimoire(self):
         self.set_legacy_grimoire()
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("UPDATE weapons SET dmg=26 WHERE weapon='Grimoire'")
         old = self.grimoire_row(self.db)
         with self.assertRaisesRegex(migration.DatabaseMigrationError, "Grimoire.*modified"):
             self.migrate()
         self.assertEqual(self.grimoire_row(self.db), old)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
         self.assertFalse((self.db.parent / "backups").exists())
 
@@ -520,7 +552,7 @@ migration.migrate_database(*sys.argv[1:])
                 self.migrate()
         self.assertEqual(self.grimoire_row(self.db), old)
         self.assertEqual(self.grimoire_row(caught.exception.backup_path), old)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
 
     def test_process_exit_during_revision_two_repair_rolls_back(self):
@@ -544,7 +576,7 @@ migration.migrate_database(*sys.argv[1:])
                                 capture_output=True, text=True, timeout=30, check=False)
         self.assertEqual(result.returncode, 94, result.stderr)
         self.assertEqual(self.grimoire_row(self.db), old)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
             self.assertEqual(connection.execute("PRAGMA quick_check").fetchone()[0], "ok")
         backups = list((self.db.parent / "backups").glob("*-pre-v2-*.sqlite3"))
@@ -555,7 +587,7 @@ migration.migrate_database(*sys.argv[1:])
         fresh = self.root / "fresh.db"
         build_database(fresh, WEAPONS, UPGRADES, SPREADSHEET)
         for path in (fresh, ROOT / "data" / "weapons.db"):
-            with self.subTest(path=path), sqlite3.connect(path) as connection:
+            with self.subTest(path=path), closing(sqlite3.connect(path)) as connection, connection:
                 self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0],
                                  CURRENT_DATABASE_REVISION)
                 self.assertEqual(connection.execute("SELECT heat,cold,elec FROM weapons "

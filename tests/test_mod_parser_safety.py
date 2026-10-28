@@ -6,6 +6,8 @@ and https://wiki.warframe.com/w/Proton_Snap (conditional on Wall Latch).
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 import sqlite3
 import tempfile
 import unittest
@@ -108,7 +110,7 @@ class ExistingDatabaseSafetyTests(unittest.TestCase):
     def test_legacy_filter_keeps_user_defined_effects_even_with_custom_text(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "custom.db"
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 create_schema(connection)
                 connection.execute("INSERT INTO mods(unique_name, name, slot_group, supported) "
                                    "VALUES('/custom/fire', 'My custom damage', 'PRIMARY', 1)")

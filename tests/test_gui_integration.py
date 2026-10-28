@@ -1,6 +1,8 @@
 """Real Qt widget/SQLite integration tests; no display or network required."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import os
 import shutil
@@ -164,7 +166,7 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertIn("Amar's Contempt", {m.name for m in self.window.available_mods})
 
     def test_custom_mod_is_not_collapsed_into_an_identical_official_mod(self):
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             row = connection.execute("SELECT effect_summary FROM mods WHERE unique_name=?",
                 ("/Lotus/Upgrades/Mods/Rifle/WeaponDamageAmountMod",)).fetchone()
             connection.execute("INSERT INTO mods(unique_name,name,slot_group,supported,fusion_limit,effect_summary) "
@@ -386,7 +388,7 @@ class GuiIntegrationTests(unittest.TestCase):
 
     def test_saved_data_rebuild_does_not_call_the_network_and_shows_backup(self):
         seed_source_files(ROOT)
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             connection.execute("INSERT INTO mods(unique_name, name) VALUES('/custom/mod', 'Custom Mod')")
         dialog = SettingsDialog(self.window)
         try:
@@ -402,18 +404,18 @@ class GuiIntegrationTests(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertIn(str(backups[0]), dialog.status.toPlainText())
             self.assertIn(str(backups[0]), self.information.call_args.args[2])
-            with sqlite3.connect(self.paths["db"]) as connection:
+            with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
                 self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0],
                                  CURRENT_DATABASE_REVISION)
                 self.assertEqual(connection.execute("SELECT count(*) FROM mods WHERE unique_name='/custom/mod'").fetchone()[0], 0)
-            with sqlite3.connect(backups[0]) as connection:
+            with closing(sqlite3.connect(backups[0])) as connection, connection:
                 self.assertEqual(connection.execute("SELECT count(*) FROM mods WHERE unique_name='/custom/mod'").fetchone()[0], 1)
         finally:
             dialog.close()
 
     def test_backup_failure_is_reported_without_erasing_custom_mods(self):
         seed_source_files(ROOT)
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             connection.execute("INSERT INTO mods(unique_name, name) VALUES('/custom/mod', 'Custom Mod')")
         dialog = SettingsDialog(self.window)
         try:
@@ -422,7 +424,7 @@ class GuiIntegrationTests(unittest.TestCase):
                 dialog.use_backup_button.click()
             self.assertIn("disk full", dialog.status.toPlainText())
             self.assertTrue(self.critical.called)
-            with sqlite3.connect(self.paths["db"]) as connection:
+            with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
                 self.assertEqual(connection.execute("SELECT count(*) FROM mods WHERE unique_name='/custom/mod'").fetchone()[0], 1)
         finally:
             self.critical.reset_mock()
@@ -447,14 +449,14 @@ class GuiIntegrationTests(unittest.TestCase):
         pipeline.assert_not_called()
 
     def test_startup_upgrades_before_window_construction(self):
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             connection.execute("PRAGMA user_version=0")
             connection.execute("UPDATE weapons SET heat=75, elec=0 WHERE weapon='Alternox Prime'")
         observed = []
         real_window = DamageCalculatorWindow
         created = []
         def make_window(*args, **kwargs):
-            with sqlite3.connect(self.paths["db"]) as connection:
+            with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
                 observed.append((connection.execute("PRAGMA user_version").fetchone()[0],
                                  connection.execute("SELECT heat,elec FROM weapons "
                                                     "WHERE weapon='Alternox Prime'").fetchone()))
@@ -476,7 +478,7 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(list((self.paths["data"] / "backups").glob("*.sqlite3"))), 1)
 
     def test_startup_failure_blocks_window_and_reports_the_error(self):
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             connection.execute("PRAGMA user_version=0")
         # Seeding deliberately does not overwrite existing files.
         (self.paths["source"] / "ExportWeapons_en_Cleaned.zip").write_bytes(b"invalid")
@@ -490,11 +492,11 @@ class GuiIntegrationTests(unittest.TestCase):
         app_exec.assert_not_called()
         error.assert_called_once()
         self.assertIn("No migration changes", error.call_args.args[2])
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 0)
 
     def test_startup_rejects_newer_revisions_before_building_a_window(self):
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             connection.execute(f"PRAGMA user_version={CURRENT_DATABASE_REVISION + 1}")
         with patch.object(startup, "build_application", return_value=self.app), \
              patch.object(startup, "DamageCalculatorWindow") as window_factory, \
@@ -502,7 +504,7 @@ class GuiIntegrationTests(unittest.TestCase):
             startup.main()
         window_factory.assert_not_called()
         self.assertIn("newer", error.call_args.args[2])
-        with sqlite3.connect(self.paths["db"]) as connection:
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0],
                              CURRENT_DATABASE_REVISION + 1)
 

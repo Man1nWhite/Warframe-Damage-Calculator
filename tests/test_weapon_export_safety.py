@@ -1,6 +1,8 @@
 """Regression tests for name collisions in the official weapon export."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import sqlite3
 import tempfile
@@ -40,7 +42,7 @@ class WeaponExportCollisionTests(unittest.TestCase):
                 # Keep both in the payload so a legacy database using the
                 # doppelganger ID still passes source-coverage checks.
                 self.assertEqual({r["unique_name"] for r in rows}, {PLAYER, DOPPELGANGER})
-                with sqlite3.connect(":memory:") as connection:
+                with closing(sqlite3.connect(":memory:")) as connection, connection:
                     create_schema(connection)
                     upsert_weapon_rows(connection, rows)
                     actual = connection.execute(
