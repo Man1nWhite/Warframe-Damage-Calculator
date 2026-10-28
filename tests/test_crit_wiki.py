@@ -30,6 +30,7 @@ from modules.crit import (
     crit_tiers,
     critical_shot,
     direct_aoe_shot,
+    headshot_crit_multiplier,
     modded_crit_chance,
     modded_crit_multiplier,
     normal_shot,
@@ -149,6 +150,31 @@ class ArsenalShotTests(unittest.TestCase):
     def test_weak_point_multiplier_and_bonus(self) -> None:
         # Average Shot x (Weak Point Multiplier + Weak Point Damage Bonus).
         self.assertAlmostEqual(weak_point_shot(200.0, 2.0, 0.35), 470.0)
+
+
+class HeadshotCritTests(unittest.TestCase):
+    """Critical_Hit's head-specific expression, not the weak-point average."""
+
+    def test_wiki_lanka_example(self) -> None:
+        # 2.0 x (1 + Vital Sense 120%) = 4.4 at tier 2, headshot 3.0x:
+        # 3.0 x (1 + 2 x (2 x 4.4 - 1)) = 49.8.
+        self.assertAlmostEqual(
+            headshot_crit_multiplier(4.4, 2, 3.0), 49.8)
+
+    def test_tier_zero_is_the_plain_headshot_multiplier(self) -> None:
+        # A non-critical headshot gets no crit bonus at all.
+        self.assertAlmostEqual(headshot_crit_multiplier(4.4, 0, 3.0), 3.0)
+
+    def test_cold_bonus_enters_the_total_multiplier(self) -> None:
+        # Freeze is additive Critical Damage, so it raises the doubled term.
+        total = modded_crit_multiplier(2.0, 0.0, cold_crit_damage_bonus(10))
+        self.assertAlmostEqual(total, quantize_crit_multiplier(2.0) + 1.0)
+        expected = 3.0 * (1.0 + 1 * (2.0 * total - 1.0))
+        self.assertAlmostEqual(headshot_crit_multiplier(total, 1, 3.0), expected)
+
+    def test_negative_tier_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            headshot_crit_multiplier(4.4, -1)
 
 
 class SimulatorIntegrationTests(unittest.TestCase):

@@ -12,6 +12,29 @@ and filter-refresh measurements — is in git history at
 - HEAD at handoff: `470e9dd` (pushed)
 - Base of this branch's work: `30b5a9f` (merge of PR #2)
 
+## 2026-10-28 evening pass (branch `arena/e06d059d-warframe-damage-calculator`)
+
+- Formula re-check: the core pages were fetched live again and compared
+  expression by expression; §6 of `wiki_formula_verification.md` is the table.
+  No drift was found. One *missing* expression was added:
+  `crit.headshot_crit_multiplier` (Critical_Hit's headshot-crit form, which is
+  not the weak-point average already implemented). Nothing calls it yet.
+- Optimisation: `docs/optimization_review.md` records the measurements.
+  `route_enemy_hit` now fills one dictionary instead of two,
+  `jat_kittag_sim._next_status_tick` scans instead of building two generators,
+  and the seven inline `1 + tier * (CDM - 1)` spellings now call
+  `crit.crit_multiplier_for_tier`. Jat slam trials went 9.54 → 7.71 ms
+  (−19%), Ocucor 3.70 → 3.34, Kuva Nukor 1.16 → 1.06, with **byte-identical**
+  trial records.
+- New tooling: `tools/bench_models.py` (fixed-seed digest + ms/trial table,
+  `tests/test_bench_models.py`). Use it before and after touching a
+  simulator; the digest, not the wall clock, is the contract.
+- Gates on this pass: `ruff check .` clean, `mypy` clean (35 files),
+  626 tests OK (one GUI skip).
+- Still open from the list below: item 2 (Jat Riven crit damage 1.013 vs
+  1.0125 — untouched here), item 3 (`docs/wiki_numbers.json` needs a
+  networked machine), items 4–6.
+
 ## Verified state
 
 Run from the repository root with `requirements.txt` and

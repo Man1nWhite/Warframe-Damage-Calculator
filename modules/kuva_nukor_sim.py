@@ -60,6 +60,7 @@ from modules.constants import FACTION_MULTIPLIERS
 from modules.crit import (
     COLD_STACK_CAP,
     cold_crit_damage_bonus,
+    crit_multiplier_for_tier,
     quantize_crit_multiplier,
 )
 from modules.damage_routing import RoutedDamage, route_enemy_hit, status_vulnerability
@@ -661,7 +662,7 @@ def simulate(build: NukorBuild,
             tier = full + 1
         else:
             tier = full
-        return 1.0 + tier * (crit_multiplier - 1.0)
+        return crit_multiplier_for_tier(crit_multiplier, tier)
 
     def roll_proc_types(k: int) -> list[str]:
         types = list(build.proc_weights)
@@ -1156,8 +1157,8 @@ def simulate_room(build: NukorBuild,
             t = targets[idx]
             if t.health <= 0:
                 continue
-            cf = 1.0 + tier * (t.crit_damage_multiplier(
-                build.crit_multiplier, now) - 1.0)
+            cf = crit_multiplier_for_tier(
+                t.crit_damage_multiplier(build.crit_multiplier, now), tier)
             scale = galv_shot_scale(build.damage_bonus, t.unique_status_count(now))
             seed_value = build.modded_base_single * beams * scale
             damage = {name: wiki_quantized_damage(single * beams * scale, seed_value)

@@ -61,17 +61,22 @@ def route_enemy_hit(
     Overguard-only multiplier does not carry over.
     """
     modifiers = faction_type_modifiers or {}
-    typed = {
-        kind: max(0.0, amount) * max(0.0, modifiers.get(kind, 1.0))
-        for kind, amount in damage_by_type.items()
-        if amount > 0
-    }
-    mag_mult = status_vulnerability(magnetic_stacks)
-    potential_og = mag_mult * sum(
-        max(0.0, amount) * (VOID_OVERGUARD_MULTIPLIER if kind == "VOID" else 1.0)
-        for kind, amount in damage_by_type.items()
-        if amount > 0
-    )
+    # One pass builds both the faction-modified health components and the
+    # Overguard total. The route is called once per simulated damage instance,
+    # so the two dictionaries and the second scan the obvious spelling needs
+    # were the hottest allocation site in the tick simulators; the sums below
+    # keep the original per-type order, which makes this a pure refactor.
+    typed: dict[str, float] = {}
+    overguard_total = 0.0
+    for kind, amount in damage_by_type.items():
+        if amount <= 0:
+            continue
+        typed[kind] = amount * max(0.0, modifiers.get(kind, 1.0))
+        if kind == "VOID":
+            overguard_total += amount * VOID_OVERGUARD_MULTIPLIER
+        else:
+            overguard_total += amount
+    potential_og = status_vulnerability(magnetic_stacks) * overguard_total
     remaining_og = max(0.0, overguard)
     if remaining_og and potential_og:
         absorbed = min(remaining_og, potential_og)

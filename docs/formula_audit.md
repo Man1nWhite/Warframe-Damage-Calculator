@@ -418,3 +418,32 @@ fields. `tests/test_damage_routing.py`,
 `tests/test_simulator_routing_integration.py` exercise selected routing,
 status, source-modifier and cutoff invariants; `tests/test_trial_statistics.py`
 checks summary percentiles and timeouts. None establish validated TTKs.
+
+## 2026-10-28 (evening): live re-read and a behaviour-neutral optimisation pass
+
+The core pages were fetched from the Wiki again today and compared expression
+by expression with the code. The per-formula table is §6 of
+[wiki_formula_verification.md](wiki_formula_verification.md); no formula had
+drifted, so no pinned number moved.
+
+One expression was **missing** rather than wrong: `Critical_Hit`'s headshot
+critical multiplier `Headshot Multi × (1 + Tier × (2 × Total CDM − 1))` is not
+the weak-point average that `Damage/Calculation` defines and that
+`modules/crit.py` already implemented. It is now
+`crit.headshot_crit_multiplier`, pinned to the page's Lanka example (49.8) and
+to its exclusions (heads only, 1.0x-headshot weapons never benefit). No
+simulator calls it: none of the bundled models fires at heads, and the page
+gives no way to apply it to body parts, so wiring it in would need a scenario
+that shows a difference.
+
+The same pass removed duplication that could hide future drift: the critical
+tier expression `1 + tier × (CDM − 1)` was spelled out at seven sites in five
+modules and now comes from `crit.crit_multiplier_for_tier`. The optimisation
+review (timings, the remaining opportunities and why they were declined) is
+[optimization_review.md](optimization_review.md); results are bit-identical,
+verified by `tools/bench_models.py`.
+
+Still open, unchanged by this pass: the Jat Kittag Riven critical-damage
+constant (`1.013` versus the derived `1.0125`), status-immunity
+renormalisation, shields, AoE critical rules, and the Overguard-level-input
+conflict recorded in §4.1.

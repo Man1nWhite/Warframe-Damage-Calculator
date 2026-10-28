@@ -25,6 +25,12 @@ itself needs network access:
   extracts the numbers next to each claim's keyword and compares them with the
   code, with `--save-snapshot` / `--baseline` turning two runs into a diff of
   exactly which numbers appeared or disappeared.
+- **A behaviour-neutral optimisation gate.** The simulators are the slowest
+  part of the tree, and every published figure is seeded model output.
+  `tools/bench_models.py --snapshot` / `--check` hashes the complete trial
+  records of three models, so a speed change can be shown to leave results
+  bit-identical; [`docs/optimization_review.md`](docs/optimization_review.md)
+  records the timings and the opportunities that were deliberately left.
 - **Exact numbers under test.** The suite pins worked examples and regressions
   (armor reduction, 32-quantization, DoT ticks, crit tiers, Cold/Blast stack
   caps, Riven values, Condition Overload) instead of asserting that "something
@@ -52,6 +58,11 @@ python -m ruff check . && python -m mypy    # the gates CI runs
 python tools/wiki_audit.py --save-snapshot docs/wiki_numbers.json
 # After a game update, show only the numbers that appeared or disappeared.
 python tools/wiki_audit.py --baseline docs/wiki_numbers.json
+
+# Prove an optimisation left the simulated results bit-identical.
+python tools/bench_models.py --snapshot /tmp/before.json   # before editing
+python tools/bench_models.py --check /tmp/before.json      # after editing
+python tools/bench_models.py --trials 20 --repeats 3       # ms/trial table
 ```
 
 The snapshot is written by the first command and is not committed, since it
