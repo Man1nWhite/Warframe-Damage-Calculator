@@ -212,7 +212,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
    `jat_kittag_sim`, `jat_kittag_slam_analysis`). Changes are small
    (≤0.2%) but the wiki's quantization section is explicit that the stored
    base value is the decoded 12-bit code.
-3. **New tests** — `tests/test_crit_wiki.py` (22 tests covering the
+3. **New tests** — `tests/test_crit_wiki.py` (26 tests covering the
    critical-hit page) and `tests/test_wiki_cross_checks.py` (18 tests
    pinning the proc-timing, Blast, Corrosive, Heat-strip, Magnetic-break,
    Viral/Magnetic, multishot and Enervate constants to the pages cited above).
@@ -223,7 +223,6 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
    `test_one_flare_stack_per_damage_instance` pins Cascadia Flare's
    one-stack-per-hit rule with a forced multi-Heat roll. `ocucor_sim` already
    enforced it (`heat_this_tick`), so only the regression guard is new.
-
 6. **Blast stack expiry floor.** An expiring stack now deals the wiki's
    `max(1, 0.3 × H)` in `kuva_nukor_sim`, `akarius_sim` and
    `alternox_prime_sim`. The floor is unreachable for the bundled builds
