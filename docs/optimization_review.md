@@ -203,7 +203,7 @@ records the measurements and the changes.
 
 ### 7.2 Measurements
 
-`ms/trial`, best of three runs of best-of-five repeats.
+`ms/trial`, best of three runs of best-of-five repeats, one core.
 
 | Model | Before | After | Change |
 | --- | --- | --- | --- |
@@ -216,12 +216,26 @@ records the measurements and the changes.
 
 The digest is identical before and after (`sha256 476ec4f75e018a89…`), so every
 figure in `docs/` that was produced by these models still reproduces. The suite
-stays at ~8.5 s (627 tests, one GUI skip). The Jat and Ocucor rows matter most:
-those are the two models the research reports run in bulk.
+stays around 10 s (630 tests, one GUI skip, including the new artifact guard).
 
-Two of the changes — the router and the shared `DummyTarget` methods — reach
-models that were previously outside the digest, which is why the harness was
-widened first.
+**Run-to-run variance is about ±10% on this machine**, which is larger than the
+two smallest rows, so the comparison was repeated with the baseline and the
+optimised tree interleaved (three rounds, same harness, best value of each):
+
+| Model | Before | After | Interleaved change |
+| --- | --- | --- | --- |
+| `jat_kittag_sim` | 6.65 | 5.53 | −17% |
+| `ocucor_sim` | 2.94 | 2.36 | −20% |
+| `kuva_nukor_sim` | 0.91 | 0.82 | −10% |
+| `akarius_sim` | 0.86 | 0.76 | −12% |
+| `alternox_prime_sim` | 1.17 | 1.19 | within noise |
+| `jat_kittag_slam_counts` (untouched; the noise floor) | 26.64 | 26.29 | −1% |
+
+Read the headline as **−15…−20% on the two models that dominate the bulk runs**
+(Jat slam and Ocucor), ~10% on Nukor and Akarius, and *not measurable* on
+Alternox, rather than as the exact percentages in the first table. The
+untouched slam-count model moving by 1% sets the floor for what counts as a
+result here.
 
 ### 7.3 What changed
 
@@ -275,7 +289,10 @@ widened first.
    prerequisite, not a side effect: without it the Akarius/Alternox changes in
    (1) would have been unprotected by any digest, and the artifact's model had
    no equivalence check at all. `tests/test_bench_models.py` pins the model
-   list.
+   list, and the new `tests/test_slam_results_artifact.py` re-simulates the
+   cheapest artifact row (1,000 trials, ~0.3 s) and requires it to match the
+   committed record exactly — the guard whose absence let the staleness in §7.4
+   below go unnoticed.
 
 ### 7.4 A correction to §2: the 170,000-trial sweep is not a lunch break
 
@@ -308,13 +325,15 @@ Weighted by the scenario table in `jat_kittag_slam_count_sweep.SCENARIOS`
   `jat_kittag_sim` at scale should scale its cost from the §7.2 row.
 - No published number is affected — only the estimate of how long it takes to
   reproduce one.
-- Running it also turned up a **stale artifact**: the committed
-  `docs/jat_kittag_expected_slams_results.jsonl` predates the critical-damage
-  quantization, so 34 of its 44 records no longer reproduce (by ≤ 0.04 slams;
-  no median or percentile moves). The evidence, the affected table cells and
-  the repair are written up in
-  [`jat_kittag_expected_slams.md`](jat_kittag_expected_slams.md#known-reproducibility-gap-found-2026-10-28-not-yet-repaired).
-  It is recorded, not fixed: regenerating the artifact is a research decision.
+- Running it also turned up a **stale artifact**, which was then **regenerated**.
+  The committed `docs/jat_kittag_expected_slams_results.jsonl` predated the
+  critical-damage quantization, so 34 of its 44 records no longer reproduced
+  (by ≤ 0.04 slams; no median or percentile moves). The cause was proven by
+  disabling `crit.quantize_crit_multiplier` and reproducing the old file
+  exactly; the new file is deterministic across runs and its SHA-256 is
+  `7c584c3454239dbd…` (was `94422cf20a535c30…`). Seven sensitivity cells moved
+  in the second decimal. Full record:
+  [`jat_kittag_expected_slams.md`](jat_kittag_expected_slams.md#regeneration-record-2026-10-28).
 
 ### 7.5 Opportunities identified but **not** taken, again
 
