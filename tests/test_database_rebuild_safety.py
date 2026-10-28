@@ -9,12 +9,14 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+from modules.database_backup import DatabaseBackupError, create_database_backup
 from modules.database_revision import CURRENT_DATABASE_REVISION
 from modules.importer import build_database
 
@@ -91,6 +93,31 @@ class DatabaseRebuildSafetyTests(unittest.TestCase):
             build_database(self.db, bad, self.upgrades)
         self.assertEqual(self.inspect(self.db), before)
         self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_locked_backup_deadline_is_not_extended_by_a_long_busy_timeout(self):
+        # sqlite3_backup_step blocks inside SQLite's busy handler, so a caller
+        # that connected with a long timeout would otherwise blow straight
+        # through the deadline and report the lock up to a minute later.
+        writer = sqlite3.connect(self.db)
+        self.addCleanup(writer.close)
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("UPDATE personal_notes SET note='uncommitted'")
+        with closing(sqlite3.connect(self.db)) as reader:
+            self.addCleanup(writer.rollback)
+            reader.execute("PRAGMA busy_timeout = 60000")
+            started = time.monotonic()
+            with patch("modules.database_backup.BACKUP_LOCK_DEADLINE_SECONDS", 0.05):
+                with self.assertRaisesRegex(DatabaseBackupError, "stayed locked"):
+                    create_database_backup(reader, self.db, label="locked")
+            self.assertLess(time.monotonic() - started, 5.0)
+            # The caller's own timeout survives the attempt.
+            self.assertEqual(reader.execute("PRAGMA busy_timeout").fetchone()[0], 60000)
+
+    def test_successful_backup_restores_the_callers_busy_timeout(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA busy_timeout = 7000")
+            create_database_backup(connection, self.db, label="restore")
+            self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 7000)
 
     def test_backup_failure_prevents_destructive_write(self):
         before = self.inspect(self.db)

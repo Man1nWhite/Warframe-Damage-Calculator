@@ -5,10 +5,12 @@ import math
 import sqlite3
 import stat
 import zipfile
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import TypeVar
 
 import openpyxl
 
@@ -163,6 +165,27 @@ def _empty_damage_row() -> dict[str, float]:
     return {damage_type.lower(): 0.0 for damage_type in DAMAGE_TYPES}
 
 
+_ParsedT = TypeVar("_ParsedT")
+
+
+def _cached_source_parse(path: str | Path,
+                         reader: Callable[[Path], _ParsedT],
+                         cache: Callable[..., _ParsedT]) -> _ParsedT:
+    """Parse a source file once per (resolved path, mtime_ns, size).
+
+    Callers re-parse the same bundled exports every time they rebuild or
+    migrate a database; this keeps that to one parse per unchanged file. A
+    missing file is handed straight to ``reader`` so the reader raises its own
+    error rather than this helper inventing one.
+    """
+    resolved = Path(path).resolve()
+    try:
+        stat_result = resolved.stat()
+    except OSError:
+        return reader(resolved)
+    return cache(str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
+
+
 @lru_cache(maxsize=4)
 def _spreadsheet_rows_cached(
     path: str, mtime_ns: int, size: int,
@@ -183,14 +206,8 @@ def rows_from_spreadsheet(xlsx_path: str | Path) -> list[dict[str, float | str]]
     and each call returns fresh dicts so a caller cannot corrupt the cached
     rows.
     """
-    resolved = Path(xlsx_path).resolve()
-    try:
-        stat_result = resolved.stat()
-    except OSError:
-        # Let openpyxl raise its own error for a missing/inaccessible file.
-        return _read_spreadsheet(resolved)
-    cached = _spreadsheet_rows_cached(
-        str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
+    cached = _cached_source_parse(
+        xlsx_path, _read_spreadsheet, _spreadsheet_rows_cached)
     return [dict(items) for items in cached]
 
 
@@ -224,7 +241,26 @@ def _read_spreadsheet(xlsx_path: Path) -> list[dict[str, float | str]]:
         return output
 
 
+@lru_cache(maxsize=4)
+def _weapons_cached(
+    path: str, mtime_ns: int, size: int,
+) -> tuple[tuple[tuple[str, object], ...], ...]:
+    """Memoized parse of the weapon export; see ``rows_from_cleaned_json``."""
+    return tuple(tuple(row.items()) for row in _read_weapons(Path(path)))
+
+
 def rows_from_cleaned_json(zip_path: str | Path) -> list[dict[str, float | str]]:
+    """Rows of the weapon export.
+
+    Memoized on (path, mtime, size) like the other source parsers, for the same
+    reason: rebuilds and migrations read the bundled exports repeatedly. Each
+    call still returns independent dicts.
+    """
+    cached = _cached_source_parse(zip_path, _read_weapons, _weapons_cached)
+    return [dict(items) for items in cached]  # type: ignore[arg-type]
+
+
+def _read_weapons(zip_path: Path) -> list[dict[str, float | str]]:
     with zipfile.ZipFile(zip_path) as archive:
         names = archive.namelist()
         json_name = next((name for name in names if name.lower().endswith(".json")), None)
@@ -294,17 +330,11 @@ def mods_from_cleaned_json(
     ``rows_from_spreadsheet``; callers still receive fresh dicts and their own
     ``source_stats`` copy.
     """
-    resolved = Path(zip_path).resolve()
-    try:
-        stat_result = resolved.stat()
-    except OSError:
-        mods, effects, stats = _read_mods(resolved)
-    else:
-        cached_mods, cached_effects, cached_stats = _mods_cached(
-            str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
-        mods = [dict(items) for items in cached_mods]
-        effects = [dict(items) for items in cached_effects]
-        stats = dict(cached_stats)
+    cached_mods, cached_effects, cached_stats = _cached_source_parse(
+        zip_path, _read_mods, _mods_cached)
+    mods = [dict(items) for items in cached_mods]
+    effects = [dict(items) for items in cached_effects]
+    stats = dict(cached_stats)
     if source_stats is not None:
         source_stats.update(stats)
     return mods, effects
