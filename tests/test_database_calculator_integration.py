@@ -72,6 +72,41 @@ class BundledDataIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(ModAggregator().aggregate(slots, "Murmur")["BANE"], 0.55)
         self.assertEqual(ModAggregator().aggregate(slots, "Grineer")["BANE"], 0)
 
+    def test_equipped_slots_alone_carry_the_mod_bonuses(self) -> None:
+        # Callers that hand over only ``equipped_mods`` must get the same
+        # numbers as callers that also pre-aggregate into ``mods``; the slots
+        # are authoritative, so nothing may be silently dropped.
+        weapon = self.weapons.get_weapon("Hek")
+        self.assertIsNotNone(weapon)
+        wanted = ("Primed Bane of Grineer", "Cryo Rounds", "Hellfire")
+        slots = []
+        for name in wanted:
+            mod = next(m for m in self.mods.list_mods_for_slot("PRIMARY")
+                       if m.name == name)
+            rank = mod.fusion_limit
+            slots.append(EquippedMod(mod=mod, rank=rank,
+                                     effects=self.mods.fetch_ranked_effects(
+                                         mod.unique_name, rank)))
+        bonuses = ModAggregator().aggregate(slots, "Grineer")
+        calc = DamageCalculator()
+
+        def run(**kwargs):
+            return calc.calculate(weapon, CalculationInputs(
+                weapon_name=weapon.weapon, faction="Grineer",
+                armor_value=0, **kwargs))
+
+        slots_only = run(equipped_mods=slots)
+        both = run(mods=bonuses, equipped_mods=slots)
+        unmodded = run()
+        self.assertGreater(slots_only.hud_total, unmodded.hud_total)
+        self.assertAlmostEqual(slots_only.hud_total, both.hud_total, places=6)
+        self.assertAlmostEqual(slots_only.final_total, both.final_total, places=6)
+        self.assertAlmostEqual(slots_only.final_total_with_bane,
+                               both.final_total_with_bane, places=6)
+        self.assertEqual(slots_only.hud_damage_by_type, both.hud_damage_by_type)
+        # +90% Cold and +90% Heat turn Hellfire/Cryo Rounds into Blast.
+        self.assertGreater(slots_only.hud_damage_by_type.get("BLAST", 0), 0)
+
     def test_database_mod_slot_combines_with_innate_element(self):
         weapon = self.weapons.get_weapon("Alternox Prime")
         self.assertIsNotNone(weapon)

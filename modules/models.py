@@ -60,11 +60,16 @@ class CalculationInputs:
     armor_value: float
     lich_element: str = ""
     valence_base: float = 0.0
+    # Pre-aggregated per-stat bonuses, used only when `equipped_mods` is None.
+    # When the slots are also given the calculator aggregates them itself and
+    # ignores this dictionary, so a build cannot depend on whether the caller
+    # remembered to pre-compute `mods`.
     mods: dict[str, float] = field(default_factory=dict)
     # Original slot order preserves which primary elements formed a pair.
     equipped_mods: list[EquippedMod] | None = None
 
     def mod_for(self, damage_type: str) -> float:
+        """Raw pre-aggregated bonus for one stat (no slot aggregation)."""
         return float(self.mods.get(damage_type, 0.0))
 
 
