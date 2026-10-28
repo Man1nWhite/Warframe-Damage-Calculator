@@ -28,6 +28,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
+from .crit import crit_multiplier_for_tier
 from .damage_routing import status_vulnerability
 from .enemy_scaling import (
     ScaledEnemy,
@@ -373,7 +374,7 @@ class Fight:
         self.slams += 1
         had_overguard = self.overguard > 0
         tier = self._crit_tiers + (rng.random() < self._extra_crit_chance)
-        crit = 1 + tier * (self._crit_multiplier - 1)
+        crit = crit_multiplier_for_tier(self._crit_multiplier, tier)
         self._route(self._noncrit * crit, now)
         broke_directly = had_overguard and self.overguard <= 0
         if self.health <= 0 or not self.a.statuses:

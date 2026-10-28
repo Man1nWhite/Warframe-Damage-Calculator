@@ -56,7 +56,7 @@ import random
 from dataclasses import dataclass, field
 
 from modules.akarius_sim import corrosive_armor_factor
-from modules.crit import quantize_crit_multiplier
+from modules.crit import crit_multiplier_for_tier, quantize_crit_multiplier
 
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import (
@@ -405,11 +405,24 @@ def _as_jat_target(target: DummyTarget) -> JatTarget:
 
 
 def _next_status_tick(target: JatTarget) -> float:
-    gas = (p.next_tick for p in target.gas_procs
-           if p.next_tick < p.start + PROC_DURATION)
-    toxin = (p.next_tick for p in target.toxin_procs
-             if p.next_tick <= p.start + PROC_DURATION)
-    return min(min(gas, default=math.inf), min(toxin, default=math.inf))
+    """Earliest Gas or Toxin pulse, or ``math.inf`` when neither is pending.
+
+    Gas expires one tick earlier than Toxin (``<`` versus ``<=`` at the end of
+    the six-second window), so the two comparisons are deliberately different.
+    A hand-written loop replaces two generator expressions here: this runs once
+    per simulated event, and the profile of the Jat sweep showed the generator
+    and ``min`` call overhead dominating the function.
+    """
+    best = math.inf
+    for gas in target.gas_procs:
+        tick = gas.next_tick
+        if tick < gas.start + PROC_DURATION and tick < best:
+            best = tick
+    for toxin in target.toxin_procs:
+        tick = toxin.next_tick
+        if tick <= toxin.start + PROC_DURATION and tick < best:
+            best = tick
+    return best
 
 
 def _process_status_ticks(target: JatTarget, build: JatBuild, when: float,
@@ -533,7 +546,7 @@ class SlamTrial:
 def _crit_factor(rng: random.Random, cc: float, cm: float) -> float:
     full = int(math.floor(cc))
     tier = full + (1 if rng.random() < (cc - full) else 0)
-    return 1.0 + tier * (cm - 1.0)
+    return crit_multiplier_for_tier(cm, tier)
 
 
 def _status_rolls(rng: random.Random, chance: float) -> int:

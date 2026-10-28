@@ -46,7 +46,7 @@ import random
 from dataclasses import dataclass, field
 
 from modules.constants import FACTION_MULTIPLIERS
-from modules.crit import quantize_crit_multiplier
+from modules.crit import crit_multiplier_for_tier, quantize_crit_multiplier
 
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
@@ -369,7 +369,7 @@ def simulate(build: OcucorBuild,
             enervate_extra_pct=enervate_extra_pct) / 100.0
         full = int(math.floor(cc))
         tier = full + (1 if rng.random() < (cc - full) else 0)
-        return 1.0 + tier * (build.crit_multiplier - 1.0)
+        return crit_multiplier_for_tier(build.crit_multiplier, tier)
 
     def roll(k: int) -> list[str]:
         return rng.choices(list(build.proc_weights),
@@ -712,7 +712,7 @@ def simulate_room(arcane: str,
             enervate_extra_pct=extra_cc) / 100.0
         full = int(math.floor(cc))
         tier = full + (1 if rng.random() < cc - full else 0)
-        cf = 1.0 + tier * (build.crit_multiplier - 1.0)
+        cf = crit_multiplier_for_tier(build.crit_multiplier, tier)
         ramp = next_ramp(idx, when)
         status_count = t.unique_status_count(when)
         types = _scaled_type_damage(build, flare, status_count)

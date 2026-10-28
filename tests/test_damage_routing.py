@@ -77,6 +77,76 @@ class DamageRoutingTests(unittest.TestCase):
         result = route_enemy_hit({"TRUE": 0.1}, overguard=0, armor=2700)
         self.assertEqual(result.health, 0.1)
 
+    def test_single_pass_matches_the_reference_two_pass_route(self):
+        """The single-pass route must reproduce Damage/Calculation exactly.
+
+        ``route_enemy_hit`` computes the faction-modified health components and
+        the Overguard total in one pass over the damage dictionary. The route
+        runs once per simulated damage instance, so that allocation was worth
+        removing; this fixture keeps a literal two-pass translation of the wiki
+        expressions (`typed` first, then the Overguard sum) and asserts the
+        results are bit-identical, including the per-type armour floor.
+        """
+        cases = [
+            ({"IMPACT": 50, "HEAT": 50}, dict(overguard=50, armor=0,
+                                              faction_type_modifiers={"IMPACT": 1.5})),
+            ({"VOID": 100}, dict(overguard=75, armor=0)),
+            ({"SLASH": 156.78125, "TOXIN": 12.5, "VOID": 3.25},
+             dict(overguard=1_000.0, armor=2_700.0, magnetic_stacks=4,
+                  viral_stacks=7, faction_type_modifiers={"SLASH": 1.5, "TOXIN": 0.5})),
+            ({"HEAT": 0.1, "IMPACT": 1e-4, "TRUE": 0.5},
+             dict(overguard=0.0, armor=5_400.0, armor_bypass=False)),
+            ({"GAS": 1.0, "ELEC": 1.0}, dict(overguard=0.0, armor=0.0,
+                                             viral_stacks=10)),
+        ]
+        for damage, kwargs in cases:
+            with self.subTest(damage=damage, kwargs=kwargs):
+                self.assertEqual(route_enemy_hit(damage, **kwargs),
+                                 _reference_route(damage, **kwargs))
+
+
+def _reference_route(damage_by_type, *, overguard, armor,
+                     magnetic_stacks=0, viral_stacks=0,
+                     faction_type_modifiers=None, armor_bypass=False):
+    """Two-pass spelling of the wiki route, kept only as a test oracle."""
+    from modules.enemy_scaling import enemy_armor_damage_reduction
+
+    modifiers = faction_type_modifiers or {}
+    typed = {
+        kind: max(0.0, amount) * max(0.0, modifiers.get(kind, 1.0))
+        for kind, amount in damage_by_type.items()
+        if amount > 0
+    }
+    potential_og = status_vulnerability(magnetic_stacks) * sum(
+        max(0.0, amount) * (1.5 if kind == "VOID" else 1.0)
+        for kind, amount in damage_by_type.items()
+        if amount > 0
+    )
+    remaining_og = max(0.0, overguard)
+    if remaining_og and potential_og:
+        absorbed = min(remaining_og, potential_og)
+        fraction_for_health = 1.0 - absorbed / potential_og
+        broke = potential_og >= remaining_og
+    else:
+        absorbed = 0.0
+        fraction_for_health = 1.0 if not remaining_og else 0.0
+        broke = False
+    health_mult = status_vulnerability(viral_stacks)
+    armor_mult = 1.0 - enemy_armor_damage_reduction(armor)
+    health_damage = 0.0
+    for kind, amount in typed.items():
+        remaining = amount * fraction_for_health
+        if remaining <= 0:
+            continue
+        bypass = armor_bypass or kind in {"TRUE", "CINEMATIC"}
+        dealt = remaining * health_mult
+        if armor > 0 and not bypass:
+            dealt = max(1.0, dealt * armor_mult)
+        health_damage += dealt
+    from modules.damage_routing import RoutedDamage
+    return RoutedDamage(absorbed, health_damage, broke)
+
+
 class MagneticBreakTests(unittest.TestCase):
     def test_special_tick_formula_and_cap(self):
         from modules.status_damage import magnetic_break_electric_tick

@@ -137,10 +137,39 @@ def crit_tiers(crit_chance: float) -> tuple[int, int]:
 
 
 def crit_multiplier_for_tier(crit_multiplier: float, tier: int) -> float:
-    """Damage multiplier of a given critical tier: ``1 + tier x (CDM - 1)``."""
+    """Damage multiplier of a given critical tier: ``1 + tier x (CDM - 1)``.
+
+    Every simulator builds its rolled critical factor from this function, so
+    the tier expression has one implementation rather than one per weapon.
+    """
     if tier < 0:
         raise ValueError("tier must be non-negative")
     return 1.0 + tier * (crit_multiplier - 1.0)
+
+
+def headshot_crit_multiplier(crit_multiplier: float, tier: int,
+                             headshot_multiplier: float = 3.0) -> float:
+    """Headshot critical multiplier from ``Critical_Hit``.
+
+        Headshot Multi x (1 + Tier x (2 x Total Critical Damage - 1))
+
+    The wiki's example is a Lanka with Vital Sense (2.0 x (1 + 120%) = 4.4)
+    at critical tier 2: ``3.0 x (1 + 2 x (2 x 4.4 - 1)) = 49.8``.
+
+    This is the *head*-specific form, not the weak-point average of
+    ``Damage/Calculation``: the extra ``2 x`` term models the headshot crit
+    bonus. Applicability is the caller's decision, because the page scopes it
+    to heads (a MOA's 3.0x "fanny pack" and a Corpus humanoid's removed-helmet
+    headshot get no crit bonus) and states that a weapon whose *default*
+    headshot multiplier is 1.0x never receives the bonus, even if that
+    multiplier is later raised -- a fact this expression alone cannot see. No
+    bundled simulator models headshots, so nothing in ``modules/`` calls it yet.
+    """
+    if tier < 0:
+        raise ValueError("tier must be non-negative")
+    if headshot_multiplier < 0:
+        raise ValueError("headshot_multiplier must be non-negative")
+    return headshot_multiplier * (1.0 + tier * (2.0 * crit_multiplier - 1.0))
 
 
 def average_shot(total_damage: float, crit_chance: float,

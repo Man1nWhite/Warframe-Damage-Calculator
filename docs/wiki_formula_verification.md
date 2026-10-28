@@ -334,3 +334,57 @@ into a diff. README documents the modes and exit codes.
 CI runs `python -m ruff check .` (the rule set in `ruff.toml`) and
 `python -m mypy` (the `modules/` gate in `mypy.ini`) before the suite. All three
 were run by hand for this pass and are clean.
+
+---
+
+## 6. Third pass, 2026-10-28 (evening): live re-read of the core pages
+
+The pages below were fetched again from `wiki.warframe.com`
+(`?action=raw`) **today** and compared expression by expression with the code.
+This is a re-check of the audit above, not a new audit: where a page was read
+only in part, the section says so, and everything not listed here still rests
+on the 2026-10-27/28 passes or on the pins in `tests/`.
+
+| Page (read today) | What was compared | Code | Verdict |
+| --- | --- | --- | --- |
+| `Critical_Hit` §Critical Chance | `Base × (1 + Relative) + Absolute` (Point Strike 150% + Argon Scope 135%; Avenger 45%) | `crit.modded_crit_chance` | match |
+| `Critical_Hit` §Critical Damage | `Base × (1 + Relative) + Absolute`; Freeze and Tenacious Bond listed under *absolute* increases | `crit.modded_crit_multiplier` | match |
+| `Critical_Hit` §Quantization | `Code(x) = ⌊clamp(x,0,32) × 4095/32 + 0.5⌋`, decoded `× 32/4095`, spacing `32/4095`, `Code(1.6+0.4)=256` | `crit.quantize_crit_multiplier`, all six models | match |
+| `Critical_Hit` §Critical Tiers | 0/100/200/300/400/500% table; `1 + Tier × (Total CDM − 1)`; Lenz/Vital Sense orange = 7.8 | `crit.crit_tiers`, `crit.crit_multiplier_for_tier` | match |
+| `Critical_Hit` §Critical Headshots | `Headshot Multi × (1 + Tier × (2 × Total CDM − 1))`; Lanka/Vital Sense example; heads only; 1.0x-headshot weapons excluded | `crit.headshot_crit_multiplier` | **added this pass** (was missing; no model yet calls it) |
+| `Critical_Hit` §Average Damage | `1 + CC × (CDM − 1)`; Paris 30%/2.0 = 1.3, with Point Strike + Vital Sense = 3.55 | `crit.average_shot` | match |
+| `Armor` §Enemy Damage Reduction | `90% × √(Net Armor / 2700)` at ≤2,700; `Net Armor / (Net Armor + 300)` above; minimum 1 damage per type | `enemy_scaling.enemy_armor_damage_reduction`, `calculator`, `route_enemy_hit` | match |
+| `Damage/Calculation` §Quantization | scale, `Quantized(x) = sign(x)·⌊|x|·32+0.5⌋/32`, physical/elemental rules, "damage mods only multiply final quantized values" | `status_damage.wiki_quantized_damage`, `calculator` | match |
+| `Damage/Calculation` §Adding Mods | Nagantaka Prime example: Puncture 32.4375, Slash 156.78125, Viral 259.5, Heat 156.78125, Gas 346, total 951.5, Impact 1.73 → 0 | pinned end to end in `tests/test_crit_wiki.py` | match |
+| `Damage/Calculation` §Unarmored / §Armored | `ID = SD × (1 + HM)`; `DM = 1 − 0.9·√(AR/2700)`; shields unaffected by armor; Toxin bypasses shields except Treasurers/Hounds | `calculator`, `route_enemy_hit`; shields not modelled | match (shield cases documented as not implemented) |
+| `Damage/Calculation` §Total Damage | Arsenal total = base × (1 + elemental + physical shares) × (1 + damage bonuses) × innate multishot; excludes faction damage | `DamageCalculator.calculate` / `hud_total` | match (only innate multishot supported) |
+| `Damage/Calculation` §Average Shot | normal/critical/average shot forms | `crit.normal_shot`, `crit.critical_shot`, `crit.average_shot` | match |
+| `Damage_over_Time` §Status Effects | 6 s for Slash/Heat/Toxin/Electricity/Gas; 1 s delay for Slash/Heat/Toxin; Electricity/Gas last tick empty; Blast 1.5 s fuse with a damaging tick; Blast cap 10 | `status_damage.STATUS_PROCS`, `total_ticks`, `damaging_ticks`, `BLAST_*` | match |
+| `Damage_over_Time` §Calculating | `Total Ticks = ⌊rate × (duration − delay)⌋ + 1`; `Total = per-tick × ticks` | `status_damage.total_ticks` | match |
+| `Multishot` §Continuous Weapons | beams merging on one target sum **damage and status chance**, crit chance stays single-beam; forced procs after the merge; fractional projectile = chance of one more | `beam_merged_status_chance`, `kuva_nukor_sim.roll_multishot`, `status_damage.average_procs_per_shot` | match |
+| `Status_Effect` §Status Chance | >100% applies independent extra procs, the same type may roll twice; each target rolls its own proc | simulators (`floor` + one fractional roll) | match |
+| `Status_Effect` §Damage Distribution | `Proc Type Chance = Damage ÷ Total Damage`, no separate physical/elemental weighting | `status_damage.proc_type_chances` | match |
+| `Status_Effect` §Status Immunity | an immune proc type is removed and the rest renormalise | not implemented (no bundled immune target) | documented gap |
+| `Condition_Overload_(Mechanic)` §Sources | CO +80%/status (melee), Galvanized Aptitude +40% ×2, Galvanized Shot +40% ×3, Savvy +40% ×2; sources stack additively | `condition_overload`, `GALV_SHOT_DAMAGE = 1.20`, `GALV_SHOT_STATUS = 0.80` | match |
+| `Condition_Overload_(Mechanic)` §Application | multiplicative ("excellent") vs additive ("intended") vs none, per attack; radial AoE generally excluded | `condition_overload.MODE_MULTIPLY / MODE_ADD / MODE_NONE`, `source/gunco_mechanic.json` | match |
+
+Deliberately **not** re-read today, so their rows in §1 still rest on the
+earlier passes or on pinned tests: `Damage/Overview_Table` and the thirteen
+damage-type pages (faction matrix and per-type coefficients),
+`Riven_Mods` (only its challenges table was fetched — the attribute formula
+was **not** re-verified in this pass), `Enemy_Level_Scaling`, `Overguard`,
+`Secondary_Enervate`, `Cascadia_Flare`, `Sentient_Surge` and
+`MediaWiki:Gadget-enemyinfoboxslider.js`.
+
+Two things came out of this pass:
+
+1. **One formula was missing rather than wrong.** `Critical_Hit`'s
+   headshot-critical expression had no implementation; `Damage/Calculation`'s
+   weak-point average (already implemented) is a different expression. It is
+   now in `modules/crit.py` with the page's own worked example pinned, and it
+   is documented as unused until a model actually fires at heads.
+2. **No drift.** Every expression that was re-read still matches the code, so
+   nothing in the pinned numbers changed. The accompanying optimisation pass
+   is behaviour-neutral by construction and was verified with
+   `tools/bench_models.py`: the complete trial records hash identically before
+   and after (see [`optimization_review.md`](optimization_review.md)).

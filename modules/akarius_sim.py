@@ -48,7 +48,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from modules.crit import quantize_crit_multiplier
+from modules.crit import crit_multiplier_for_tier, quantize_crit_multiplier
 
 # Preserve historically importable simulator helpers for external callers.
 from modules.enemy_scaling import enemy_armor_damage_reduction as armor_damage_reduction  # noqa: F401
@@ -304,7 +304,7 @@ def simulate(build: AkariusBuild,
                            if with_cold else build.crit_multiplier)
         full = int(math.floor(cc))
         tier = full + (1 if rng.random() < (cc - full) else 0)
-        return 1.0 + tier * (crit_multiplier - 1.0)
+        return crit_multiplier_for_tier(crit_multiplier, tier)
 
     def roll(weights: dict) -> str:
         return rng.choices(list(weights), weights=list(weights.values()))[0]

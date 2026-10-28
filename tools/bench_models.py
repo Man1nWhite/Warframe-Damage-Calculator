@@ -1,0 +1,202 @@
+"""Time the damage models and prove an optimisation did not change results.
+
+The simulators are the slowest part of this repository: the Jat Kittag slam
+sweep described in ``docs/next_session_handoff.md`` runs 170,000 trials and is
+dominated by a single trial type. Optimising them is safe only if the output is
+*bit-identical*: every published figure in ``docs/`` is model output with a
+pinned seed, and a refactor that changes the last digit of a time-to-kill makes
+those reports wrong without any test failing.
+
+This tool exists for that workflow:
+
+    # before touching the models
+    python tools/bench_models.py --snapshot /tmp/before.json
+
+    # after the change
+    python tools/bench_models.py --snapshot /tmp/after.json
+    python tools/bench_models.py --check /tmp/before.json
+
+``--check`` re-runs the same fixed seeds and compares a SHA-256 of the complete
+trial records (not a rounded summary), so a "flat" improvement that quietly
+reorders random draws is caught. Timing is reported for the three models with a
+steady per-trial cost; it is wall-clock on this machine, not a benchmark of the
+game.
+
+Exit codes
+----------
+0  results match the reference snapshot, or a snapshot was written
+1  ``--check`` found different results (the optimisation was not neutral)
+2  the reference snapshot is missing or unreadable
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import hashlib
+import json
+import sys
+import time
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from modules import (  # noqa: E402  (path set above)
+    jat_kittag_sim,
+    kuva_nukor_sim,
+    ocucor_sim,
+)
+
+JAT_SEED = 500
+NUKOR_SEED = 700
+OCUCOR_SEED = 900
+
+
+def _plain(value: Any) -> Any:
+    """JSON-safe copy of a trial record, dropping free-text traces."""
+    if dataclasses.is_dataclass(value):
+        return {field.name: _plain(getattr(value, field.name))
+                for field in dataclasses.fields(value)
+                if field.name != "trace"}
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _jat_trials(trials: int) -> Iterator[Any]:
+    factory = kuva_nukor_sim.steel_path_dummy_factory()
+    build = jat_kittag_sim.build_jat_kittag(
+        next(iter(jat_kittag_sim.MOD_SLOTS)), galv_stacks=2)
+    for index in range(trials):
+        target = jat_kittag_sim.JatTarget(
+            factory.max_health, factory.max_armor, factory.overguard_max)
+        yield jat_kittag_sim.simulate(build, target, seed=JAT_SEED + index)
+
+
+def _nukor_trials(trials: int) -> Iterator[Any]:
+    build = kuva_nukor_sim.build_nukor(kuva_nukor_sim.BASELINE_LAST_MOD)
+    for index in range(trials):
+        yield kuva_nukor_sim.simulate(
+            build, kuva_nukor_sim.steel_path_dummy_factory(),
+            seed=NUKOR_SEED + index)
+
+
+def _ocucor_trials(trials: int) -> Iterator[Any]:
+    build = ocucor_sim.build_ocucor(ocucor_sim.ARCANE_ENERVATE, "Damage")
+    for index in range(trials):
+        yield ocucor_sim.simulate(
+            build, ocucor_sim.steel_path_dummy_factory(),
+            seed=OCUCOR_SEED + index)
+
+
+MODELS: tuple[tuple[str, Callable[[int], Iterator[Any]]], ...] = (
+    ("jat_kittag_sim", _jat_trials),
+    ("kuva_nukor_sim", _nukor_trials),
+    ("ocucor_sim", _ocucor_trials),
+)
+
+
+def snapshot(trials: int) -> tuple[str, dict[str, Any]]:
+    """Run every model on fixed seeds and hash the complete trial records."""
+    payload = {name: [_plain(trial) for trial in runner(trials)]
+               for name, runner in MODELS}
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return digest, payload
+
+
+def timings(trials: int, repeats: int) -> dict[str, float]:
+    """Milliseconds per trial, best of ``repeats`` for each model."""
+    measured: dict[str, float] = {}
+    for name, runner in MODELS:
+        best = float("inf")
+        for _ in range(repeats):
+            started = time.perf_counter()
+            for _ in runner(trials):
+                pass
+            best = min(best, time.perf_counter() - started)
+        measured[name] = best / trials * 1000.0
+    return measured
+
+
+def _load_reference(path: Path) -> tuple[str, int] | None:
+    """Read a reference snapshot, or explain why it cannot be used."""
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"cannot read reference snapshot {path}: {exc}", file=sys.stderr)
+        return None
+    digest = stored.get("sha256") if isinstance(stored, dict) else None
+    trials = stored.get("trials") if isinstance(stored, dict) else None
+    if not isinstance(digest, str) or not isinstance(trials, int):
+        print(f"reference snapshot {path} needs sha256 and trials fields",
+              file=sys.stderr)
+        return None
+    return digest, trials
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--trials", type=int, default=None,
+                        help="trials per model (default: the reference "
+                             "snapshot's count, else 20)")
+    parser.add_argument("--repeats", type=int, default=3,
+                        help="timing repeats, best kept (default: 3)")
+    parser.add_argument("--snapshot", type=Path,
+                        help="write a reference snapshot to this path")
+    parser.add_argument("--check", type=Path,
+                        help="compare against this reference snapshot")
+    parser.add_argument("--no-timing", action="store_true",
+                        help="skip timing (equivalence check only)")
+    args = parser.parse_args(argv)
+
+    reference_digest: str | None = None
+    reference_trials: int | None = None
+    if args.check is not None:
+        loaded = _load_reference(args.check)
+        if loaded is None:
+            return 2
+        reference_digest, reference_trials = loaded
+    if args.trials is None:
+        args.trials = reference_trials if reference_trials is not None else 20
+    if args.trials < 1 or args.repeats < 1:
+        parser.error("--trials and --repeats must be positive")
+    if reference_trials is not None and reference_trials != args.trials:
+        print(f"reference {args.check} was captured with {reference_trials} "
+              f"trials, not {args.trials}", file=sys.stderr)
+        return 2
+
+    measured = {} if args.no_timing else timings(args.trials, args.repeats)
+    digest, _ = snapshot(args.trials)
+
+    status = 0
+    if args.check is not None:
+        reference = reference_digest
+        if reference == digest:
+            print(f"results match {args.check} (sha256 {digest[:16]}...)")
+        else:
+            print(f"RESULTS DIFFER from {args.check}\n"
+                  f"  reference {reference}\n  current   {digest}", file=sys.stderr)
+            status = 1
+    if args.snapshot is not None:
+        args.snapshot.write_text(
+            json.dumps({"sha256": digest, "trials": args.trials,
+                        "seeds": {"jat": JAT_SEED, "nukor": NUKOR_SEED,
+                                  "ocucor": OCUCOR_SEED}},
+                       indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+        print(f"wrote {args.snapshot} (sha256 {digest[:16]}...)")
+
+    for name, milliseconds in measured.items():
+        print(f"{name:18s} {milliseconds:8.2f} ms/trial")
+    return status
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
