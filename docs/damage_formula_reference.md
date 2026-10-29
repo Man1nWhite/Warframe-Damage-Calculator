@@ -132,7 +132,11 @@ Implemented in `modules/crit.py` (`modded_crit_chance`,
 Freeze bonus through `DummyTarget.crit_damage_multiplier`, which adds it for
 that target's live Cold stacks before the tier; it is zero unless the target
 actually carries Freeze stacks, and the Akarius radial Blast instance opts out
-because the bonus does not apply to AoE damage.
+because the bonus does not apply to AoE damage. In the shared target model,
+ten stacks cause Freeze for half the status duration (3 s at base duration),
+block Cold refresh and new stacks while frozen, then leave three stacks. The
+Wiki does not state when those residual stacks expire; the model approximates
+this using the original expiry of the freezing application.
 
 ### 1.5 DPS
 
@@ -316,7 +320,7 @@ as Saryn Spores excluded).
 | --- | --- | --- |
 | Impact (Stagger) | 1 s, 5 stacks | +8% Parazon Mercy threshold per proc |
 | Puncture (Weakened) | 10 s, 5 stacks | enemy damage -40%, then -10% per stack (max -80%); incoming weapon damage +5% flat critical chance per stack (max +25%), not on AoE |
-| Cold (Freeze) | 6 s, 10 stacks (4 under Overguard) | slow 50% -> 90%; +0.10x critical damage, +0.05x per stack, +1.0x frozen |
+| Cold (Freeze) | 6 s, 10 stacks (4 under Overguard or boss immunity) | slow 50% -> 90%; +0.10x critical damage, +0.05x per stack, +1.0x while frozen; Freeze at 10 for half status duration, then 3 stacks remain |
 | Corrosive (Corrosion) | 8 s, 10 stacks | armor `1 - (0.20 + 0.06 x stacks)`, i.e. 26% then +6% to 80% |
 | Viral (Virus) | 6 s, 10 stacks | health damage `2 + 0.25 x (stacks - 1)`, max 325%; not double-dipped on DoTs |
 | Magnetic (Disrupt) | 6 s, 10 stacks | shields/Overguard damage `2 + 0.25 x (stacks - 1)`; on break a forced Electricity proc worth 3% of max defense per stack over 6 s |

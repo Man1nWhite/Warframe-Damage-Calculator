@@ -56,6 +56,17 @@ class ConnectionLifecycleTests(unittest.TestCase):
             self.assertEqual(weapons.search_weapons("Hek"), [])
         self.assertTrue(connections[-1].closed)
 
+    def test_uninitialised_weapon_catalog_is_empty_but_partial_schema_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "weapons.db"
+            repository = WeaponRepository(path)
+            self.assertEqual(repository.search_weapons(""), [])
+            with closing(sqlite3.connect(path)) as connection:
+                connection.execute("CREATE TABLE unrelated (value TEXT)")
+                connection.commit()
+            with self.assertRaisesRegex(sqlite3.OperationalError, "no such table: weapons"):
+                repository.search_weapons("")
+
     def test_ranked_effect_batch_matches_individual_queries_and_uses_one_connection(self):
         repository = ModRepository(DATABASE)
         mods = repository.list_mods_for_slot("PRIMARY")
@@ -70,7 +81,7 @@ class ConnectionLifecycleTests(unittest.TestCase):
             self.assertEqual(repository.fetch_ranked_effects_many([]), {})
         connect.assert_not_called()
 
-    def test_ranked_effect_batch_chunks_large_iterables_and_handles_missing_tables(self):
+    def test_ranked_effect_batch_chunks_large_iterables_and_reports_missing_tables(self):
         repository = ModRepository(DATABASE)
         mod = repository.list_mods_for_slot("PRIMARY")[0]
         real_key = (mod.unique_name, mod.fusion_limit)
@@ -91,8 +102,44 @@ class ConnectionLifecycleTests(unittest.TestCase):
             opened.append(connection)
             return connection
         with patch.object(repository, "connect", side_effect=empty_connect):
-            self.assertEqual(repository.fetch_ranked_effects_many([real_key]), {real_key: []})
-        self.assertTrue(opened[0].closed)
+            with self.assertRaises(sqlite3.OperationalError):
+                repository.fetch_ranked_effects_many([real_key])
+            with self.assertRaises(sqlite3.OperationalError):
+                repository.list_mods_for_slot("Rifle")
+        self.assertTrue(all(connection.closed for connection in opened))
+
+    def test_real_exclusive_lock_is_not_reported_as_empty_catalog_or_effects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "locked.db"
+            with closing(sqlite3.connect(DATABASE)) as source, \
+                 closing(sqlite3.connect(path)) as target:
+                source.backup(target)
+            mods = ModRepository(path)
+            weapons = WeaponRepository(path)
+            mod = mods.list_mods_for_slot("PRIMARY")[0]
+
+            def short_connect():
+                connection = sqlite3.connect(path, timeout=0.01, factory=TrackingConnection)
+                connection.row_factory = sqlite3.Row
+                return connection
+
+            with closing(sqlite3.connect(path)) as locker, \
+                 patch.object(mods, "connect", side_effect=short_connect), \
+                 patch.object(weapons, "connect", side_effect=short_connect):
+                locker.execute("BEGIN EXCLUSIVE")
+                for query in (
+                    lambda: mods.list_mods_for_slot("PRIMARY"),
+                    lambda: mods.get_mod(mod.unique_name),
+                    lambda: mods.fetch_ranked_effects(mod.unique_name, 0),
+                    lambda: mods.fetch_ranked_effects_many([(mod.unique_name, 0)]),
+                    lambda: weapons.search_weapons("Hek"),
+                    lambda: weapons.get_weapon("Hek"),
+                ):
+                    with self.assertRaisesRegex(sqlite3.OperationalError, "locked"):
+                        query()
+                locker.rollback()
+                self.assertIsNotNone(weapons.get_weapon("Hek"))
+                self.assertTrue(mods.list_mods_for_slot("PRIMARY"))
 
     def test_database_rebuild_closes_and_rolls_back_on_error(self):
         with tempfile.TemporaryDirectory() as tmp:

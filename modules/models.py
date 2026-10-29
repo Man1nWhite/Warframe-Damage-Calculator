@@ -85,6 +85,7 @@ class CalculationResults:
     hud_total_with_bane: float
     final_total: float
     final_total_with_bane: float
+    warnings: list[str] = field(default_factory=list)
 
     def rows_for_hud(self) -> list[tuple[str, float]]:
         return [(damage_type, self.hud_damage_by_type[damage_type]) for damage_type in DAMAGE_TYPES]

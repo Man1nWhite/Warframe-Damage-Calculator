@@ -1,6 +1,7 @@
 """Seeding local sources must not silently combine different export snapshots."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -43,6 +44,54 @@ class SourceSeedingTests(unittest.TestCase):
         self.assertEqual((self.source / WEAPONS).read_bytes(), b"newer weapons")
         self.assertEqual((self.source / UPGRADES).read_bytes(), b"newer upgrades")
 
+    def test_export_created_during_first_seed_is_not_overwritten(self):
+        target = self.source / WEAPONS
+        real_copy = shutil.copyfile
+
+        def create_user_export(src, dest, *args, **kwargs):
+            if Path(src).name == WEAPONS:
+                target.write_bytes(b"user export created during seeding")
+            return real_copy(src, dest, *args, **kwargs)
+
+        with patch("modules.app_paths.shutil.copyfile", side_effect=create_user_export):
+            seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"user export created during seeding")
+        self.assertFalse((self.source / UPGRADES).exists())
+
+    def test_export_created_between_existence_check_and_first_publication_is_preserved(self):
+        target = self.source / WEAPONS
+        real_link = os.link
+
+        def create_user_export(src, dest, *args, **kwargs):
+            if Path(dest) == target:
+                target.write_bytes(b"racing user export")
+            return real_link(src, dest, *args, **kwargs)
+
+        with patch("modules.updater.os.link", side_effect=create_user_export):
+            seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"racing user export")
+        self.assertFalse((self.source / UPGRADES).exists())
+        self.assertEqual(list(self.source.glob(".wdc-refresh-*")), [])
+
+    def test_export_created_between_pair_publications_is_preserved_and_guarded(self):
+        target = self.source / UPGRADES
+        real_link = os.link
+
+        def create_user_export(src, dest, *args, **kwargs):
+            if Path(dest) == target:
+                target.write_bytes(b"racing user export")
+            return real_link(src, dest, *args, **kwargs)
+
+        with patch("modules.updater.os.link", side_effect=create_user_export):
+            with self.assertRaisesRegex(RuntimeError, "inspect|recover"):
+                seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"racing user export")
+        self.assertEqual((self.source / WEAPONS).read_bytes(), b"bundled weapons")
+        markers = list(self.source.glob(".wdc-refresh-*/PUBLISHING.json"))
+        self.assertEqual(len(markers), 1)
+        with self.assertRaises(UnfinishedExportPublication):
+            require_complete_exports(self.source / WEAPONS, self.source / UPGRADES)
+
     def test_only_one_existing_export_is_not_supplemented_from_another_snapshot(self):
         for existing, missing in ((WEAPONS, UPGRADES), (UPGRADES, WEAPONS)):
             with self.subTest(existing=existing):
@@ -71,12 +120,12 @@ class SourceSeedingTests(unittest.TestCase):
         self.assertTrue((stage / "PUBLISHING.json").exists())
 
     def test_failed_staging_keeps_both_targets_absent_and_allows_a_safe_retry(self):
-        real_copy = shutil.copy2
+        real_copy = shutil.copyfile
         def interrupted(src, dest, *args, **kwargs):
             if Path(src).name == UPGRADES:
                 raise OSError("simulated interruption")
             return real_copy(src, dest, *args, **kwargs)
-        with patch("modules.app_paths.shutil.copy2", side_effect=interrupted):
+        with patch("modules.app_paths.shutil.copyfile", side_effect=interrupted):
             with self.assertRaisesRegex(OSError, "simulated interruption"):
                 seed_source_files(self.project)
         self.assertFalse((self.source / WEAPONS).exists())
@@ -86,30 +135,124 @@ class SourceSeedingTests(unittest.TestCase):
         self.assertEqual((self.source / WEAPONS).read_bytes(), b"bundled weapons")
         self.assertEqual((self.source / UPGRADES).read_bytes(), b"bundled upgrades")
 
-    def test_failed_second_publication_rolls_back_the_first_seeded_file(self):
-        real_replace = os.replace
+    def test_failed_second_seed_publication_retains_a_guarded_recovery_copy(self):
+        real_link = os.link
         def fail_second(src, dest):
             if Path(dest) == self.source / UPGRADES:
-                raise OSError("second replacement failed")
-            return real_replace(src, dest)
-        with patch("modules.updater.os.replace", side_effect=fail_second):
-            with self.assertRaisesRegex(RuntimeError, "second replacement failed"):
+                raise OSError("second publication failed")
+            return real_link(src, dest)
+        with patch("modules.updater.os.link", side_effect=fail_second):
+            with self.assertRaisesRegex(RuntimeError, "second publication failed"):
+                seed_source_files(self.project)
+        self.assertEqual((self.source / WEAPONS).read_bytes(), b"bundled weapons")
+        self.assertFalse((self.source / UPGRADES).exists())
+        stages = list(self.source.glob(".wdc-refresh-*"))
+        self.assertEqual(len(stages), 1)
+        self.assertTrue((stages[0] / "PUBLISHING.json").is_file())
+        self.assertEqual((stages[0] / WEAPONS).read_bytes(), b"bundled weapons")
+        self.assertEqual((stages[0] / UPGRADES).read_bytes(), b"bundled upgrades")
+        with self.assertRaises(UnfinishedExportPublication):
+            require_complete_exports(self.source / WEAPONS, self.source / UPGRADES)
+
+    def test_interrupted_reference_copy_never_leaves_a_partial_target(self):
+        target = self.source / "riven_tags.json"
+        real_copy = shutil.copyfile
+
+        def interrupt(src, dest, *args, **kwargs):
+            if Path(src).name == "riven_tags.json":
+                Path(dest).write_bytes(b"partial")
+                raise OSError("interrupted reference copy")
+            return real_copy(src, dest, *args, **kwargs)
+
+        with patch("modules.app_paths.shutil.copyfile", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "interrupted reference copy"):
+                seed_source_files(self.project)
+        self.assertFalse(target.exists())
+        seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"other reference")
+
+    def test_reference_created_during_seeding_is_not_overwritten(self):
+        target = self.source / "riven_tags.json"
+        real_copy = shutil.copyfile
+
+        def create_custom(src, dest, *args, **kwargs):
+            if Path(src).name == "riven_tags.json":
+                target.write_bytes(b"user data created during seeding")
+            return real_copy(src, dest, *args, **kwargs)
+
+        with patch("modules.app_paths.shutil.copyfile", side_effect=create_custom):
+            seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"user data created during seeding")
+
+    def test_unavailable_atomic_export_publication_does_not_create_targets(self):
+        with patch("modules.updater.os.link", side_effect=OSError("hard links unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "safely seed.*hard links unavailable"):
                 seed_source_files(self.project)
         self.assertFalse((self.source / WEAPONS).exists())
         self.assertFalse((self.source / UPGRADES).exists())
-        self.assertFalse(list(self.source.glob(".wdc-refresh-*")))
+        self.assertEqual(list(self.source.glob(".wdc-refresh-*")), [])
+        seed_source_files(self.project)
+        self.assertEqual((self.source / WEAPONS).read_bytes(), b"bundled weapons")
+        self.assertEqual((self.source / UPGRADES).read_bytes(), b"bundled upgrades")
+
+    def test_unavailable_atomic_publication_does_not_leave_a_partial_reference(self):
+        target = self.source / "riven_tags.json"
+        (self.source / WEAPONS).write_bytes(b"existing weapons")
+        (self.source / UPGRADES).write_bytes(b"existing upgrades")
+        with patch("modules.app_paths.os.link", side_effect=OSError("hard links unavailable")):
+            with self.assertRaisesRegex(OSError, "safely seed.*hard links unavailable"):
+                seed_source_files(self.project)
+        self.assertFalse(target.exists())
+        self.assertEqual(list(self.source.glob(".wdc-reference-*")), [])
+        seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"other reference")
+
+    def test_dangling_reference_symlink_is_never_overwritten(self):
+        target = self.source / "riven_tags.json"
+        try:
+            target.symlink_to("missing-user-reference.json")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation is unavailable on this platform")
+        seed_source_files(self.project)
+        self.assertTrue(target.is_symlink())
+        self.assertFalse((self.source / "missing-user-reference.json").exists())
+
+    def test_process_exit_during_reference_copy_allows_clean_retry(self):
+        program = """
+import os, shutil
+from pathlib import Path
+from modules.app_paths import seed_source_files
+real_copy = shutil.copyfile
+def interrupted(src, dest, *args, **kwargs):
+    if Path(src).name == 'riven_tags.json':
+        Path(dest).write_bytes(b'partial')
+        os._exit(93)
+    return real_copy(src, dest, *args, **kwargs)
+shutil.copyfile = interrupted
+seed_source_files(Path(os.environ['TEST_PROJECT']))
+"""
+        env = os.environ.copy()
+        env["TEST_PROJECT"] = str(self.project)
+        run = subprocess.run([sys.executable, "-c", program], env=env, check=False,
+                             cwd=Path(__file__).resolve().parents[1], timeout=20)
+        self.assertEqual(run.returncode, 93)
+        target = self.source / "riven_tags.json"
+        self.assertFalse(target.exists())
+        seed_source_files(self.project)
+        self.assertEqual(target.read_bytes(), b"other reference")
 
     def test_process_exit_mid_seed_leaves_a_marker_and_later_seeding_is_blocked(self):
         program = """
 import os
 from pathlib import Path
 from modules.app_paths import seed_source_files
-real_replace = os.replace
+real_link = os.link
 def exit_after_first(src, dest):
-    real_replace(src, dest)
+    result = real_link(src, dest)
     if Path(dest).name == 'ExportWeapons_en_Cleaned.zip':
         os._exit(91)
-os.replace = exit_after_first
+    return result
+os.link = exit_after_first
 seed_source_files(Path(os.environ['TEST_PROJECT']))
 """
         env = os.environ.copy()
@@ -121,6 +264,9 @@ seed_source_files(Path(os.environ['TEST_PROJECT']))
         self.assertFalse((self.source / UPGRADES).exists())
         stages = list(self.source.glob(".wdc-refresh-*/PUBLISHING.json"))
         self.assertEqual(len(stages), 1)
+        marker = json.loads(stages[0].read_text(encoding="utf-8"))
+        self.assertEqual(marker["mode"], "seed-no-clobber")
+        self.assertEqual([item["staged_copy"] for item in marker["archives"]], [WEAPONS, UPGRADES])
         with self.assertRaises(UnfinishedExportPublication):
             require_complete_exports(self.source / WEAPONS, self.source / UPGRADES)
         seed_source_files(self.project)

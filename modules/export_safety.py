@@ -24,6 +24,35 @@ EXPORT_LOCK_TIMEOUT_SECONDS = 30.0
 _LOCK_FILE_NAME = ".wdc-exports.lock"
 _THREAD_LOCKS: dict[Path, threading.RLock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
+_THREAD_HELD = threading.local()
+
+
+def _held_locks() -> set[Path]:
+    held: set[Path] | None = getattr(_THREAD_HELD, "paths", None)
+    if held is None:
+        held = set()
+        _THREAD_HELD.paths = held
+    return held
+
+
+def _path_order(path: Path) -> str:
+    """Consistent directory order across case-insensitive path spellings."""
+    return os.path.normcase(str(path))
+
+
+def _export_directories(paths: tuple[str | Path, ...]) -> set[Path]:
+    """Protect both directory entries and any symlink targets being read.
+
+    Publication replaces an entry in the lexical parent, while reading a
+    symlink can reach a different directory. Cooperating users of either path
+    must share a lock and must see any outstanding recovery marker there.
+    """
+    directories: set[Path] = set()
+    for item in paths:
+        path = Path(item)
+        directories.add(path.parent.resolve())
+        directories.add(path.resolve().parent)
+    return directories
 
 
 def _thread_lock(path: Path) -> threading.RLock:
@@ -89,6 +118,16 @@ def _directory_lock(directory: Path, deadline: float) -> Iterator[None]:
     if not local_lock.acquire(timeout=remaining):
         raise ExportLockTimeout(f"Timed out waiting for export lock: {lock_path}")
 
+    held = _held_locks()
+    if lock_path in held:
+        # A second flock/open on the same path can conflict even within the
+        # same process. Reuse the outer OS lock until its context exits.
+        try:
+            yield
+        finally:
+            local_lock.release()
+        return
+
     handle = None
     locked = False
     try:
@@ -104,13 +143,21 @@ def _directory_lock(directory: Path, deadline: float) -> Iterator[None]:
             if time.monotonic() >= deadline:
                 raise ExportLockTimeout(f"Timed out waiting for export lock: {lock_path}")
             time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-        yield
+        held.add(lock_path)
+        try:
+            yield
+        finally:
+            held.remove(lock_path)
     finally:
-        if handle is not None:
-            if locked:
+        try:
+            if handle is not None and locked:
                 _unlock_file(handle)
-            handle.close()
-        local_lock.release()
+        finally:
+            try:
+                if handle is not None:
+                    handle.close()
+            finally:
+                local_lock.release()
 
 
 @contextmanager
@@ -119,13 +166,21 @@ def export_lock(*paths: str | Path,
     """Lock the parent folder(s) for a complete read or publication operation.
 
     The locks are acquired in canonical path order to prevent deadlocks when
-    callers pass files from more than one directory. The on-disk lock files are
-    intentionally persistent; OS locks are released automatically if a process
-    exits or crashes.
+    callers pass files from more than one directory. Same-thread nesting of an
+    already-held directory reuses its OS lock; nested acquisition of a new
+    directory must preserve global order or it fails immediately. The on-disk
+    lock files are intentionally persistent; OS locks are released automatically
+    if a process exits or crashes.
     """
     if timeout < 0:
         raise ValueError("timeout must be non-negative")
-    parents = sorted({Path(path).resolve().parent for path in paths}, key=str)
+    # normcase is a no-op on POSIX and folds case/separators on Windows, so
+    # different spellings of the same directory cannot reverse lock order.
+    parents = sorted(_export_directories(paths), key=_path_order)
+    held = _held_locks()
+    new_parents = [parent for parent in parents if parent / _LOCK_FILE_NAME not in held]
+    if held and new_parents and min(map(_path_order, new_parents)) < max(_path_order(lock.parent) for lock in held):
+        raise RuntimeError("Nested export locks must follow canonical directory order")
     deadline = time.monotonic() + timeout
     with ExitStack() as stack:
         for parent in parents:
@@ -134,14 +189,14 @@ def export_lock(*paths: str | Path,
 
 
 def _require_complete_exports_unlocked(*paths: str | Path) -> None:
-    for parent in sorted({Path(path).parent.resolve() for path in paths}):
+    for parent in sorted(_export_directories(paths), key=_path_order):
         for stage in sorted(parent.glob(".wdc-refresh-*")):
             if (stage / "PUBLISHING.json").is_file():
                 raise UnfinishedExportPublication(
                     f"An unfinished data refresh may have left saved exports inconsistent: {stage}. "
-                    "Do not rebuild from these files. Inspect PUBLISHING.json and restore the "
-                    "previous-* copies (or remove a destination that previously did not exist), "
-                    "then remove the staging directory and retry."
+                    "Do not rebuild from these files. Preserve the destinations and staged files, "
+                    "inspect PUBLISHING.json, and follow the interrupted-refresh recovery steps "
+                    "in the README before removing the staging directory."
                 )
 
 

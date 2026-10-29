@@ -31,6 +31,30 @@ class BundledDataIntegrationTests(unittest.TestCase):
             for other in {"HEAT", "COLD", "ELEC"} - {kind}:
                 self.assertEqual(weapon.damage_for(other), 0, (name, other))
 
+    def test_sirocco_imports_and_calculates_its_void_damage(self):
+        weapon = self.weapons.get_weapon("Sirocco")
+        self.assertIsNotNone(weapon)
+        self.assertEqual(weapon.dmg, 2000)
+        self.assertEqual(weapon.damage_for("VOID"), 2000)
+        result = DamageCalculator().calculate(
+            weapon, CalculationInputs(weapon_name="Sirocco", faction="Zariman", armor_value=0))
+        self.assertEqual(result.hud_total, 2000)
+        self.assertEqual(result.final_total, 3000)
+        self.assertEqual(result.warnings, [])
+
+    def test_unmodeled_export_damage_warns_even_with_added_mod_damage(self):
+        for name in ("Shadow Clones", "Shadow Clones Prime"):
+            with self.subTest(weapon=name):
+                weapon = self.weapons.get_weapon(name)
+                self.assertIsNotNone(weapon)
+                result = DamageCalculator().calculate(
+                    weapon, CalculationInputs(weapon_name=name, faction="Grineer", armor_value=0,
+                                              mods={"HEAT": 0.9}))
+                self.assertGreater(result.hud_total, 0)  # added Heat alone isn't the whole attack
+                self.assertEqual(len(result.warnings), 1)
+                self.assertIn("750", result.warnings[0])
+                self.assertIn("incomplete", result.warnings[0].lower())
+
     def test_grimoire_uses_the_player_export_not_the_doppelganger(self):
         # The public export's 150 Electricity aggregates the Wiki's primary
         # 100 direct + 50 radial components; it is not one 150-damage hit.

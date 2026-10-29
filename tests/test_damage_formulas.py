@@ -10,6 +10,7 @@ from __future__ import annotations
 import itertools
 import math
 import unittest
+from decimal import Decimal
 
 from modules.calculator import DamageCalculator
 from modules.constants import DAMAGE_TYPES, FACTION_MULTIPLIERS
@@ -269,6 +270,48 @@ class DamageFixture:
         return DamageCalculator().calculate(weapon, CalculationInputs(
             weapon_name=weapon.weapon, faction=faction, armor_value=armor,
             mods=mods, equipped_mods=slots, lich_element=lich, valence_base=valence))
+
+
+class NumericInputTests(DamageFixture, unittest.TestCase):
+    def test_armor_and_valence_reject_negative_or_nonfinite_values(self):
+        for field in ("armor", "valence"):
+            for value in (-1, math.nan, math.inf, -math.inf, 10**400, True, None, "bad",
+                          "1e-9999", "-1e-9999", Decimal("1e-9999")):
+                with self.subTest(field=field, value=value):
+                    # Validate valence even with no selected progenitor element.
+                    with self.assertRaisesRegex(ValueError, "(?i)finite.*non-negative"):
+                        self.calculate({"IMPACT": 100}, **{field: value})
+        self.assertEqual(self.calculate({"IMPACT": 100}, armor=0, valence=0).hud_total, 100)
+
+    def test_nonfinite_weapon_data_and_mod_effects_do_not_produce_results(self):
+        for weapon, mods in (
+            (make_weapon({"IMPACT": 100}, dmg=math.nan), {}),
+            (make_weapon({"IMPACT": math.inf}, dmg=100), {}),
+            (make_weapon({"IMPACT": 100}, multi=math.inf), {}),
+            (make_weapon({"IMPACT": 100}), {"TRUE": math.nan}),
+            (make_weapon({"IMPACT": 100}), {"BANE": math.inf}),
+        ):
+            with self.subTest(weapon=weapon, mods=mods), \
+                 self.assertRaisesRegex(ValueError, "(?i)finite"):
+                DamageCalculator().calculate(weapon, CalculationInputs(
+                    weapon_name=weapon.weapon, faction="Grineer", armor_value=0, mods=mods))
+        with self.assertRaisesRegex(ValueError, "(?i)finite"):
+            self.calculate({"IMPACT": 100}, slots=equipped(("HEAT", math.nan)))
+
+    def test_finite_inputs_that_overflow_cannot_produce_infinite_totals(self):
+        for weapon, mods in (
+            (make_weapon({"IMPACT": 100}, multi=1e308), {}),
+            (make_weapon({"IMPACT": 100}), {"BANE": 1e308}),
+            (make_weapon({"IMPACT": 100}), {"HEAT": 1e308}),
+        ):
+            with self.subTest(weapon=weapon, mods=mods), \
+                 self.assertRaisesRegex(ValueError, "(?i)finite"):
+                DamageCalculator().calculate(weapon, CalculationInputs(
+                    weapon_name=weapon.weapon, faction="Grineer", armor_value=0, mods=mods))
+
+    def test_negative_mod_effects_are_still_supported(self):
+        result = self.calculate({"IMPACT": 100}, mods={"TRUE": -0.5})
+        self.assertEqual(result.hud_total, 50)
 
 
 class WikiDamageExamplesTests(DamageFixture, unittest.TestCase):

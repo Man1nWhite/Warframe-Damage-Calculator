@@ -10,7 +10,9 @@ outside this screen's scope.
 """
 from __future__ import annotations
 
+import math
 from collections import OrderedDict
+from decimal import Decimal, InvalidOperation
 
 from .constants import (
     BASE_ELEMENT_TYPES,
@@ -29,27 +31,77 @@ from .status_damage import wiki_quantized_damage
 # Innate primary elements follow equipped mods in this order.
 INNATE_ELEMENT_ORDER = ("HEAT", "COLD", "ELEC", "TOXIN")
 
+
+class NumericRangeError(ValueError):
+    """The data or an intermediate calculation is not a finite number."""
+
+
+def _require_finite(description: str, *values: float) -> None:
+    if not all(math.isfinite(value) for value in values):
+        raise NumericRangeError(f"{description} must be finite; check the numeric values and range.")
+
+
+def parse_nonnegative_number(value: object, label: str, *, blank_zero: bool = False) -> float:
+    """Parse a representable non-negative value without silent underflow.
+
+    Text is accepted for callers reading a build file; a blank can mean zero
+    when explicitly requested by the UI. Negative mod effects are unrelated
+    to this validation and remain supported.
+    """
+    suffix = " (blank means zero)" if blank_zero else ""
+    message = f"{label} must be a representable, finite, non-negative number{suffix}."
+    try:
+        if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+            raise ValueError(message)
+        if isinstance(value, str):
+            value = value.strip()
+            if not value and blank_zero:
+                return 0.0
+        parsed = float(value)
+        if not math.isfinite(parsed) or parsed < 0:
+            raise ValueError(message)
+        # A nonzero decimal can underflow to signed zero, concealing a
+        # negative or a value that the calculator cannot represent.
+        if parsed == 0.0:
+            underflowed = not Decimal(value).is_zero() if isinstance(value, str) else value != 0
+            if underflowed:
+                raise ValueError(message)
+        return parsed
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        raise ValueError(message) from None
+
+
 class DamageCalculator:
     def calculate(self, weapon: Weapon, inputs: CalculationInputs) -> CalculationResults:
         base_weapon_damage = float(weapon.dmg)
+        _require_finite("Weapon damage and multishot", base_weapon_damage, weapon.multi,
+                        *(weapon.damage_for(kind) for kind in DAMAGE_TYPES))
+        armor_value = parse_nonnegative_number(inputs.armor_value, "Armor")
+        valence_input = parse_nonnegative_number(inputs.valence_base, "Valence")
+
         faction = faction_key(inputs.faction)
         element = (inputs.lich_element or "").strip().upper()
         if element and element not in DAMAGE_TYPES:
             raise ValueError(f"Unknown progenitor damage type: {element}")
         # A value without a selected type is not a damage component.
-        valence_damage = max(0.0, float(inputs.valence_base)) if element else 0.0
+        valence_damage = valence_input if element else 0.0
         valence_multiplier = valence_damage / base_weapon_damage if base_weapon_damage > 0 else 0.0
         weapon_total_damage = base_weapon_damage + valence_damage
         mod_totals = self._mod_totals(inputs, faction)
+        _require_finite("Mod effects", *mod_totals.values())
         base_multiplier = max(0.0, 1.0 + mod_totals.get("TRUE", 0.0))
         modded_base = weapon_total_damage * base_multiplier
         quanta = modded_base / 32.0
+        _require_finite("Calculated base damage", valence_multiplier, weapon_total_damage,
+                        base_multiplier, modded_base, quanta)
 
         base_by_type, lich_damage, resolved_mods = self._resolve_elements(
             weapon, inputs, mod_totals, element, valence_damage
         )
+        _require_finite("Calculated damage components", *base_by_type.values(),
+                        *lich_damage.values(), *resolved_mods.values())
         faction_modifiers = self._build_faction_modifiers(faction)
-        armor_modifiers = self._build_armor_modifiers(inputs.armor_value, faction_modifiers)
+        armor_modifiers = self._build_armor_modifiers(armor_value, faction_modifiers)
         bane_multiplier = max(0.0, 1.0 + mod_totals.get("BANE", 0.0))
 
         hud_damage_by_type: dict[str, float] = {}
@@ -63,15 +115,20 @@ class DamageCalculator:
             else:
                 raw = base_value + weapon_total_damage * mod_value
             hud_damage_by_type[damage_type] = raw * base_multiplier
-            quantized = (
-                wiki_quantized_damage(hud_damage_by_type[damage_type], modded_base)
-                if modded_base > 0 else 0.0
-            )
+            _require_finite("Calculated damage", raw, hud_damage_by_type[damage_type])
+            try:
+                quantized = (
+                    wiki_quantized_damage(hud_damage_by_type[damage_type], modded_base)
+                    if modded_base > 0 else 0.0
+                )
+            except (OverflowError, ValueError) as exc:
+                raise NumericRangeError("Quantized damage must be finite; check the numeric range.") from exc
             dealt = quantized * armor_modifiers[damage_type]
             bane_dealt = dealt * bane_multiplier
+            _require_finite("Calculated damage", quantized, dealt, bane_dealt)
             # The wiki's armor article states a minimum of 1 per positive
             # damage type reduced by armor.  Zero-quantized types stay zero.
-            if inputs.armor_value > 0:
+            if armor_value > 0:
                 if dealt > 0:
                     dealt = max(1.0, dealt)
                 if bane_dealt > 0:
@@ -83,6 +140,20 @@ class DamageCalculator:
         # treat the exported row as one damage instance. Some export rows
         # combine distinct hit components. Additional multishot is not modeled.
         hud_total = sum(hud_damage_by_type.values()) * (weapon.multi if weapon.multi > 0 else 1.0)
+        hud_total_with_bane = hud_total * bane_multiplier
+        final_total = sum(final_damage_by_type.values())
+        final_total_with_bane = sum(bane_final_by_type.values())
+        accounted_base = sum(weapon.damage_for(kind) for kind in DAMAGE_TYPES)
+        _require_finite("Damage totals", hud_total, hud_total_with_bane, final_total,
+                        final_total_with_bane, accounted_base)
+        missing_base = max(0.0, base_weapon_damage - accounted_base)
+        _require_finite("Unmodeled base damage", missing_base)
+        warnings = []
+        if missing_base > max(1e-6, abs(base_weapon_damage) * 1e-6):
+            warnings.append(
+                f"{missing_base:g} base damage is not assigned to a modeled damage type; "
+                "HUD and final totals are incomplete."
+            )
         return CalculationResults(
             base_weapon_damage=base_weapon_damage,
             quanta=quanta,
@@ -95,9 +166,10 @@ class DamageCalculator:
             final_damage_by_type=final_damage_by_type,
             aggregated_mods=resolved_mods,
             hud_total=hud_total,
-            hud_total_with_bane=hud_total * bane_multiplier,
-            final_total=sum(final_damage_by_type.values()),
-            final_total_with_bane=sum(bane_final_by_type.values()),
+            hud_total_with_bane=hud_total_with_bane,
+            final_total=final_total,
+            final_total_with_bane=final_total_with_bane,
+            warnings=warnings,
         )
 
     @staticmethod

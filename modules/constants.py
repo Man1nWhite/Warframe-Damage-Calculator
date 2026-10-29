@@ -87,6 +87,7 @@ JSON_DAMAGE_INDEX_MAP = {
     "MAG": 10,
     "VIRAL": 11,
     "CORR": 12,
+    "VOID": 13,
 }
 
 BANE_CODE_MAP = {

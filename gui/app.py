@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import math
 import os
+import sqlite3
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import cast
 
@@ -43,7 +44,7 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.app_paths import ensure_app_dirs
-from modules.calculator import DamageCalculator
+from modules.calculator import DamageCalculator, NumericRangeError, parse_nonnegative_number
 from modules.constants import (
     APP_TITLE,
     APP_VERSION,
@@ -55,7 +56,7 @@ from modules.constants import (
 )
 from modules.database import ModRepository, WeaponRepository
 from modules.mod_compatibility import ModCompatibility
-from modules.models import CalculationInputs, EquippedMod, Mod, Weapon
+from modules.models import CalculationInputs, CalculationResults, EquippedMod, Mod, Weapon
 from modules.updater import WarframeDataUpdater
 
 DARK_STYLESHEET = """
@@ -326,6 +327,7 @@ class CompareBuildDialog(QDialog):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        table.setWordWrap(True)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -336,6 +338,9 @@ class CompareBuildDialog(QDialog):
             table.setItem(row_index, 1, QTableWidgetItem(current_value))
             table.setItem(row_index, 2, QTableWidgetItem(compare_map.get(metric, "-")))
 
+        # Keep multi-line warning text readable as the dialog/columns resize.
+        table.horizontalHeader().sectionResized.connect(lambda *_: table.resizeRowsToContents())
+        table.resizeRowsToContents()
         layout.addWidget(table, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -558,7 +563,8 @@ class SettingsDialog(QDialog):
     def _confirm_catalog_rebuild(self) -> bool:
         choice = QMessageBox.question(
             self, "Rebuild Database",
-            "This rebuild replaces the mod and effect catalog, including custom entries. "
+            "This rebuild replaces the mod and effect catalog, including custom entries, "
+            "and overwrites weapon rows with matching names. "
             "An existing database will first be backed up in data/backups. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -737,6 +743,8 @@ class DamageCalculatorWindow(QMainWindow):
         self.mod_slots: list[ModSlotWidget] = []
         self.available_mods: list[Mod] = []
         self.current_results = None
+        self._needs_catalog_refresh = False
+        self._suspend_recalculation = False
         self._pipeline_thread: QThread | None = None
         self._pipeline_worker: DataPipelineWorker | None = None
         self._pipeline_callbacks: PipelineCallbacks | None = None
@@ -846,6 +854,11 @@ class DamageCalculatorWindow(QMainWindow):
         form.addRow("Valence Base", self.valence_edit)
         form.addRow("Faction", self.faction_combo)
         form.addRow("Armor Value", self.armor_edit)
+        self.input_warning = QLabel()
+        self.input_warning.setWordWrap(True)
+        self.input_warning.setStyleSheet("color: #ffb4a9;")
+        self.input_warning.setVisible(False)
+        form.addRow(self.input_warning)
         return box
 
     def _build_summary_cards(self) -> QWidget:
@@ -883,6 +896,11 @@ class DamageCalculatorWindow(QMainWindow):
         self.damage_scope_notice.setWordWrap(True)
         self.damage_scope_notice.setStyleSheet("color: #91a3c4;")
         layout.addWidget(self.damage_scope_notice)
+        self.damage_warning = QLabel()
+        self.damage_warning.setWordWrap(True)
+        self.damage_warning.setStyleSheet("color: #e4bd78;")
+        self.damage_warning.setVisible(False)
+        layout.addWidget(self.damage_warning)
         self.compatibility_notice = QLabel(
             "Compatibility filtering is partial; verify conflicts, mod capacity and other restrictions."
         )
@@ -1016,38 +1034,77 @@ class DamageCalculatorWindow(QMainWindow):
         """Preserve the legacy entry point while rebuilding on the worker thread."""
         self.start_data_pipeline(prefer_online=False)
 
-    def refresh_weapon_list(self) -> None:
+    def refresh_weapon_list(self) -> bool:
         # The sidebar is the catalogue browser, so it asks for every weapon: the
         # default search cap would silently hide everything sorted after the
         # first 250 names (Kuva/Tenet weapons, most Primes, ...).
-        weapons = self.weapon_repository.search_weapons(self.search_edit.text(), limit=None)
-        current_name = self.weapon_list.currentItem().text() if self.weapon_list.currentItem() else None
+        try:
+            weapons = self.weapon_repository.search_weapons(self.search_edit.text(), limit=None)
+        except sqlite3.Error as exc:
+            # A database failure must not look like an empty catalogue.
+            self.statusBar().showMessage(f"Weapon catalog unavailable: {exc}", 15000)
+            return False
+        # The selected build remains active even when its weapon is filtered
+        # out. Using currentItem() here would forget it after the first filter
+        # change and auto-select a different weapon on the next keystroke.
+        current_name = self.selected_weapon.weapon if self.selected_weapon else None
 
-        self.weapon_list.blockSignals(True)
-        self.weapon_list.clear()
-        for weapon_name in weapons:
-            self.weapon_list.addItem(weapon_name)
-        self.weapon_list.blockSignals(False)
+        blocked = self.weapon_list.blockSignals(True)
+        try:
+            self.weapon_list.clear()
+            for weapon_name in weapons:
+                self.weapon_list.addItem(weapon_name)
+            if current_name:
+                matches = self.weapon_list.findItems(current_name, Qt.MatchFlag.MatchExactly)
+                if matches:
+                    # Restoring the visible selection must not reload the
+                    # weapon or disturb the user's equipped slots.
+                    self.weapon_list.setCurrentItem(matches[0])
+        finally:
+            self.weapon_list.blockSignals(blocked)
 
-        if current_name:
-            matches = self.weapon_list.findItems(current_name, Qt.MatchFlag.MatchExactly)
-            if matches:
-                self.weapon_list.setCurrentItem(matches[0])
-        elif self.weapon_list.count() > 0:
+        # Select a default only before any weapon has been chosen, such as at
+        # startup or after an initially empty database has been populated.
+        if current_name is None and self.weapon_list.count() > 0:
             self.weapon_list.setCurrentRow(0)
+        return True
 
     def on_weapon_selected(self, current: QListWidgetItem | None) -> None:
         if current is None:
             return
 
-        weapon = self.weapon_repository.get_weapon(current.text())
-        if weapon is None:
+        try:
+            weapon = self.weapon_repository.get_weapon(current.text())
+            if weapon is None:
+                raise ValueError(f"Weapon {current.text()!r} is no longer in the database.")
+            available_mods = self._compatible_mod_options(weapon)
+        except (sqlite3.Error, ValueError, TypeError, KeyError, IndexError) as exc:
+            # Do not commit the new weapon until both catalog reads succeeded;
+            # otherwise a failed mod query can wipe an unsaved build.
+            blocked = self.weapon_list.blockSignals(True)
+            try:
+                matches = self.weapon_list.findItems(
+                    self.selected_weapon.weapon, Qt.MatchFlag.MatchExactly
+                ) if self.selected_weapon else []
+                self.weapon_list.setCurrentItem(matches[0] if matches else None)
+            finally:
+                self.weapon_list.blockSignals(blocked)
+            QMessageBox.warning(self, "Weapon unavailable", f"Could not switch weapons: {exc}")
             return
 
-        self.selected_weapon = weapon
-        self._show_weapon_summary(weapon)
-        self._load_mod_options_for_weapon(weapon)
+        self._set_active_weapon(weapon, available_mods)
         self.recalculate()
+
+    def _set_active_weapon(self, weapon: Weapon, mods: list[Mod]) -> None:
+        self.selected_weapon = weapon
+        self._needs_catalog_refresh = False
+        self._show_weapon_summary(weapon)
+        previous_suspend = self._suspend_recalculation
+        self._suspend_recalculation = True
+        try:
+            self._set_mod_options_for_weapon(weapon, mods)
+        finally:
+            self._suspend_recalculation = previous_suspend
 
     def _show_weapon_summary(self, weapon: Weapon) -> None:
         lines = [
@@ -1086,7 +1143,10 @@ class DamageCalculatorWindow(QMainWindow):
         return sorted(deduped.values(), key=lambda mod: (mod.name.lower(), mod.fusion_limit))
 
     def _load_mod_options_for_weapon(self, weapon: Weapon) -> None:
-        self.available_mods = self._compatible_mod_options(weapon)
+        self._set_mod_options_for_weapon(weapon, self._compatible_mod_options(weapon))
+
+    def _set_mod_options_for_weapon(self, weapon: Weapon, mods: list[Mod]) -> None:
+        self.available_mods = mods
         self.compatibility_notice.setText(self.mod_compatibility.notice(weapon))
         self.apply_mod_filters()
 
@@ -1152,7 +1212,12 @@ class DamageCalculatorWindow(QMainWindow):
 
             mod = slot.mod_lookup.get(unique_name)
             if mod is None:
-                mod = self.mod_repository.get_mod(unique_name)
+                try:
+                    mod = self.mod_repository.get_mod(unique_name)
+                except sqlite3.Error as exc:
+                    self._mark_results_unavailable(str(exc))
+                    QMessageBox.critical(self, "Mod unavailable", str(exc))
+                    return
             slot.current_mod = mod
             if mod is not None:
                 slot.rank_spin.setMaximum(max(mod.fusion_limit, 0))
@@ -1176,7 +1241,21 @@ class DamageCalculatorWindow(QMainWindow):
         self.recalculate()
 
     def recalculate(self) -> None:
-        if self.selected_weapon is None:
+        if self.selected_weapon is None or self._suspend_recalculation:
+            return
+        try:
+            armor = self._parse_numeric_input(self.armor_edit.text(), "Armor")
+            valence = self._parse_numeric_input(self.valence_edit.text(), "Valence")
+        except ValueError as exc:
+            self._mark_input_error(str(exc))
+            return
+        self.input_warning.setVisible(False)
+        if self._needs_catalog_refresh:
+            try:
+                self.refresh_after_data_pipeline()
+            except Exception as exc:
+                self._mark_results_unavailable(f"Could not refresh the rebuilt database: {exc}")
+                QMessageBox.critical(self, "Calculation error", str(exc))
             return
 
         try:
@@ -1184,16 +1263,34 @@ class DamageCalculatorWindow(QMainWindow):
             inputs = CalculationInputs(
                 weapon_name=self.selected_weapon.weapon,
                 faction=self.faction_combo.currentText() or "Grineer",
-                armor_value=self.safe_float(self.armor_edit.text()),
+                armor_value=armor,
                 lich_element=self.lich_combo.currentText(),
-                valence_base=self.safe_float(self.valence_edit.text()),
+                valence_base=valence,
                 equipped_mods=equipped_mods,
             )
             results = self.calculator.calculate(self.selected_weapon, inputs)
             self.current_results = results
             self._update_results(results)
+        except NumericRangeError as exc:
+            self._mark_input_error(str(exc))
         except Exception as exc:
+            self._mark_results_unavailable(str(exc))
             QMessageBox.critical(self, "Calculation error", str(exc))
+
+    def _mark_input_error(self, reason: str) -> None:
+        self.input_warning.setText(reason)
+        self.input_warning.setVisible(True)
+        self._mark_results_unavailable(reason)
+
+    def _mark_results_unavailable(self, reason: str) -> None:
+        # Never leave an old or partially calculated value looking current.
+        self.current_results = None
+        self.damage_warning.setText(f"Results unavailable: {reason}")
+        self.damage_warning.setVisible(True)
+        for card in self.cards.values():
+            card.set_value("—")
+        for table in (self.aggregated_table, self.hud_table, self.final_table):
+            table.setRowCount(0)
 
     def _build_equipped_mods(self) -> list[EquippedMod]:
         selections = [(slot.current_mod.unique_name, slot.rank_spin.value())
@@ -1210,6 +1307,8 @@ class DamageCalculatorWindow(QMainWindow):
         return equipped
 
     def _update_results(self, results) -> None:
+        self.damage_warning.setText("\n".join(results.warnings))
+        self.damage_warning.setVisible(bool(results.warnings))
         self.cards["base_damage"].set_value(f"{results.base_weapon_damage:.6f}")
         self.cards["weapon_total_damage"].set_value(f"{results.weapon_total_damage:.6f}")
         self.cards["quanta"].set_value(f"{results.quanta:.6f}")
@@ -1241,6 +1340,14 @@ class DamageCalculatorWindow(QMainWindow):
     def save_build(self) -> None:
         if self.selected_weapon is None:
             QMessageBox.information(self, "Save Build", "Pick a weapon first.")
+            return
+        try:
+            self._parse_numeric_input(self.armor_edit.text(), "Armor")
+            self._parse_numeric_input(self.valence_edit.text(), "Valence")
+            if not self.input_warning.isHidden():
+                raise ValueError(self.input_warning.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Save Build", f"Correct the build before saving: {exc}")
             return
         default_path = self.paths["builds"] / f"{self.selected_weapon.weapon.replace('/', '-').replace(' ', '_')}.json"
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Build", str(default_path), "JSON Files (*.json)")
@@ -1282,10 +1389,17 @@ class DamageCalculatorWindow(QMainWindow):
                     pass  # Do not hide the original save error.
         QMessageBox.information(self, "Save Build", "Build saved.")
 
-    def _read_build(self, file_name: str, action: str) -> tuple[Weapon, dict[str, str], list[tuple[Mod | None, int]]] | None:
+    def _read_build(self, file_name: str, action: str) -> tuple[
+        Weapon, dict[str, str], list[tuple[Mod | None, int]], list[Mod]
+    ] | None:
         """Validate a saved build before mutating the UI or comparing results."""
         try:
-            payload = json.loads(Path(file_name).read_text(encoding="utf-8"))
+            # Preserve the original decimal exponent: json's default float
+            # parser would turn a tiny nonzero saved value into 0.0 silently.
+            try:
+                payload = json.loads(Path(file_name).read_text(encoding="utf-8"), parse_float=Decimal)
+            except InvalidOperation as exc:
+                raise ValueError("A number in the build is outside the supported range.") from exc
             if not isinstance(payload, dict):
                 raise ValueError("The build must be a JSON object.")
             weapon_name = payload.get("weapon")
@@ -1309,10 +1423,15 @@ class DamageCalculatorWindow(QMainWindow):
             if element and element not in DAMAGE_TYPES:
                 raise ValueError(f"Unknown adversary element: {element}")
             inputs = {"faction": faction, "lich_element": element}
-            for key in ("armor", "valence_base"):
-                text = str(raw_inputs.get(key) or "0")
-                if not math.isfinite(float(text)):
-                    raise ValueError(f"{key} must be a finite number.")
+            for key, label in (("armor", "Armor"), ("valence_base", "Valence")):
+                value = raw_inputs.get(key)
+                if value is None:
+                    text = "0"
+                elif isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+                    raise ValueError(f"{label} must be a number or numeric text.")
+                else:
+                    text = str(value)
+                self._parse_numeric_input(text, label)
                 inputs[key] = text
 
             raw_mods = payload.get("mods")
@@ -1320,7 +1439,8 @@ class DamageCalculatorWindow(QMainWindow):
                 raw_mods = []
             if not isinstance(raw_mods, list) or len(raw_mods) > len(self.mod_slots):
                 raise ValueError(f"The build must contain at most {len(self.mod_slots)} mod slots.")
-            compatible = {mod.unique_name: mod for mod in self._compatible_mod_options(weapon)}
+            available_mods = self._compatible_mod_options(weapon)
+            compatible = {mod.unique_name: mod for mod in available_mods}
             mods: list[tuple[Mod | None, int]] = []
             for row in raw_mods:
                 if not isinstance(row, dict):
@@ -1338,10 +1458,31 @@ class DamageCalculatorWindow(QMainWindow):
                 if rank < 0 or (mod is not None and rank > mod.fusion_limit):
                     raise ValueError(f"Invalid rank {rank} for {unique_name or 'empty slot'}.")
                 mods.append((mod, rank))
-            return weapon, inputs, mods
-        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            return weapon, inputs, mods, available_mods
+        except (OSError, UnicodeError, ValueError, TypeError, sqlite3.Error, KeyError, IndexError) as exc:
             QMessageBox.warning(self, action, f"Could not read the build: {exc}")
             return None
+
+    def _calculate_saved_build(
+        self, weapon: Weapon, inputs: dict[str, str], mod_rows: list[tuple[Mod | None, int]]
+    ) -> tuple[CalculationInputs, CalculationResults]:
+        """Calculate the validated snapshot before a load can change the UI."""
+        selections = [(mod.unique_name, rank) for mod, rank in mod_rows if mod is not None]
+        effects_by_selection = self.mod_repository.fetch_ranked_effects_many(selections)
+        equipped_mods = [
+            EquippedMod(mod=mod, rank=rank, effects=effects_by_selection[(mod.unique_name, rank)])
+            if mod is not None else EquippedMod()
+            for mod, rank in mod_rows
+        ]
+        calculation_inputs = CalculationInputs(
+            weapon_name=weapon.weapon,
+            faction=inputs["faction"],
+            armor_value=self._parse_numeric_input(inputs["armor"], "Armor"),
+            lich_element=inputs["lich_element"],
+            valence_base=self._parse_numeric_input(inputs["valence_base"], "Valence"),
+            equipped_mods=equipped_mods,
+        )
+        return calculation_inputs, self.calculator.calculate(weapon, calculation_inputs)
 
     def load_build(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "Load Build", str(self.paths["builds"]), "JSON Files (*.json)")
@@ -1350,40 +1491,58 @@ class DamageCalculatorWindow(QMainWindow):
         loaded = self._read_build(file_name, "Load Build")
         if loaded is None:
             return
-        weapon, inputs, mod_rows = loaded
+        weapon, inputs, mod_rows, available_mods = loaded
+        try:
+            _calculation_inputs, results = self._calculate_saved_build(weapon, inputs, mod_rows)
+        except (sqlite3.Error, ValueError, TypeError, KeyError, ArithmeticError) as exc:
+            QMessageBox.warning(self, "Load Build", f"Could not calculate the build: {exc}")
+            return
 
-        # Reset filters before selecting saved mods, which may otherwise be
-        # hidden. The exact weapon is known to exist from the preflight.
-        self.mod_search_edit.clear()
-        self.mod_category_combo.setCurrentText("All Mods")
-        self.search_edit.setText(weapon.weapon)
-        matches = self.weapon_list.findItems(weapon.weapon, Qt.MatchFlag.MatchExactly)
-        if not matches:
-            # An exact match can be outside a search result's limit.
-            self.weapon_list.addItem(weapon.weapon)
+        # Apply the validated, calculated snapshot as one UI update; do not
+        # re-read effects after altering the previous unsaved build.
+        previous_suspend = self._suspend_recalculation
+        self._suspend_recalculation = True
+        try:
+            # Reset filters before selecting saved mods, which may otherwise be
+            # hidden. The exact weapon is known to exist from the preflight.
+            self.mod_search_edit.clear()
+            self.mod_category_combo.setCurrentText("All Mods")
+            self.search_edit.setText(weapon.weapon)
             matches = self.weapon_list.findItems(weapon.weapon, Qt.MatchFlag.MatchExactly)
-        self.weapon_list.setCurrentItem(matches[0])
-        # Refresh even when the weapon was already selected: the database may
-        # have been rebuilt since the current picker options were populated.
-        self.selected_weapon = weapon
-        self._show_weapon_summary(weapon)
-        self._load_mod_options_for_weapon(weapon)
+            if not matches:
+                # An exact match can be outside a search result's limit.
+                self.weapon_list.addItem(weapon.weapon)
+                matches = self.weapon_list.findItems(weapon.weapon, Qt.MatchFlag.MatchExactly)
+            blocked = self.weapon_list.blockSignals(True)
+            try:
+                self.weapon_list.setCurrentItem(matches[0])
+            finally:
+                self.weapon_list.blockSignals(blocked)
+            # Apply the same catalog snapshot used by preflight, without another
+            # database read that could fail after the previous build was altered.
+            self._set_active_weapon(weapon, available_mods)
 
-        self.lich_combo.setCurrentText(inputs["lich_element"])
-        self.valence_edit.setText(inputs["valence_base"])
-        self.faction_combo.setCurrentText(inputs["faction"])
-        self.armor_edit.setText(inputs["armor"])
+            self.lich_combo.setCurrentText(inputs["lich_element"])
+            self.valence_edit.setText(inputs["valence_base"])
+            self.faction_combo.setCurrentText(inputs["faction"])
+            self.armor_edit.setText(inputs["armor"])
 
-        # Older files may contain fewer than eight rows. Missing rows mean
-        # empty slots, not "keep whatever the current build had equipped".
-        for index, slot in enumerate(self.mod_slots):
-            mod, rank = mod_rows[index] if index < len(mod_rows) else (None, 0)
-            if mod is None:
-                slot.clear_selection()
-                continue
-            slot.mod_combo.setCurrentIndex(slot.mod_combo.findData(mod.unique_name))
-            slot.rank_spin.setValue(rank)
-        self.on_mod_changed()
+            # Older files may contain fewer than eight rows. Missing rows mean
+            # empty slots, not "keep whatever the current build had equipped".
+            for index, slot in enumerate(self.mod_slots):
+                mod, rank = mod_rows[index] if index < len(mod_rows) else (None, 0)
+                if mod is None:
+                    slot.clear_selection()
+                    continue
+                slot.mod_combo.setCurrentIndex(slot.mod_combo.findData(mod.unique_name))
+                slot.rank_spin.setValue(rank)
+            # Synchronize slot summaries while recalculation remains suspended.
+            self.on_mod_changed()
+        finally:
+            self._suspend_recalculation = previous_suspend
+        self.input_warning.setVisible(False)
+        self.current_results = results
+        self._update_results(results)
         QMessageBox.information(self, "Load Build", "Build loaded.")
 
     def apply_enemy_preset(self) -> None:
@@ -1454,15 +1613,20 @@ class DamageCalculatorWindow(QMainWindow):
             return
 
         outputs = cast(PipelineResult, result)
+        # The old weapon snapshot and totals can no longer be trusted once a
+        # rebuild succeeds, even if refreshing the widgets then fails.
+        self._needs_catalog_refresh = True
         try:
             self.refresh_after_data_pipeline()
         except Exception as exc:
             message = f"The database was rebuilt, but the window could not refresh: {exc}"
+            self._mark_results_unavailable(message)
             self.statusBar().showMessage(message, 15000)
             if callbacks and callbacks.failed:
                 callbacks.failed(message)
             return
 
+        self._needs_catalog_refresh = False
         self.statusBar().showMessage("Database rebuild complete.", 8000)
         if callbacks and callbacks.succeeded:
             callbacks.succeeded(outputs)
@@ -1496,15 +1660,17 @@ class DamageCalculatorWindow(QMainWindow):
 
     def refresh_after_data_pipeline(self) -> None:
         """Refresh repositories and widgets after a successful worker result."""
-        self.refresh_weapon_list()
+        if not self.refresh_weapon_list():
+            raise RuntimeError(self.statusBar().currentMessage() or "Weapon catalog unavailable.")
         if self.selected_weapon is None:
+            self._needs_catalog_refresh = False
             return
         refreshed = self.weapon_repository.get_weapon(self.selected_weapon.weapon)
-        if refreshed is not None:
-            self.selected_weapon = refreshed
-            self._show_weapon_summary(refreshed)
-            self._load_mod_options_for_weapon(refreshed)
-            self.recalculate()
+        if refreshed is None:
+            raise ValueError(f"Weapon {self.selected_weapon.weapon!r} is no longer in the database.")
+        available_mods = self._compatible_mod_options(refreshed)
+        self._set_active_weapon(refreshed, available_mods)
+        self.recalculate()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.data_pipeline_running:
@@ -1524,29 +1690,16 @@ class DamageCalculatorWindow(QMainWindow):
         loaded = self._read_build(file_name, "Compare Build")
         if loaded is None:
             return
-        weapon, inputs, mod_rows = loaded
-        selections = [(mod.unique_name, rank) for mod, rank in mod_rows if mod is not None]
-        effects_by_selection = self.mod_repository.fetch_ranked_effects_many(selections)
-        equipped_mods: list[EquippedMod] = []
-        for mod, rank in mod_rows:
-            if mod is None:
-                equipped_mods.append(EquippedMod())
-                continue
-            effects = effects_by_selection[(mod.unique_name, rank)]
-            equipped_mods.append(EquippedMod(mod=mod, rank=rank, effects=effects))
-
-        compare_inputs = CalculationInputs(
-            weapon_name=weapon.weapon,
-            faction=inputs["faction"],
-            armor_value=self.safe_float(inputs["armor"]),
-            lich_element=inputs["lich_element"],
-            valence_base=self.safe_float(inputs["valence_base"]),
-            equipped_mods=equipped_mods,
-        )
-        compare_results = self.calculator.calculate(weapon, compare_inputs)
+        weapon, inputs, mod_rows, _available_mods = loaded
+        try:
+            compare_inputs, compare_results = self._calculate_saved_build(weapon, inputs, mod_rows)
+        except (sqlite3.Error, ValueError, TypeError, KeyError, ArithmeticError) as exc:
+            QMessageBox.warning(self, "Compare Build", f"Could not calculate the build: {exc}")
+            return
 
         current_summary = [
             ("Weapon", self.selected_weapon.weapon),
+            ("Warnings", "\n".join(self.current_results.warnings) or "None"),
             ("Faction", self.faction_combo.currentText()),
             ("Armor", self.armor_edit.text()),
             ("HUD Total", f"{self.current_results.hud_total:.6f}"),
@@ -1558,6 +1711,7 @@ class DamageCalculatorWindow(QMainWindow):
         ]
         compare_summary = [
             ("Weapon", weapon.weapon),
+            ("Warnings", "\n".join(compare_results.warnings) or "None"),
             ("Faction", compare_inputs.faction),
             ("Armor", str(compare_inputs.armor_value)),
             ("HUD Total", f"{compare_results.hud_total:.6f}"),
@@ -1573,12 +1727,10 @@ class DamageCalculatorWindow(QMainWindow):
     def display_name(self, code: str) -> str:
         return DISPLAY_NAMES.get(code, code.title())
 
-    def safe_float(self, value: str) -> float:
-        try:
-            parsed = float(value.strip()) if value.strip() else 0.0
-            return parsed if math.isfinite(parsed) else 0.0
-        except ValueError:
-            return 0.0
+    @staticmethod
+    def _parse_numeric_input(value: str, label: str) -> float:
+        """Parse a user field without disguising invalid text as zero."""
+        return parse_nonnegative_number(value, label, blank_zero=True)
 
 
 def build_application(db_path) -> QApplication:

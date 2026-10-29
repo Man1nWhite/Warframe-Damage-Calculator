@@ -21,7 +21,8 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(sorted(payload), ["akarius_sim", "alternox_prime_sim",
                                            "jat_kittag_sim",
                                            "jat_kittag_slam_counts",
-                                           "kuva_nukor_sim", "ocucor_sim"])
+                                           "kuva_nukor_sim", "ocucor_sim",
+                                           "verglas_prime_sim"])
         # The trace is free text and is deliberately not part of the digest.
         for trials in payload.values():
             for trial in trials:
@@ -32,9 +33,21 @@ class SnapshotTests(unittest.TestCase):
         jat = payload["jat_kittag_sim"][0]
         self.assertGreater(jat["slams"], 0)
         self.assertGreater(jat["ttk"], 0)
+        verglas = payload["verglas_prime_sim"][0]
+        self.assertGreater(verglas["attacks"], 0)
+        self.assertGreater(verglas["heat_procs"], 0)
+        self.assertGreater(verglas["ttk"], 0)
 
 
 class CheckModeTests(unittest.TestCase):
+    def test_written_snapshot_records_the_verglas_seed(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "snapshot.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["--snapshot", str(path), "--trials", "1", "--no-timing"]), 0)
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(record["seeds"]["verglas"], 1500)
+
     def _write(self, directory: Path, payload: dict) -> Path:
         path = directory / "reference.json"
         path.write_text(json.dumps(payload), encoding="utf-8")

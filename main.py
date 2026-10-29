@@ -10,25 +10,31 @@ from gui.app import DamageCalculatorWindow, build_application
 from modules.app_paths import ensure_app_dirs, seed_source_files
 from modules.database import ModRepository, WeaponRepository
 from modules.database_migration import DatabaseMigrationError, MigrationResult, migrate_database
-from modules.database_revision import UnsupportedDatabaseRevision
+from modules.database_revision import UnsupportedDatabaseRevision, database_has_contents
 
 
 def database_is_ready(db_path: Path) -> bool:
-    if not db_path.exists() or db_path.stat().st_size == 0:
+    if not database_has_contents(db_path):
         return False
-    try:
-        with closing(sqlite3.connect(db_path)) as connection:
-            row = connection.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='weapons'").fetchone()
-            if not row or int(row[0]) == 0:
-                return False
-            count_row = connection.execute("SELECT COUNT(*) FROM weapons").fetchone()
-            return bool(count_row and int(count_row[0]) > 0)
-    except Exception:
-        return False
+    # Do not recreate a path that disappears between the stat and connect.
+    with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=rw", uri=True)) as connection:
+        row = connection.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='weapons'").fetchone()
+        if not row or int(row[0]) == 0:
+            return False
+        count_row = connection.execute("SELECT COUNT(*) FROM weapons").fetchone()
+        return bool(count_row and int(count_row[0]) > 0)
 
 
 def maybe_bootstrap_database(window: DamageCalculatorWindow) -> None:
-    if database_is_ready(window.paths["db"]):
+    try:
+        if database_is_ready(window.paths["db"]):
+            return
+    except (OSError, sqlite3.Error) as exc:
+        QMessageBox.warning(
+            window, "Database Unavailable",
+            "WDC could not check the database; no initial rebuild was started. "
+            f"Close other instances or check the file, then retry.\n\n{exc}",
+        )
         return
 
     message = QMessageBox(window)
@@ -36,7 +42,9 @@ def maybe_bootstrap_database(window: DamageCalculatorWindow) -> None:
     message.setIcon(QMessageBox.Icon.Question)
     message.setText(
         "WDC needs its initial data before weapon calculations can be used. "
-        "Build it now using fresh DE data when available, with saved local exports as a fallback?"
+        "Build it now using fresh DE data when available, with saved local exports as a fallback?\n\n"
+        "If a database already exists, it will be backed up; the mod/effect catalog "
+        "and matching weapon entries will be replaced."
     )
     message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     message.setDefaultButton(QMessageBox.StandardButton.Yes)
@@ -82,10 +90,19 @@ def migrate_existing_database(paths: dict[str, Path]) -> MigrationResult:
 
 def main() -> int:
     project_root = Path(__file__).resolve().parent
-    seed_source_files(project_root)
     paths = ensure_app_dirs()
-
     app = build_application(paths["db"])
+    try:
+        seed_source_files(project_root)
+    except (OSError, RuntimeError) as exc:
+        QMessageBox.critical(
+            None, "Source Files Not Prepared",
+            "WDC could not safely prepare its saved source files. Check the source folder, "
+            "available space and permissions before retrying.\n\n"
+            f"Saved sources: {paths['source']}\n\n{exc}",
+        )
+        return 1
+
     try:
         migration_result = migrate_existing_database(paths)
     except (DatabaseMigrationError, UnsupportedDatabaseRevision) as exc:

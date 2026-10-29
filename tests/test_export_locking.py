@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from modules.export_safety import export_lock
 
@@ -145,6 +146,115 @@ finished.write_text('finished')
         self.assertEqual(first.returncode, 0)
         self.assertEqual((self.source / WEAPONS).read_bytes(), b"publisher-b-weapons")
         self.assertEqual((self.source / UPGRADES).read_bytes(), b"publisher-b-upgrades")
+
+    def test_nested_same_directory_keeps_the_process_lock_until_outer_exit(self) -> None:
+        child = r"""
+import sys
+from modules.export_safety import ExportLockTimeout, export_lock
+try:
+    with export_lock(sys.argv[1], timeout=0.15):
+        print('acquired')
+except ExportLockTimeout:
+    print('locked')
+"""
+        def try_in_child():
+            result = subprocess.run([sys.executable, "-c", child, str(self.source / WEAPONS)],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=10, check=True)
+            return result.stdout.strip()
+
+        with export_lock(self.source / WEAPONS, timeout=0.15):
+            with self.assertRaisesRegex(RuntimeError, "deliberate"):
+                with export_lock(self.source / UPGRADES, timeout=0.15):
+                    raise RuntimeError("deliberate")
+            self.assertEqual(try_in_child(), "locked")
+        self.assertEqual(try_in_child(), "acquired")
+
+    def test_import_inside_an_existing_export_lock_is_reentrant(self) -> None:
+        from modules.importer import load_import_payload
+
+        weapons, upgrades = self.source / WEAPONS, self.source / UPGRADES
+        with export_lock(weapons, upgrades, timeout=0.2):
+            payload = load_import_payload(weapons, upgrades)
+            self.assertTrue(payload.export_weapons)
+            self.assertTrue(payload.mods)
+
+    def test_nested_new_directories_must_follow_global_lock_order(self) -> None:
+        for left, right in (("a", "b"), ("a", "a-")):
+            with self.subTest(left=left, right=right):
+                first = self.root / left / WEAPONS
+                second = self.root / right / WEAPONS
+                # Sort directory names, not suffixed lock-file names: for
+                # example, 'a' sorts before 'a-', but 'a/.lock' does not.
+                with export_lock(first, timeout=0.1):
+                    with export_lock(second, timeout=0.1):
+                        pass
+                with export_lock(second, timeout=0.1):
+                    with self.assertRaisesRegex(RuntimeError, "order"):
+                        with export_lock(first, timeout=0.1):
+                            pass
+
+    def test_lock_order_normalizes_case_on_case_insensitive_platforms(self) -> None:
+        lower_first = self.root / "a" / WEAPONS
+        lower_second = self.root / "B" / WEAPONS
+        # Simulate Windows normcase while running on a case-sensitive host.
+        # Without normalization, ASCII sorts 'B' before 'a'.
+        with patch("modules.export_safety.os.path.normcase", side_effect=lambda text: text.lower()):
+            with export_lock(lower_first, timeout=0.1):
+                with export_lock(lower_second, timeout=0.1):
+                    pass
+            with export_lock(lower_second, timeout=0.1):
+                with self.assertRaisesRegex(RuntimeError, "order"):
+                    with export_lock(lower_first, timeout=0.1):
+                        pass
+
+    def test_symlinked_export_locks_both_entry_and_target_directories(self) -> None:
+        external = self.root / "external"
+        external.mkdir()
+        actual = external / "actual.zip"
+        actual.write_bytes(b"target")
+        alias = self.source / WEAPONS
+        alias.unlink()
+        try:
+            alias.symlink_to(actual)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation is unavailable on this platform")
+        child = r"""
+import sys
+from modules.export_safety import ExportLockTimeout, export_lock
+try:
+    with export_lock(sys.argv[1], timeout=0.15):
+        print('acquired')
+except ExportLockTimeout:
+    print('locked')
+"""
+        def try_in_child(path: Path) -> str:
+            result = subprocess.run([sys.executable, "-c", child, str(path)], cwd=ROOT,
+                                    capture_output=True, text=True, timeout=10, check=True)
+            return result.stdout.strip()
+
+        with export_lock(alias):
+            self.assertEqual(try_in_child(self.source / UPGRADES), "locked")
+            self.assertEqual(try_in_child(actual), "locked")
+        self.assertEqual(try_in_child(self.source / UPGRADES), "acquired")
+
+    def test_symlinked_export_checks_recovery_markers_in_target_directory(self) -> None:
+        from modules.export_safety import UnfinishedExportPublication, require_complete_exports
+
+        external = self.root / "external"
+        external.mkdir()
+        actual = external / "actual.zip"
+        actual.write_bytes(b"target")
+        alias = self.source / WEAPONS
+        alias.unlink()
+        try:
+            alias.symlink_to(actual)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation is unavailable on this platform")
+        stage = external / ".wdc-refresh-interrupted"
+        stage.mkdir()
+        (stage / "PUBLISHING.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(UnfinishedExportPublication):
+            require_complete_exports(alias)
 
     def test_export_lock_uses_a_persistent_lock_file(self) -> None:
         # OS-level locks are released automatically, but keeping this inode

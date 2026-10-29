@@ -52,7 +52,8 @@ def seed_source_files(project_root: Path) -> None:
 
     Stage both files before publication and reuse the refresh recovery marker;
     a process interruption cannot make a partially seeded pair look complete.
-    Other independent reference files may still be seeded individually.
+    Other independent reference files are staged and published individually,
+    without overwriting a file another process creates during the copy.
     """
     paths = ensure_app_dirs()
     bundled_source = project_root / "source"
@@ -63,7 +64,7 @@ def seed_source_files(project_root: Path) -> None:
         # Serialize the existence check with refresh publication. Seeded files
         # must never fill one half of a pair being installed by another process.
         with locked_exports(*targets):
-            if (not any(target.exists() for target in targets)
+            if (not any(os.path.lexists(target) for target in targets)
                     and all(path.is_file() for path in bundled_pair)):
                 # Imported lazily to avoid a module-level app_paths/updater cycle.
                 from .updater import WarframeDataUpdater
@@ -72,9 +73,17 @@ def seed_source_files(project_root: Path) -> None:
                 try:
                     staged = [stage / name for name in EXPORT_FILES]
                     for original, copy in zip(bundled_pair, staged, strict=True):
-                        shutil.copy2(original, copy)
-                    WarframeDataUpdater._publish_exports_locked(
-                        tuple(zip(staged, targets, strict=True)), stage)
+                        shutil.copyfile(original, copy)
+                    # A non-cooperating process can create a target while we
+                    # stage; never replace it or fill only half of its pair.
+                    if not any(os.path.lexists(target) for target in targets):
+                        try:
+                            WarframeDataUpdater._publish_seed_exports_locked(
+                                tuple(zip(staged, targets, strict=True)), stage)
+                        except FileExistsError:
+                            # A target appeared before the first link; no seed
+                            # was published and the user's file is untouched.
+                            pass
                 finally:
                     if not (stage / "PUBLISHING.json").exists():
                         shutil.rmtree(stage, ignore_errors=True)
@@ -88,5 +97,16 @@ def seed_source_files(project_root: Path) -> None:
         source_file = bundled_source / file_name
         target_file = source / file_name
         if source_file.exists() and not target_file.exists():
-            shutil.copy2(source_file, target_file)
+            # Never create the destination until the copy is complete. A
+            # hard link publishes atomically without clobbering a user file
+            # created after the existence check, even by another process.
+            with tempfile.TemporaryDirectory(prefix=".wdc-reference-", dir=source) as reference_stage:
+                staged_reference = Path(reference_stage) / file_name
+                shutil.copyfile(source_file, staged_reference)
+                try:
+                    os.link(staged_reference, target_file)
+                except FileExistsError:
+                    pass  # An existing file (including a dangling symlink) wins.
+                except OSError as exc:
+                    raise OSError(f"Could not safely seed {target_file}: {exc}") from exc
 

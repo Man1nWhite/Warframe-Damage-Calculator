@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import math
 import sqlite3
@@ -16,8 +17,14 @@ import openpyxl
 
 from .constants import DAMAGE_TYPES, JSON_DAMAGE_INDEX_MAP, WEAPON_SLOT_MAP
 from .database_backup import create_database_backup
-from .database_revision import CURRENT_DATABASE_REVISION, require_supported_revision
+from .database_revision import (
+    CURRENT_DATABASE_REVISION,
+    database_has_contents,
+    require_supported_revision,
+)
+from .database_schema_safety import UnsafeCatalogSchemaError, validate_catalog_schema
 from .export_safety import locked_exports
+from .json_safety import reject_duplicate_keys
 from .mod_effect_policy import is_supported_export_mod
 from .mod_parser import parse_effects
 from .weapon_export_policy import order_export_weapons
@@ -129,16 +136,15 @@ def replace_mod_rows(connection: sqlite3.Connection, mod_rows: list[dict[str, ob
                      effect_rows: list[dict[str, object]], *,
                      preserve_unmatched: bool = False) -> None:
     if preserve_unmatched:
-        # Refresh exported mods without deleting user-added entries absent
-        # from the saved export. Effects of refreshed mods are rebuilt.
+        # Refresh exported mods without deleting user-added entries. Effects
+        # of refreshed mods are reparsed; migration validates any custom effect
+        # columns before calling this function.
         keys = [(row["unique_name"],) for row in mod_rows]
         connection.executemany("DELETE FROM mod_effects WHERE unique_name = ?", keys)
-        connection.executemany("DELETE FROM mods WHERE unique_name = ?", keys)
     else:
         connection.execute("DELETE FROM mod_effects")
         connection.execute("DELETE FROM mods")
-    connection.executemany(
-        """
+    mod_sql = """
         INSERT INTO mods (
             unique_name, name, mod_type, compat_name, slot_group, polarity, rarity, fusion_limit,
             base_drain, description, effect_summary, supported
@@ -146,9 +152,19 @@ def replace_mod_rows(connection: sqlite3.Connection, mod_rows: list[dict[str, ob
             :unique_name, :name, :mod_type, :compat_name, :slot_group, :polarity, :rarity, :fusion_limit,
             :base_drain, :description, :effect_summary, :supported
         )
-        """,
-        mod_rows,
-    )
+    """
+    if preserve_unmatched:
+        # Updating in place also retains user-added columns on official rows;
+        # delete-and-reinsert would silently reset those columns to defaults.
+        mod_sql += """
+            ON CONFLICT(unique_name) DO UPDATE SET
+                name=excluded.name, mod_type=excluded.mod_type, compat_name=excluded.compat_name,
+                slot_group=excluded.slot_group, polarity=excluded.polarity, rarity=excluded.rarity,
+                fusion_limit=excluded.fusion_limit, base_drain=excluded.base_drain,
+                description=excluded.description, effect_summary=excluded.effect_summary,
+                supported=excluded.supported
+        """
+    connection.executemany(mod_sql, mod_rows)
     connection.executemany(
         """
         INSERT INTO mod_effects (
@@ -176,32 +192,33 @@ _CachedT = TypeVar("_CachedT")
 def _cached_source_parse(path: str | Path,
                          reader: Callable[[Path], object],
                          cache: Callable[..., _CachedT]) -> _CachedT:
-    """Parse a source file once per (resolved path, mtime_ns, size).
+    """Parse a source file once per (resolved path, actual file contents).
 
-    ``reader`` produces the fresh parse and ``cache`` is the memoized wrapper
-    around it, which flattens the result into hashable tuples. Callers re-parse
-    the same bundled exports every time they rebuild or migrate a database;
-    this keeps that to one parse per unchanged file. A missing file is handed
-    straight to ``reader`` so the reader raises its own error rather than this
-    helper inventing one.
+    File size and modification time are not an identity: a restore, atomic
+    replacement, or in-place edit can keep both while changing the content.
+    Read an immutable snapshot for the key *and* for parsing, so the cache
+    can never associate one file's contents with another snapshot's key.
+    The small LRU retains at most four source byte strings per parser.
+
+    A missing file is handed straight to ``reader`` so it raises the same
+    specific error as an uncached read.
     """
     resolved = Path(path).resolve()
     try:
-        stat_result = resolved.stat()
+        contents = resolved.read_bytes()
     except OSError:
-        # Nothing to memoize; let the reader raise its own (more specific)
-        # error for the missing file. The cast only satisfies the unflattened
-        # return type, which no caller ever sees on this path.
+        # Nothing to memoize; the cast only satisfies the unflattened return
+        # type, which no caller ever sees when the reader raises.
         return cast(_CachedT, reader(resolved))
-    return cache(str(resolved), stat_result.st_mtime_ns, stat_result.st_size)
+    return cache(str(resolved), contents)
 
 
 @lru_cache(maxsize=4)
 def _spreadsheet_rows_cached(
-    path: str, mtime_ns: int, size: int,
+    path: str, contents: bytes,
 ) -> tuple[tuple[tuple[str, float | str], ...], ...]:
-    """Parse the workbook once per (path, mtime, size); values are hashable."""
-    rows = _read_spreadsheet(Path(path))
+    """Parse the workbook snapshot once; returned values are hashable."""
+    rows = _read_spreadsheet(Path(path), contents)
     _reject_non_finite(rows)
     return tuple(tuple(row.items()) for row in rows)
 
@@ -212,18 +229,18 @@ def rows_from_spreadsheet(xlsx_path: str | Path) -> list[dict[str, float | str]]
     Reading the workbook with openpyxl is the most expensive single step of a
     rebuild (about 0.18 s for the bundled file, against ~0.1 s for the ZIP
     exports), and callers routinely parse the same unchanged file several
-    times in one process. The parse is therefore memoized on the file's
-    identity: changing the workbook (its mtime or size) invalidates the entry,
-    and each call returns fresh dicts so a caller cannot corrupt the cached
-    rows.
+    times in one process. The parse is memoized using a snapshot of the file's
+    bytes, even when an edit preserves its size and mtime. Each call returns
+    fresh dicts so a caller cannot corrupt the cached rows.
     """
     cached = _cached_source_parse(
         xlsx_path, _read_spreadsheet, _spreadsheet_rows_cached)
     return [dict(items) for items in cached]
 
 
-def _read_spreadsheet(xlsx_path: Path) -> list[dict[str, float | str]]:
-    with closing(openpyxl.load_workbook(xlsx_path, data_only=True)) as workbook:
+def _read_spreadsheet(xlsx_path: Path, contents: bytes | None = None) -> list[dict[str, float | str]]:
+    source = io.BytesIO(contents) if contents is not None else xlsx_path
+    with closing(openpyxl.load_workbook(source, data_only=True)) as workbook:
         sheet = workbook["Weapon-Data"]
         output: list[dict[str, float | str]] = []
 
@@ -254,10 +271,10 @@ def _read_spreadsheet(xlsx_path: Path) -> list[dict[str, float | str]]:
 
 @lru_cache(maxsize=4)
 def _weapons_cached(
-    path: str, mtime_ns: int, size: int,
+    path: str, contents: bytes,
 ) -> tuple[tuple[tuple[str, float | str], ...], ...]:
     """Memoized parse of the weapon export; see ``rows_from_cleaned_json``."""
-    rows = _read_weapons(Path(path))
+    rows = _read_weapons(Path(path), contents)
     _reject_non_finite(rows)
     return tuple(tuple(row.items()) for row in rows)
 
@@ -265,21 +282,23 @@ def _weapons_cached(
 def rows_from_cleaned_json(zip_path: str | Path) -> list[dict[str, float | str]]:
     """Rows of the weapon export.
 
-    Memoized on (path, mtime, size) like the other source parsers, for the same
-    reason: rebuilds and migrations read the bundled exports repeatedly. Each
-    call still returns independent dicts.
+    Memoized by path and actual bytes, like the other source parsers: rebuilds
+    and migrations read the bundled exports repeatedly. Each call still returns
+    independent dicts.
     """
     cached = _cached_source_parse(zip_path, _read_weapons, _weapons_cached)
     return [dict(items) for items in cached]
 
 
-def _read_weapons(zip_path: Path) -> list[dict[str, float | str]]:
-    with zipfile.ZipFile(zip_path) as archive:
-        names = archive.namelist()
-        json_name = next((name for name in names if name.lower().endswith(".json")), None)
-        if json_name is None:
-            raise ValueError(f"Weapon export ZIP contains no JSON: {zip_path}")
-        payload = json.loads(archive.read(json_name))
+def _read_weapons(zip_path: Path, contents: bytes | None = None) -> list[dict[str, float | str]]:
+    source = io.BytesIO(contents) if contents is not None else zip_path
+    with zipfile.ZipFile(source) as archive:
+        json_names = [name for name in archive.namelist() if name.lower().endswith(".json")]
+        if len(json_names) != 1:
+            raise ValueError(
+                f"Weapon export ZIP must contain exactly one JSON member; found {len(json_names)}: {zip_path}"
+            )
+        payload = json.loads(archive.read(json_names[0]), object_pairs_hook=reject_duplicate_keys)
 
     if not isinstance(payload, dict) or not isinstance(payload.get("ExportWeapons"), list):
         raise ValueError(f"Weapon export is missing its ExportWeapons list: {zip_path}")
@@ -326,9 +345,9 @@ class _CachedMods(NamedTuple):
 
 
 @lru_cache(maxsize=4)
-def _mods_cached(path: str, mtime_ns: int, size: int) -> _CachedMods:
+def _mods_cached(path: str, contents: bytes) -> _CachedMods:
     """Memoized parse of the upgrade export; see ``mods_from_cleaned_json``."""
-    mods, effects, stats = _read_mods(Path(path))
+    mods, effects, stats = _read_mods(Path(path), contents)
     _reject_non_finite(mods)
     _reject_non_finite(effects)
     return _CachedMods(
@@ -347,7 +366,7 @@ def mods_from_cleaned_json(
 
     Parsing the export re-runs the effect parser over every rank line of every
     mod (about 0.12 s for the bundled file). The result depends only on the
-    file, so it is memoized on (path, mtime, size) exactly like
+    file, so it is memoized by path and contents exactly like
     ``rows_from_spreadsheet``; callers still receive fresh dicts and their own
     ``source_stats`` copy.
     """
@@ -361,12 +380,16 @@ def mods_from_cleaned_json(
 
 
 def _read_mods(
-    zip_path: Path,
+    zip_path: Path, contents: bytes | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]],
           dict[tuple[str, int], tuple[str, ...]]]:
     source_stats: dict[tuple[str, int], tuple[str, ...]] = {}
-    with zipfile.ZipFile(zip_path) as archive:
-        payload = json.loads(archive.read("ExportUpgrades_en_Cleaned.json"))
+    source = io.BytesIO(contents) if contents is not None else zip_path
+    with zipfile.ZipFile(source) as archive:
+        member = "ExportUpgrades_en_Cleaned.json"
+        if archive.namelist().count(member) != 1:
+            raise ValueError(f"Upgrade export ZIP must contain exactly one {member} member: {zip_path}")
+        payload = json.loads(archive.read(member), object_pairs_hook=reject_duplicate_keys)
 
     if not isinstance(payload, dict) or not isinstance(payload.get("ExportUpgrades"), list):
         raise ValueError(f"Upgrade export is missing its ExportUpgrades list: {zip_path}")
@@ -531,6 +554,25 @@ class DatabaseRebuildError(RuntimeError):
         self.backup_path = backup_path
 
 
+def _validate_rebuild_schema(connection: sqlite3.Connection, payload: ImportPayload) -> None:
+    """Protect user tables linked to catalog rows the full rebuild will replace."""
+    present = {str(row[0]).casefold() for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    affected = {
+        "weapons": {str(row["weapon"]) for row in (*payload.spreadsheet_weapons, *payload.export_weapons)},
+        "mods": {str(row["unique_name"]) for row in payload.mods},
+        "mod_effects": {str(row["unique_name"]) for row in payload.effects},
+    }
+    # A full rebuild deletes all existing mods/effects, including user rows,
+    # not just the IDs present in the replacement export.
+    for table in ("mods", "mod_effects"):
+        if table in present:
+            affected[table].update(str(row[0]) for row in connection.execute(
+                f"SELECT unique_name FROM {table}"))
+    validate_catalog_schema(connection, written_tables={"weapons", "mods", "mod_effects"},
+                            affected=affected)
+
+
 def build_database(
     db_path: str | Path,
     cleaned_weapons_zip_path: str | Path,
@@ -545,9 +587,13 @@ def build_database(
     previous state to back up. Concurrent readers/writers are not globally
     locked; changes detected between the snapshot and write abort the rebuild.
     """
+    db_path = Path(db_path)
+    try:
+        database_has_contents(db_path)
+    except sqlite3.Error as exc:
+        raise DatabaseRebuildError(f"Could not safely open the database: {exc}") from exc
     payload = load_import_payload(cleaned_weapons_zip_path, cleaned_upgrades_zip_path,
                                   spreadsheet_xlsx_path)
-    db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     if str(db_path) == ":memory:":
@@ -558,12 +604,18 @@ def build_database(
         return None
 
     # Reserve a new filename exclusively, or treat any pre-existing file as a
-    # database to back up. mode=rw avoids recreating it if it disappears later.
+    # database to back up. Check again around the reservation: an orphaned WAL
+    # must not be handed to SQLite while the main file is missing or empty.
     try:
-        with db_path.open("xb"):
+        database_has_contents(db_path)
+        try:
+            with db_path.open("xb"):
+                pass
+        except FileExistsError:
             pass
-    except FileExistsError:
-        pass
+        database_has_contents(db_path)
+    except sqlite3.Error as exc:
+        raise DatabaseRebuildError(f"Could not safely open the database: {exc}") from exc
     original_stat = db_path.stat()
     if not stat.S_ISREG(original_stat.st_mode):
         raise DatabaseRebuildError(f"The database path is not a regular file: {db_path}")
@@ -580,6 +632,12 @@ def build_database(
         size = db_path.stat().st_size
         is_existing = bool(size or page_count)
         if is_existing:
+            try:
+                _validate_rebuild_schema(connection, payload)
+            except (UnsafeCatalogSchemaError, sqlite3.Error) as exc:
+                raise DatabaseRebuildError(
+                    f"Could not safely rebuild the existing database; no changes were made: {exc}"
+                ) from exc
             try:
                 backup_path = create_database_backup(connection, db_path,
                                                      label=f"pre-rebuild-v{revision}")

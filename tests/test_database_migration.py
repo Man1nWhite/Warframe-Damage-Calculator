@@ -122,6 +122,201 @@ class DatabaseMigrationTests(unittest.TestCase):
         self.assertEqual(migration.migrate_database(self.db, "missing", "missing").status, "current")
         self.assertEqual(len(list(result.backup_path.parent.glob("*.sqlite3"))), 1)
 
+    def test_revision_zero_preserves_a_custom_weapon_with_an_exported_name(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("UPDATE weapons SET unique_name='custom/sirocco', dmg=42, void=0 "
+                               "WHERE weapon='Sirocco'")
+        old = self.sirocco_row(self.db)
+        result = self.migrate()
+        self.assertEqual(result.from_revision, 0)
+        self.assertEqual(self.sirocco_row(self.db), old)
+        self.assertEqual(self.sirocco_row(result.backup_path), old)
+
+    def test_revision_zero_does_not_overwrite_an_edited_official_weapon(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("UPDATE weapons SET dmg=12345 WHERE weapon='Alternox Prime'")
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "Alternox Prime.*modified"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT dmg FROM weapons WHERE weapon='Alternox Prime'").fetchone()[0], 12345)
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_legacy_mod_refresh_preserves_user_columns_on_official_mods(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("ALTER TABLE mods ADD COLUMN personal_annotation TEXT")
+            connection.execute("UPDATE mods SET personal_annotation='keep this note' WHERE unique_name=?", (MURMUR,))
+        for revision in (0, 1):
+            with self.subTest(revision=revision):
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    connection.execute(f"PRAGMA user_version={revision}")
+                result = self.migrate()
+                with closing(sqlite3.connect(self.db)) as connection:
+                    self.assertEqual(connection.execute(
+                        "SELECT personal_annotation FROM mods WHERE unique_name=?", (MURMUR,)).fetchone()[0],
+                        "keep this note")
+                with closing(sqlite3.connect(result.backup_path)) as connection:
+                    self.assertEqual(connection.execute(
+                        "SELECT personal_annotation FROM mods WHERE unique_name=?", (MURMUR,)).fetchone()[0],
+                        "keep this note")
+
+    def test_legacy_refresh_refuses_to_erase_custom_effect_column_data(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            connection.execute("ALTER TABLE mod_effects ADD COLUMN personal_annotation TEXT")
+            unique, rank, position = connection.execute(
+                "SELECT unique_name,rank,position FROM mod_effects WHERE unique_name LIKE '/Lotus/%' LIMIT 1").fetchone()
+            connection.execute("UPDATE mod_effects SET personal_annotation='keep this note' "
+                               "WHERE unique_name=? AND rank=? AND position=?", (unique, rank, position))
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "mod_effects.*personal_annotation"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute(
+                "SELECT personal_annotation FROM mod_effects WHERE unique_name=? AND rank=? AND position=?",
+                (unique, rank, position)).fetchone()[0], "keep this note")
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_custom_effect_column_data_on_unmatched_rows_is_preserved(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            connection.execute("ALTER TABLE mod_effects ADD COLUMN personal_annotation TEXT")
+            connection.execute("UPDATE mod_effects SET personal_annotation='custom note' WHERE unique_name='custom-mod'")
+        self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT personal_annotation FROM mod_effects WHERE unique_name='custom-mod'").fetchone()[0],
+                "custom note")
+
+    def test_legacy_refresh_refuses_custom_triggers_before_any_changes(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            # SQLite identifiers are case-insensitive, but sqlite_master keeps
+            # the spelling used in CREATE TRIGGER.
+            connection.execute("CREATE TRIGGER user_mod_trigger AFTER UPDATE ON MODS BEGIN "
+                               "DELETE FROM personal_notes; END")
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "trigger.*user_mod_trigger"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT note FROM personal_notes").fetchone()[0], "keep me")
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_legacy_refresh_refuses_to_orphan_a_custom_foreign_key(self):
+        unique = "/Lotus/Upgrades/Mods/Warframe/ToxinParkourTwoMod"
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA user_version=1")
+            # A genuine legacy false positive is intentionally removed by the
+            # corrected parser, but a user's separate note refers to its key.
+            connection.execute("INSERT INTO mod_effects VALUES(?,0,1,'TOXIN',.25,"
+                               "'+25% toxin on bullet jump')", (unique,))
+            connection.execute('CREATE TABLE "My ""effect notes" (mod TEXT, rank INTEGER, '
+                               'position INTEGER, note TEXT, FOREIGN KEY(mod,rank,position) '
+                               'REFERENCES MOD_EFFECTS(unique_name,rank,position) ON DELETE CASCADE)')
+            connection.execute('INSERT INTO "My ""effect notes" VALUES(?,0,1,?)', (unique, "keep me"))
+            connection.commit()
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "foreign key.*mod_effects"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute('SELECT note FROM "My ""effect notes"').fetchone()[0], "keep me")
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM mod_effects WHERE unique_name=?", (unique,)).fetchone()[0], 1)
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_legacy_refresh_checks_foreign_keys_with_implicit_parent_primary_key(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            # This is a valid user table, not SQLite's reserved "sqlite_" prefix.
+            connection.execute("CREATE TABLE sqliteXnotes (mod_id TEXT REFERENCES MODS, note TEXT)")
+            connection.execute("INSERT INTO sqliteXnotes VALUES (?, 'keep me')", (MURMUR,))
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "foreign key.*mods"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_unresolved_foreign_keys_into_updated_catalog_are_not_guessed(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            # SQLite's default foreign_keys=OFF permits an already-broken link.
+            connection.execute("CREATE TABLE broken_note (mod TEXT REFERENCES mods(unique_name))")
+            connection.execute("INSERT INTO broken_note VALUES ('missing-mod')")
+            self.assertTrue(connection.execute("PRAGMA foreign_key_check").fetchall())
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "foreign key.*unresolved.*mods"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT mod FROM broken_note").fetchone()[0], "missing-mod")
+
+    def test_legacy_refresh_allows_references_to_unmodified_custom_rows(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            connection.execute('CREATE TABLE "custom effect note" (mod TEXT, rank INTEGER, '
+                               'position INTEGER, note TEXT, FOREIGN KEY(mod,rank,position) '
+                               'REFERENCES mod_effects(unique_name,rank,position))')
+            connection.execute('INSERT INTO "custom effect note" VALUES (\'custom-mod\', 0, 1, \'keep me\')')
+            connection.execute("CREATE TABLE empty_notes (mod TEXT REFERENCES mods(unique_name))")
+        self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute('SELECT note FROM "custom effect note"').fetchone()[0], "keep me")
+
+    def test_legacy_mod_refresh_does_not_overwrite_edited_effect_values(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            unique, rank, position = connection.execute(
+                "SELECT unique_name,rank,position FROM mod_effects WHERE unique_name LIKE '/Lotus/%' LIMIT 1").fetchone()
+            connection.execute("UPDATE mod_effects SET effect_value=9876 WHERE unique_name=? AND rank=? AND position=?",
+                               (unique, rank, position))
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "mod.*modified"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute(
+                "SELECT effect_value FROM mod_effects WHERE unique_name=? AND rank=? AND position=?",
+                (unique, rank, position)).fetchone()[0], 9876)
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_legacy_mod_refresh_preserves_custom_mod_export_id_collisions(self):
+        with zipfile.ZipFile(UPGRADES) as archive:
+            name = "ExportUpgrades_en_Cleaned.json"
+            payload = json.loads(archive.read(name))
+        payload["ExportUpgrades"].append({
+            "uniqueName": "custom-mod", "name": "Export collision", "type": "Primary",
+            "levelStats": [{"stats": ["+10% Damage"]}],
+        })
+        path = self.root / "colliding-mod.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(name, json.dumps(payload))
+        for revision in (0, 1):
+            with self.subTest(revision=revision):
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    connection.execute(f"PRAGMA user_version={revision}")
+                    before_mod = connection.execute(
+                        "SELECT * FROM mods WHERE unique_name='custom-mod'").fetchone()
+                    before_effects = connection.execute(
+                        "SELECT * FROM mod_effects WHERE unique_name='custom-mod'").fetchall()
+                migration.migrate_database(self.db, WEAPONS, path, SPREADSHEET)
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    self.assertEqual(connection.execute(
+                        "SELECT * FROM mods WHERE unique_name='custom-mod'").fetchone(), before_mod)
+                    self.assertEqual(connection.execute(
+                        "SELECT * FROM mod_effects WHERE unique_name='custom-mod'").fetchall(), before_effects)
+
+    def test_legacy_mod_refresh_rejects_modified_official_metadata(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=1")
+            connection.execute("UPDATE mods SET name='My Edited Mod' WHERE unique_name=?", (MURMUR,))
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "mod.*modified"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT name FROM mods WHERE unique_name=?", (MURMUR,)).fetchone()[0],
+                             "My Edited Mod")
+
     def test_bad_or_missing_exports_leave_legacy_database_unchanged(self):
         old = self.inspect(self.db)
         corrupt = self.root / "bad.zip"
@@ -582,6 +777,228 @@ migration.migrate_database(*sys.argv[1:])
         backups = list((self.db.parent / "backups").glob("*-pre-v2-*.sqlite3"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(self.grimoire_row(backups[0]), old)
+
+    def set_legacy_void(self, revision=3):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("UPDATE weapons SET void=0 WHERE weapon='Sirocco'")
+            connection.execute(f"PRAGMA user_version={revision}")
+
+    @staticmethod
+    def sirocco_row(path):
+        with closing(sqlite3.connect(path)) as connection, connection:
+            return connection.execute("SELECT * FROM weapons WHERE weapon='Sirocco'").fetchone()
+
+    def test_revision_three_repairs_void_only_and_keeps_backup_and_user_data(self):
+        self.set_legacy_void()
+        old_sirocco = self.sirocco_row(self.db)
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            before_other_weapons = connection.execute(
+                "SELECT * FROM weapons WHERE weapon!='Sirocco' ORDER BY weapon").fetchall()
+            before_mods = connection.execute("SELECT * FROM mods ORDER BY unique_name").fetchall()
+            before_effects = connection.execute(
+                "SELECT * FROM mod_effects ORDER BY unique_name,rank,position").fetchall()
+        result = self.migrate()
+        self.assertEqual((result.status, result.from_revision), ("migrated", 3))
+        self.assertEqual(self.sirocco_row(result.backup_path), old_sirocco)
+        repaired = self.sirocco_row(self.db)
+        self.assertEqual(repaired[18], 2000)  # only the void column changes
+        self.assertEqual(repaired[:18] + repaired[19:], old_sirocco[:18] + old_sirocco[19:])
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_DATABASE_REVISION)
+            self.assertEqual(connection.execute(
+                "SELECT * FROM weapons WHERE weapon!='Sirocco' ORDER BY weapon").fetchall(), before_other_weapons)
+            self.assertEqual(connection.execute("SELECT * FROM mods ORDER BY unique_name").fetchall(), before_mods)
+            self.assertEqual(connection.execute(
+                "SELECT * FROM mod_effects ORDER BY unique_name,rank,position").fetchall(), before_effects)
+            self.assertEqual(connection.execute("SELECT note FROM personal_notes").fetchone()[0], "keep me")
+        self.assertEqual(json.loads((self.root / "builds" / "my-build.json").read_text()),
+                         {"weapon": "Custom Weapon"})
+        self.assertEqual(json.loads((self.root / "settings.json").read_text()), {"custom": "value"})
+
+    def test_all_older_revisions_also_receive_the_void_fix(self):
+        for revision in (0, 1, 2):
+            with self.subTest(revision=revision):
+                self.set_legacy_void(revision)
+                result = self.migrate()
+                self.assertEqual(result.from_revision, revision)
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    self.assertEqual(connection.execute(
+                        "SELECT void FROM weapons WHERE weapon='Sirocco'").fetchone()[0], 2000)
+                    self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_DATABASE_REVISION)
+
+    def test_void_repair_preserves_user_columns_on_weapon_rows(self):
+        self.set_legacy_void()
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("ALTER TABLE weapons ADD COLUMN personal_annotation TEXT")
+            connection.execute("UPDATE weapons SET personal_annotation='keep weapon note' WHERE weapon='Sirocco'")
+        result = self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT void,personal_annotation FROM weapons WHERE weapon='Sirocco'").fetchone(),
+                (2000, "keep weapon note"))
+        with closing(sqlite3.connect(result.backup_path)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT void,personal_annotation FROM weapons WHERE weapon='Sirocco'").fetchone(),
+                (0, "keep weapon note"))
+
+    def test_void_repair_refuses_custom_weapon_triggers(self):
+        self.set_legacy_void()
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("CREATE TRIGGER user_void_trigger AFTER UPDATE OF void ON weapons BEGIN "
+                               "DELETE FROM personal_notes; END")
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "trigger.*user_void_trigger"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT void FROM weapons WHERE weapon='Sirocco'").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT note FROM personal_notes").fetchone()[0], "keep me")
+
+    def test_untouched_weapon_trigger_does_not_block_version_only_upgrade(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("PRAGMA user_version=3")
+            connection.execute("CREATE TRIGGER user_void_trigger AFTER UPDATE OF void ON weapons BEGIN "
+                               "DELETE FROM personal_notes; END")
+        self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_DATABASE_REVISION)
+            self.assertEqual(connection.execute("SELECT note FROM personal_notes").fetchone()[0], "keep me")
+
+    def test_void_repair_refuses_to_orphan_a_custom_foreign_key(self):
+        self.set_legacy_void()
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("CREATE UNIQUE INDEX user_weapon_void_key ON weapons(weapon,void)")
+            connection.execute("CREATE TABLE weapon_notes (weapon TEXT, void REAL, note TEXT, "
+                               "FOREIGN KEY(weapon,void) REFERENCES WEAPONS(weapon,void) ON UPDATE CASCADE)")
+            connection.execute("INSERT INTO weapon_notes VALUES ('Sirocco',0,'keep me')")
+            connection.commit()
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "foreign key.*weapons"):
+            self.migrate()
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT void FROM weapons WHERE weapon='Sirocco'").fetchone()[0], 0)
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("SELECT note FROM weapon_notes").fetchone()[0], "keep me")
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_void_repair_refuses_modified_official_row(self):
+        self.set_legacy_void()
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("UPDATE weapons SET dmg=1999 WHERE weapon='Sirocco'")
+        old = self.sirocco_row(self.db)
+        with self.assertRaisesRegex(migration.DatabaseMigrationError, "Sirocco.*modified"):
+            self.migrate()
+        self.assertEqual(self.sirocco_row(self.db), old)
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_void_repair_preserves_custom_and_already_edited_void_rows(self):
+        for unique_name, damage, void in (("custom/sirocco", 42, 0),
+                                          (None, 1999, 100)):
+            with self.subTest(unique_name=unique_name):
+                self.set_legacy_void()
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    if unique_name is not None:
+                        connection.execute("UPDATE weapons SET unique_name=? WHERE weapon='Sirocco'", (unique_name,))
+                    connection.execute("UPDATE weapons SET dmg=?, void=? WHERE weapon='Sirocco'", (damage, void))
+                old = self.sirocco_row(self.db)
+                self.migrate()
+                self.assertEqual(self.sirocco_row(self.db), old)
+                # Restore the real export row for the next independent case.
+                row = next(row for row in rows_from_cleaned_json(WEAPONS) if row["weapon"] == "Sirocco")
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    upsert_weapon_rows(connection, [row])
+
+    def test_void_repair_requires_a_matching_saved_source(self):
+        self.set_legacy_void()
+        old = self.sirocco_row(self.db)
+        with zipfile.ZipFile(WEAPONS) as archive:
+            name = next(n for n in archive.namelist() if n.endswith(".json"))
+            original = json.loads(archive.read(name))
+        for variant in ("missing", "no_void", "mismatch"):
+            with self.subTest(variant=variant):
+                payload = json.loads(json.dumps(original))
+                row = next(row for row in payload["ExportWeapons"] if row.get("name") == "Sirocco")
+                if variant == "missing":
+                    payload["ExportWeapons"].remove(row)
+                elif variant == "no_void":
+                    row["damagePerShot"][13] = 0
+                else:
+                    row["totalDamage"] += 1
+                path = self.root / f"{variant}.zip"
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr(name, json.dumps(payload))
+                with self.assertRaisesRegex(migration.DatabaseMigrationError, "Sirocco"):
+                    migration.migrate_database(self.db, path, UPGRADES, SPREADSHEET)
+                self.assertEqual(self.sirocco_row(self.db), old)
+                self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_void_repair_covers_other_matching_export_rows(self):
+        self.set_legacy_void()
+        with zipfile.ZipFile(WEAPONS) as archive:
+            name = next(n for n in archive.namelist() if n.endswith(".json"))
+            payload = json.loads(archive.read(name))
+        source = next(row for row in payload["ExportWeapons"] if row.get("name") == "Sirocco")
+        other = dict(source, name="Test Void", uniqueName="/Lotus/Test/VoidWeapon")
+        payload["ExportWeapons"].append(other)
+        path = self.root / "extra-void.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(name, json.dumps(payload))
+        old_row = next(row for row in rows_from_cleaned_json(path) if row["weapon"] == "Test Void")
+        old_row["void"] = 0.0
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            upsert_weapon_rows(connection, [old_row])
+        result = migration.migrate_database(self.db, path, UPGRADES, SPREADSHEET)
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute(
+                "SELECT void FROM weapons WHERE weapon='Test Void'").fetchone()[0], 2000)
+        with closing(sqlite3.connect(result.backup_path)) as connection, connection:
+            self.assertEqual(connection.execute(
+                "SELECT void FROM weapons WHERE weapon='Test Void'").fetchone()[0], 0)
+
+    def test_void_repair_failure_rolls_back_and_retains_backup(self):
+        self.set_legacy_void()
+        old = self.sirocco_row(self.db)
+        original = migration._apply_void_corrections
+        def fail_after_write(connection, corrections):
+            original(connection, corrections)
+            raise RuntimeError("simulated Void repair failure")
+        with patch.object(migration, "_apply_void_corrections", side_effect=fail_after_write):
+            with self.assertRaises(migration.DatabaseMigrationError) as caught:
+                self.migrate()
+        self.assertEqual(self.sirocco_row(self.db), old)
+        self.assertEqual(self.sirocco_row(caught.exception.backup_path), old)
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+
+    def test_process_exit_during_void_repair_rolls_back(self):
+        self.set_legacy_void()
+        old = self.sirocco_row(self.db)
+        program = '''
+import os, sys
+from modules import database_migration as migration
+original = migration._apply_void_corrections
+
+def interrupted(connection, rows):
+    original(connection, rows)
+    os._exit(95)
+
+migration._apply_void_corrections = interrupted
+migration.migrate_database(*sys.argv[1:])
+'''
+        result = subprocess.run([sys.executable, "-c", program, str(self.db), str(WEAPONS),
+                                 str(UPGRADES), str(SPREADSHEET)], cwd=ROOT,
+                                capture_output=True, text=True, timeout=30, check=False)
+        self.assertEqual(result.returncode, 95, result.stderr)
+        self.assertEqual(self.sirocco_row(self.db), old)
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone()[0], "ok")
+        backups = list((self.db.parent / "backups").glob("*-pre-v3-*.sqlite3"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(self.sirocco_row(backups[0]), old)
 
     def test_new_import_and_bundled_database_are_versioned(self):
         fresh = self.root / "fresh.db"
