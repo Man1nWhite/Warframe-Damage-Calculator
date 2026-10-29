@@ -369,7 +369,8 @@ def simulate(build: OcucorBuild,
             enervate_extra_pct=enervate_extra_pct) / 100.0
         full = int(math.floor(cc))
         tier = full + (1 if rng.random() < (cc - full) else 0)
-        return crit_multiplier_for_tier(build.crit_multiplier, tier)
+        return crit_multiplier_for_tier(
+            target.crit_damage_multiplier(build.crit_multiplier, when), tier)
 
     # ``random.choices`` rebuilds cumulative weights on every call; the
     # candidate list and weights are fixed for the build, so they are built
@@ -719,7 +720,8 @@ def simulate_room(arcane: str,
             enervate_extra_pct=extra_cc) / 100.0
         full = int(math.floor(cc))
         tier = full + (1 if rng.random() < cc - full else 0)
-        cf = crit_multiplier_for_tier(build.crit_multiplier, tier)
+        cf = crit_multiplier_for_tier(
+            t.crit_damage_multiplier(build.crit_multiplier, when), tier)
         ramp = next_ramp(idx, when)
         status_count = t.unique_status_count(when)
         types = _scaled_type_damage(build, flare, status_count)

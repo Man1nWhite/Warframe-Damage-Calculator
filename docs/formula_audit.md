@@ -8,6 +8,70 @@ weapon, catalog entry, game update, or edge case is correct. It uses the Wiki
 and public community discussions rather than assuming in-game verification;
 export snapshots and player reports may be incomplete or outdated.
 
+## 2026-10-29 follow-up: data safety and simulator corrections
+
+- The desktop filter keeps the active weapon and unsaved mod slots when a
+  search hides the weapon. Missing damage components now produce an explicit
+  result/UI warning rather than an apparently complete zero or partial total;
+  the comparison dialog shows warnings for both builds. Locked or unreadable
+  database queries are no longer treated as empty mod data: failed calculations
+  clear stale numbers, and failed catalog reads preserve the active build. Armor
+  and Valence reject negative/non-finite values instead of silently treating
+  them as zero; a blank means zero. Overflowing computations and non-finite
+  weapon damage, multishot or used mod totals are rejected rather than shown
+  as valid results. Loading
+  preflights the complete saved calculation before replacing the current build.
+  Import caches use actual file bytes, preventing stale parses after restores
+  or replacements that preserve a file's size and modification time.
+- The shared percentile helper now handles equal infinities and interpolation
+  between large finite extremes without producing an accidental NaN or
+  infinity; NaN samples are rejected. This is a helper edge-case correction,
+  not evidence that ordinary successful simulator trials had infinite samples.
+- DE export index 13 is Void. A fresh import and the bundled revision-4
+  database represent Sirocco's 2,000 Void; guarded migration updates only the
+  missing Void column on matching official rows. Revision-0/1 reimports also
+  protect custom collisions and reject identifiable official edits. Mod and
+  weapon rows retain extra columns; custom effect annotations, affected foreign
+  keys and triggers on updated tables stop the upgrade for review rather than
+  being orphaned, lost or invoked. Full rebuilds also refuse affected links and
+  catalog triggers that could alter other user tables. All upgrades retain an
+  SQLite backup; parser-derived legacy edits are not
+  always distinguishable from old parser bugs. Shadow Clones' index-19 Finisher
+  damage remains unmodeled rather than being guessed as a different type.
+- Cold is capped at four stacks under active Overguard or boss immunity. Ten
+  stacks freeze for half the Cold status duration, without refresh or new
+  stacks during Freeze, then leave three. The remaining stacks' exact expiry
+  is not specified by the cited Wiki; the model uses the freezing proc's
+  original expiry. Ocucor now applies the Cold critical bonus in both paths.
+- Verglas uses the equipped Electricity and Status Damage bonuses and scaled
+  proc durations, and eligible owned DoT ticks build Fired Up. Unsupported
+  cursed Rivens and several impossible loadouts are rejected. Its updated
+  [results](verglas_prime_sim.md) remain sensitive to the Magnetic-break
+  assumption and unverified dynamic Heat inheritance; they are not in-game
+  benchmarks. Magnetic's status bonus affects shields and Overguard, while
+  Magnetic damage itself is neutral to Grineer health.
+- Further data-safety audit: failed refresh publication keeps its recovery marker
+  and previous copies instead of rolling back over destinations that an
+  unrelated process may have edited; absent targets use no-clobber publication.
+  A content hash plus file identity detects edits made during download even if
+  size and modification time are restored; new files created during that window
+  are preserved. Symlinked export entries are rejected, and lock/recovery checks include
+  symlink-target directories. A missing or empty database with any WAL, SHM or
+  rollback-journal entry is refused before SQLite can discard a recoverable
+  sidecar; a child-process crash/WAL test covers preservation. A locked existing
+  database no longer looks like a first-run database, and the bootstrap prompt
+  now discloses catalog replacement. Export parsing rejects weapon ZIPs with
+  multiple JSON members, duplicate upgrade members and duplicate JSON object
+  keys instead of silently importing whichever candidate the parser selected.
+  Download validation no longer compares transparently decompressed HTTP bytes
+  with the encoded Content-Length. Downloads are bounded to 512 MiB, and LZMA
+  manifest expansion is capped at 32 MiB with incremental decoding to avoid
+  allocating an unbounded expansion.
+
+The earlier dated sections are an audit history and may describe behavior
+before these corrections. The behavior-neutral benchmark now includes Verglas;
+reference snapshots made before it was added cannot be compared directly.
+
 ## 2026-10-28 follow-up: full formula re-check against the Wiki
 
 Every formula family in the repository was re-read against the live Wiki
@@ -23,8 +87,8 @@ the two substantive gaps found were both about
   it as a 12-bit code, `Code(x) = floor(clamp(x, 0, 32) × 4095/32 + 0.5)` and
   `decoded = Code(x) × 32/4095`. `modules/crit.py` now implements that
   encoding and all six damage models use it (Kuva Nukor 5.0 → 5.001221,
-  Ocucor 1.8 → 1.797314, Akarius 2.0 → 2.000488, Alternox 2.2 → 2.203663,
-  Jat Kittag 2.0 → 2.000488). The change is at most 0.2% per build, but the
+  Ocucor 1.8 → 1.797314, Akarius 2.0 → 2.000488, Alternox and Verglas
+  2.2 → 2.203663, Jat Kittag 2.0 → 2.000488). The change is at most 0.2% per build, but the
   earlier figures were not exact.
 - **Cold's critical-damage bonus was not reachable from a simulation.** The
   [Cold page](https://wiki.warframe.com/w/Damage/Cold_Damage) grants +0.10x
@@ -33,10 +97,9 @@ the two substantive gaps found were both about
   and does not apply to AoE. `modules/crit.py` implements the table, and every
   simulator now builds its crit factor from
   `DummyTarget.crit_damage_multiplier`, which adds the bonus for that target's
-  live Freeze stacks (and opts the Akarius radial Blast instance out). No
-  bundled build leaves Cold as a standalone proc, so the term is zero in the
-  shipped scenarios; primed targets and the `COLD` branch in
-  `alternox_prime_sim` exercise it.
+  live Freeze stacks (and opts the Akarius radial Blast instance out). Many
+  bundled builds combine Cold into another element; primed targets and custom
+  Cold-capable builds exercise the standalone `COLD` branch.
 
 The same pass added `modules/crit.py` (modded critical chance, tiers,
 normal/critical/average shot, direct+radial sum, weak-point form) plus two
@@ -213,8 +276,9 @@ entry and unrecognized same-name conflicts in modeled fields, and retains the
 old entry for safe legacy-coverage checks. Revision 3 repairs an existing
 revision-1/2 row only if it exactly matches the saved Doppelganger entry; it
 retains a SQLite backup and refuses to overwrite an edited row. Revision 0
-reimports covered export rows as before. Same-name entries that differ only in
-ID are not fully resolved by this guard.
+reimports covered export rows with the custom-row and identifiable-edit guards
+noted above. Same-name entries that differ only in ID are not fully resolved
+by this guard.
 
 The player export's **150 Electricity is not a single 150-damage hit**: the
 [Grimoire Wiki](https://wiki.warframe.com/w/Grimoire) separates primary fire
@@ -236,17 +300,17 @@ provenance. Do not assume arbitrary named Rivens are detected.
 | Area | Checked and changed | Remaining limitations |
 | --- | --- | --- |
 | Desktop direct-hit calculator | Uses signed nearest-1/32 quantization of modded base damage, without intermediate display rounding. Applies the faction/type table, square-root armor DR and the exceptional >2700 armor branch. Arsenal totals use innate multishot, or one hit for melee rows without multishot. | Treats the exported row as **one non-critical health hit**; some rows combine multiple real hits and cannot be interpreted per hit. It does not calculate falloff, shields, Overguard, critical hits, status effects, enemy-specific resistances, special attacks, modded multishot, or actual DPS. Data/attack modes imported from the export can be incomplete. |
-| Export/import data | Corrected DE `damagePerShot` indices for Heat (3), Cold (4), and Electricity (5); select the player Grimoire over its same-named Doppelganger; and rebuilt the bundled database. Ignis Wraith, Tenet Glaxion, Alternox Prime and Grimoire examples exercise the types. Legacy AppData databases are upgraded from saved exports with a backup. | Export snapshots may be stale, merge multiple hit components, or omit attack modes. Automatic migration refuses incomplete or mismatching exports rather than overwriting a possibly edited Grimoire row. |
+| Export/import data | Corrected DE `damagePerShot` indices for Heat (3), Cold (4), Electricity (5) and Void (13); select the player Grimoire over its Doppelganger. The bundled database is revision 4; legacy databases upgrade from local exports with a backup and preservation guards. | Export snapshots may be stale, aggregate hits, omit attack modes or include unmodeled types (such as Shadow Clones' Finisher damage). Incomplete base components produce a warning. Some legacy derived-field edits are indistinguishable from parser bugs; keep backups. |
 | Mods, progenitors, factions | Ordered mod effects are passed to the calculator. Primaries are paired in slot order, followed by innate and progenitor primaries in Heat/Cold/Electricity/Toxin order; the last-listed Riven elemental stat has priority. A pre-combined element remains independent. `X1.55` is interpreted as a +55% faction bonus, not +155%; Narmer does not inherit Grineer/Corpus bane. | A bare `CalculationInputs.mods` dictionary cannot preserve the original pairing history; callers needing exact slot-order resolution should pass `equipped_mods`. Only names containing `Riven` trigger the Riven-order rule. Complex negative elemental stats, nonstandard weapon inheritance, and spliced Riven entry in the desktop UI have not been fully validated. |
 | Enemy scaling | Added faction-specific shield curves, Eximus base shields, and unrounded enemy armor DR for damage. Heavy Gunner gadget fixtures and independently transcribed shield/armor examples are tested. | The model follows the wiki infobox **gadget** for Overguard level difference; the article disagrees, as described below. Python binary64 and rounded gadget EHP are not exact in-game binary32 emulation. Supplying the right enemy base stats, faction curves and special exceptions remains the caller's responsibility. |
-| Status damage | Wiki examples for Slash, Heat, Toxin, Electricity, Gas, faction double dipping, critical seeds and the tick-group `+1` accumulator have tests. Heat armor strip is one shared 15/30/40/50% ramp. AoE tick counting distinguishes an exact expiry from a fractional duration. Cold/Freeze adds Critical Damage from each target's live stacks, capped at four under Overguard or on a boss. | `status_damage.py` uses Python binary64, not the wiki's binary32 intermediate operations. Base critical-damage quantization lives in `modules/crit.py` and is applied by the simulators, but binary32 rounding and per-type immunity renormalization are not modeled. Some simulators use simplified tick clocks and omit interactions such as Heat inheritance. |
+| Status damage | Wiki examples for Slash, Heat, Toxin, Electricity, Gas, faction double dipping, critical seeds and the tick-group `+1` accumulator have tests. Heat armor strip is one shared 15/30/40/50% ramp. Cold/Freeze adds Critical Damage, caps at four under Overguard or on a boss, freezes at ten for half its status duration and leaves three stacks. | `status_damage.py` uses Python binary64, not the wiki's binary32 intermediate operations. Per-type immunity renormalization, Heat inheritance and exact post-Freeze residual-stack expiries are not modeled. Some simulators use simplified tick clocks. |
 | CO / GunCO | The cap on Galvanized's per-status bonus is per type, not a cap on the sum across types; multiplicative `scale` is applied to its CO term. The Cedo and Secondary Shiver source descriptions were corrected. Tests cover selected wiki attack examples and formulas. | The attack catalog is a dated snapshot of community-sourced, changing, attack-specific behavior; **not every row has been independently verified**. The desktop calculator does not automatically apply CO. Simulation assumptions about kill stacks and target statuses must be supplied correctly. |
 | Riven tables | Selected Wiki rank-8 range endpoints, rollable trait signs, display units, and the four standard positive/negative layout weights are covered by tests; current default disposition is 1.2. | The vendored tag catalog and every possible stat/roll were not independently verified. Binary32 rounding is not emulated; spliced traits and weapon-specific restrictions are not fully modeled. Historical fingerprint tests use older explicit dispositions and are not assertions about today's disposition. |
-| Weapon simulations | Corrected Elementalist's reload/status-damage bonuses, shared Heat strip, stat stacking, burst timing, live GunCO counts, Microwave timing and beam multishot sampling. All five simulators use typed shieldless Overguard/health routing and timed Magnetic-break Electricity; Jat uses faction and combo in its DoT seeds. Added unit and deterministic integration fixtures. | **Experimental, not validated TTK calculators.** Unverified routing assumptions and proc, timing and weapon-specific approximations below materially affect results. Previous rankings and recommendations are invalid. Passing tests do not establish accuracy of a complete simulated fight. |
+| Weapon simulations | Corrected Elementalist's reload/status-damage bonuses, shared Heat strip, stat stacking, burst timing, live GunCO counts, Microwave timing and beam multishot sampling. All six simulators use typed shieldless Overguard/health routing and timed Magnetic-break Electricity; Jat uses faction and combo in its DoT seeds. Added unit and deterministic integration fixtures. | **Experimental, not validated TTK calculators.** Unverified routing assumptions and proc, timing and weapon-specific approximations below materially affect results. Previous rankings and recommendations are invalid. Passing tests do not establish accuracy of a complete simulated fight. |
 
 ## Known simulation limitations
 
-1. **Overguard routing is an approximation.** The five simulators now route
+1. **Overguard routing is an approximation.** The six simulators now route
    typed hits through enemy Overguard into health without a depletion gate,
    applying Magnetic to Overguard and Viral/armor to health. The exact
    allocation of a mixed hit across the breaking boundary is not specified by
@@ -282,10 +346,10 @@ provenance. Do not assume arbitrary named Rivens are detected.
    merge same-target beam damage and status chance so multishot contributes
    to both proc seeds and proc counts, as the [Multishot Wiki](https://wiki.warframe.com/w/Multishot)
    describes; that does not establish every weapon-specific interaction.
-   Cross-source Heat
-   inheritance, exact restoration, many immunities and binary32 intermediate
-   arithmetic are not modeled (the base critical-damage multiplier *is*
-   quantized, and Cold's Freeze bonus is applied from the target's stacks). Beam ramp recovery/reloads are
+   First-proc Heat inheritance across sources or changing same-source buffs,
+   exact restoration, many immunities and binary32 intermediate arithmetic are
+   not modeled (the base critical-damage multiplier *is* quantized, and Cold's
+   Freeze bonus is applied from the target's stacks). Beam ramp recovery/reloads are
    approximate; the Nukor model applies ramp to direct hits but not status
    seeds, whose ramp interaction is not established here. The Nukor room
    simulation rolls status on a fatal direct hit only to apply the Blast

@@ -246,8 +246,10 @@ class ColdFreezeTests(unittest.TestCase):
         self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 0.0), 2.50)
         target.add_cold(0.0, 6.0)  # tenth stack freezes: +1.00x
         self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 0.0), 3.00)
-        # A Freeze lasts six seconds.
-        self.assertEqual(target.crit_damage_multiplier(2.0, 7.0), 2.0)
+        # Freeze lasts three seconds; it then leaves three Cold stacks.
+        self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 2.999), 3.0)
+        self.assertAlmostEqual(target.crit_damage_multiplier(2.0, 3.0), 2.20)
+        self.assertEqual(target.crit_damage_multiplier(2.0, 6.0), 2.0)
 
     def test_overguard_and_bosses_cap_the_bonus_at_four_stacks(self) -> None:
         shielded = DummyTarget(1000.0, 0.0, 500.0)
@@ -255,8 +257,68 @@ class ColdFreezeTests(unittest.TestCase):
         for _ in range(10):
             shielded.add_cold(0.0, 6.0)
             boss.add_cold(0.0, 6.0)
+        self.assertEqual(shielded.cold_stacks(0.0), 4)
+        self.assertEqual(boss.cold_stacks(0.0), 4)
         self.assertAlmostEqual(shielded.crit_damage_multiplier(2.0, 0.0), 2.25)
         self.assertAlmostEqual(boss.crit_damage_multiplier(2.0, 0.0), 2.25)
+        shielded.overguard = 0.0
+        # Extra applications while shielded cannot become latent stacks
+        # when Overguard breaks.
+        self.assertEqual(shielded.cold_stacks(0.0), 4)
+        self.assertAlmostEqual(shielded.crit_damage_multiplier(2.0, 0.0), 2.25)
+
+    def test_freeze_blocks_new_stacks_and_status_refresh(self) -> None:
+        target = DummyTarget(1000.0, 0.0, 0.0)
+        for _ in range(10):
+            target.add_cold(0.0, 6.0)
+        # Both the specialized and generic application paths must reject a
+        # Cold proc while frozen, even one with a much longer duration.
+        target.add_cold(1.0, 100.0)
+        target.record_status("COLD", 2.0, 100.0)
+        self.assertEqual(target.cold_stacks(2.999), 10)
+        self.assertEqual(target.unique_status_count(2.999), 1)
+        self.assertEqual(target.cold_stacks(3.0), 3)
+        self.assertEqual(target.unique_status_count(3.0), 1)
+        self.assertEqual(target.cold_stacks(5.999), 3)
+        self.assertEqual(target.unique_status_count(6.0), 0)
+        self.assertEqual(target.cold_stacks(6.0), 0)
+
+    def test_status_duration_scales_freeze_and_reapplication_afterward(self) -> None:
+        target = DummyTarget(1000.0, 0.0, 0.0)
+        for _ in range(10):
+            target.add_cold(0.0, 12.0)
+        self.assertEqual(target.cold_stacks(5.999), 10)
+        self.assertEqual(target.cold_stacks(6.0), 3)
+        # The first post-Freeze application is accepted normally.
+        target.add_cold(6.0, 12.0)
+        self.assertEqual(target.cold_stacks(6.0), 4)
+        self.assertEqual(target.cold_stacks(12.0), 1)
+        self.assertEqual(target.unique_status_count(18.0), 0)
+
+    def test_freeze_leaves_three_stacks_even_if_old_timers_would_expire(self) -> None:
+        target = DummyTarget(1000.0, 0.0, 0.0)
+        for _ in range(9):
+            target.add_cold(0.0, 6.0)
+        target.add_cold(5.9, 6.0)
+        self.assertEqual(target.cold_stacks(8.0), 10)
+        self.assertEqual(target.cold_stacks(8.9), 3)
+        self.assertEqual(target.unique_status_count(8.9), 1)
+
+    def test_cold_cap_refresh_keeps_unique_status_expiry_in_sync(self) -> None:
+        target = DummyTarget(1000.0, 0.0, 500.0)
+        target.add_cold(0.0, 100.0)  # oldest but longest-lived
+        for _ in range(3):
+            target.add_cold(0.0, 6.0)
+        target.add_cold(1.0, 6.0)  # replaces the oldest application
+        self.assertEqual(target.cold_stacks(1.0), 4)
+        self.assertEqual(target.unique_status_count(7.0), 0)
+        self.assertEqual(target.cold_stacks(7.0), 0)
+        target.add_cold(7.0, 0.0)
+        self.assertEqual(target.unique_status_count(7.0), 0)
+        target.add_cold(7.0, 6.0)
+        target.clear_status("COLD")
+        self.assertEqual(target.cold_stacks(7.0), 0)
+        self.assertEqual(target.unique_status_count(7.0), 0)
 
     def test_a_cold_primed_target_dies_faster(self) -> None:
         from modules.kuva_nukor_sim import steel_path_dummy_factory

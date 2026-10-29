@@ -127,6 +127,18 @@ class GuiIntegrationTests(unittest.TestCase):
         return {table.item(i, 0).text(): float(table.item(i, 1).text())
                 for i in range(table.rowCount())}
 
+    def test_first_run_with_uninitialised_database_still_opens_an_empty_catalog(self):
+        empty_db = self.paths["db"].parent / "uninitialised.db"
+        window = DamageCalculatorWindow(WeaponRepository(empty_db), ModRepository(empty_db), ROOT)
+        try:
+            self.assertEqual(window.weapon_list.count(), 0)
+            self.assertIsNone(window.selected_weapon)
+            self.assertIsNone(window.current_results)
+            self.assertFalse(self.critical.called)
+        finally:
+            window.close()
+            window.deleteLater()
+
     def test_weapon_sidebar_lists_the_whole_catalogue(self):
         # The sidebar is a browser, not a capped search result: every row of
         # the database must be reachable without typing a name.
@@ -138,6 +150,39 @@ class GuiIntegrationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(len(self.window.weapon_list.findItems(
             "Zymos", Qt.MatchFlag.MatchExactly)), 1)
+
+    def test_weapon_filter_does_not_switch_or_clear_an_unsaved_build(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        before = self.window.current_results
+        with patch.object(self.window, "recalculate", wraps=self.window.recalculate) as recalculate:
+            # A real search passes through multiple intermediate queries. The
+            # selected weapon can disappear and later reappear without a click.
+            for query in ("Z", "Zy", "Zymos", "no such weapon", ""):
+                self.window.search_edit.setText(query)
+                self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+                self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+                self.assertEqual(self.window.mod_slots[0].rank_spin.value(), 5)
+            recalculate.assert_not_called()
+        self.assertIs(self.window.current_results, before)
+        self.assertEqual(self.window.weapon_list.currentItem().text(), "Braton")
+
+        # Selecting another match intentionally still switches weapons and
+        # clears mods which are not compatible with the new weapon.
+        self.window.search_edit.setText("Zymos")
+        self.window.weapon_list.setCurrentItem(self.window.weapon_list.item(0))
+        self.assertEqual(self.window.selected_weapon.weapon, "Zymos")
+        self.assertIsNone(self.window.mod_slots[0].current_mod)
+
+    def test_unmodeled_base_damage_warning_follows_the_selected_weapon(self):
+        self.select_weapon("Shadow Clones")
+        self.assertTrue(self.window.current_results.warnings)
+        self.assertFalse(self.window.damage_warning.isHidden())
+        self.assertIn("750", self.window.damage_warning.text())
+        self.assertIn("incomplete", self.window.damage_warning.text().lower())
+        self.select_weapon("Braton")
+        self.assertEqual(self.window.current_results.warnings, [])
+        self.assertTrue(self.window.damage_warning.isHidden())
 
     def test_damage_scope_is_visible_for_combined_export_rows(self):
         self.select_weapon("Grimoire")
@@ -181,6 +226,114 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertEqual(equipped[0].effects, repository.fetch_ranked_effects(
             equipped[0].mod.unique_name, 5))
         self.assertEqual(len(equipped), len(self.window.mod_slots))
+
+    def test_database_error_does_not_show_a_result_without_equipped_mods(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        def short_connect():
+            connection = sqlite3.connect(self.paths["db"], timeout=0.01)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with closing(sqlite3.connect(self.paths["db"])) as locker, \
+             patch.object(self.window.mod_repository, "connect", side_effect=short_connect):
+            locker.execute("BEGIN EXCLUSIVE")
+            self.window.recalculate()
+            locker.rollback()
+        self.assertIsNone(self.window.current_results)
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertEqual(self.window.cards["hud_total"].value_label.text(), "—")
+        self.assertIn("unavailable", self.window.damage_warning.text().lower())
+        self.assertTrue(self.critical.called)
+        self.critical.reset_mock()
+        # Recalculation succeeds after the transient database error ends.
+        self.window.recalculate()
+        self.assertIsNotNone(self.window.current_results)
+        self.assertFalse(self.window.damage_warning.isVisible())
+
+    def test_failed_mod_catalog_read_does_not_switch_weapon_or_clear_slots(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        before = self.window.current_results
+        self.window.search_edit.clear()
+        other = self.window.weapon_list.findItems("Zymos", Qt.MatchFlag.MatchExactly)[0]
+        with patch.object(self.window.mod_repository, "connect",
+                          side_effect=sqlite3.OperationalError("database is locked")):
+            self.window.weapon_list.setCurrentItem(other)
+        self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+        self.assertEqual(self.window.weapon_list.currentItem().text(), "Braton")
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIs(self.window.current_results, before)
+        self.assertTrue(self.warning.called)
+
+    def test_weapon_switch_calculates_only_after_all_mod_options_are_applied(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        self.equip(1, "Infected Clip")
+        excluded = self.window.mod_slots[1].current_mod.unique_name
+        options = [mod for mod in self.window.available_mods if mod.unique_name != excluded]
+        self.window.search_edit.clear()
+        other = self.window.weapon_list.findItems("Alternox Prime", Qt.MatchFlag.MatchExactly)[0]
+        with patch.object(self.window, "_compatible_mod_options", return_value=options), \
+             patch.object(self.window.mod_repository, "fetch_ranked_effects_many",
+                          side_effect=sqlite3.OperationalError("database is locked")) as effects:
+            self.window.weapon_list.setCurrentItem(other)
+        effects.assert_called_once()
+        self.assertEqual(self.critical.call_count, 1)
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIsNone(self.window.mod_slots[1].current_mod)
+        self.assertIsNone(self.window.current_results)
+        self.critical.reset_mock()
+
+    def test_catalog_search_error_preserves_the_visible_list_and_selection(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        before = self.window.weapon_list.count()
+        with patch.object(self.window.weapon_repository, "connect",
+                          side_effect=sqlite3.OperationalError("database is locked")):
+            self.window.refresh_weapon_list()
+        self.assertEqual(self.window.weapon_list.count(), before)
+        self.assertEqual(self.window.weapon_list.currentItem().text(), "Braton")
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIn("unavailable", self.window.statusBar().currentMessage().lower())
+
+    def test_failed_post_rebuild_refresh_invalidates_and_then_reloads_results(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        old_rate = self.window.selected_weapon.firerate
+        with closing(sqlite3.connect(self.paths["db"])) as connection:
+            connection.execute("UPDATE weapons SET firerate = firerate + 1 WHERE weapon = 'Braton'")
+            connection.commit()
+        outputs = {"db_path": self.paths["db"], "source_mode": "local", "lzma_method": "N/A",
+                   "backup_path": None, "refresh_error": None}
+        with patch.object(self.window.mod_repository, "list_mods_for_slot",
+                          side_effect=sqlite3.OperationalError("database is locked")):
+            self.window._on_data_pipeline_completed(outputs, None)
+        self.assertIsNone(self.window.current_results)
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertTrue(self.window._needs_catalog_refresh)
+        self.assertIn("unavailable", self.window.damage_warning.text().lower())
+        self.window.recalculate()
+        self.assertAlmostEqual(self.window.selected_weapon.firerate, old_rate + 1)
+        self.assertFalse(self.window._needs_catalog_refresh)
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIsNotNone(self.window.current_results)
+
+    def test_failed_post_rebuild_weapon_search_is_not_reported_as_success(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        outputs = {"db_path": self.paths["db"], "source_mode": "local", "lzma_method": "N/A",
+                   "backup_path": None, "refresh_error": None}
+        with patch.object(self.window.weapon_repository, "search_weapons",
+                          side_effect=sqlite3.OperationalError("database is locked")):
+            self.window._on_data_pipeline_completed(outputs, None)
+        self.assertIsNone(self.window.current_results)
+        self.assertTrue(self.window._needs_catalog_refresh)
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIn("could not refresh", self.window.statusBar().currentMessage().lower())
+        self.window.recalculate()
+        self.assertFalse(self.window._needs_catalog_refresh)
+        self.assertIsNotNone(self.window.current_results)
 
     def test_weapon_specific_and_primary_family_options_use_the_real_widgets(self):
         self.select_weapon("Braton")
@@ -356,6 +509,99 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertEqual(compared["Weapon"], ("Alternox Prime", "Alternox Prime"))
         self.assertEqual(compared["Final Total"][0], compared["Final Total"][1])
 
+    def test_build_actions_handle_catalog_and_effect_read_failures_without_mutation(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        slot = self.window.mod_slots[0]
+        original = self.window.current_results
+        path = self.paths["builds"] / "saved.json"
+        path.write_text(json.dumps({"weapon": "Braton", "mods": [
+            {"unique_name": slot.current_mod.unique_name, "rank": slot.rank_spin.value()},
+        ]}), encoding="utf-8")
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch.object(self.window.mod_repository, "list_mods_for_slot",
+                          side_effect=sqlite3.OperationalError("database is locked")):
+            self.window.load_build()
+            self.window.compare_build()
+        self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+        self.assertEqual(slot.current_mod.name, "Cryo Rounds")
+        self.assertIs(self.window.current_results, original)
+        self.assertGreaterEqual(self.warning.call_count, 2)
+
+        self.warning.reset_mock()
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch.object(self.window.mod_repository, "fetch_ranked_effects_many",
+                          side_effect=sqlite3.OperationalError("database is locked")), \
+             patch("gui.app.CompareBuildDialog") as dialog:
+            self.window.compare_build()
+        dialog.assert_not_called()
+        self.assertIn("locked", str(self.warning.call_args).lower())
+        self.assertIs(self.window.current_results, original)
+
+    def test_load_build_preflights_effects_once_and_preserves_build_on_read_failure(self):
+        self.select_weapon("Braton")
+        self.equip(3, "Hellfire")
+        original = self.window.current_results
+        cold = next(mod for mod in self.window.available_mods
+                    if mod.name == "Cryo Rounds" and mod.fusion_limit == 5)
+        toxin = next(mod for mod in self.window.available_mods
+                     if mod.name == "Infected Clip" and mod.fusion_limit == 5)
+        path = self.paths["builds"] / "two-mods.json"
+        path.write_text(json.dumps({"weapon": "Braton", "inputs": {"faction": "Corpus", "armor": "100"},
+                                    "mods": [{"unique_name": cold.unique_name, "rank": 5},
+                                             {"unique_name": toxin.unique_name, "rank": 4}]}),
+                        encoding="utf-8")
+        self.information.reset_mock()
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch.object(self.window.mod_repository, "fetch_ranked_effects_many",
+                          side_effect=sqlite3.OperationalError("database is locked")) as effects:
+            self.window.load_build()
+        effects.assert_called_once()
+        self.assertIsNone(self.window.mod_slots[0].current_mod)
+        self.assertIsNone(self.window.mod_slots[1].current_mod)
+        self.assertEqual(self.window.mod_slots[3].current_mod.name, "Hellfire")
+        self.assertIs(self.window.current_results, original)
+        self.assertIn("locked", str(self.warning.call_args).lower())
+        self.assertFalse(self.critical.called)
+        self.information.assert_not_called()
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch.object(self.window.mod_repository, "fetch_ranked_effects_many",
+                          wraps=self.window.mod_repository.fetch_ranked_effects_many) as effects:
+            self.window.load_build()
+        effects.assert_called_once()
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertEqual(self.window.mod_slots[1].current_mod.name, "Infected Clip")
+        self.assertEqual(self.window.mod_slots[1].rank_spin.value(), 4)
+        self.assertIsNone(self.window.mod_slots[3].current_mod)
+        self.assertIsNotNone(self.window.current_results)
+
+    def test_comparison_shows_incomplete_damage_warnings_for_both_builds(self):
+        path = self.paths["builds"] / "comparison.json"
+        compared = {}
+
+        class InspectingCompareDialog(CompareBuildDialog):
+            def exec(self):
+                table = self.findChild(QTableWidget)
+                for row in range(table.rowCount()):
+                    compared[table.item(row, 0).text()] = (table.item(row, 1).text(),
+                                                            table.item(row, 2).text())
+                return 0
+
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch("gui.app.CompareBuildDialog", InspectingCompareDialog):
+            self.select_weapon("Braton")
+            path.write_text(json.dumps({"weapon": "Shadow Clones", "mods": []}), encoding="utf-8")
+            self.window.compare_build()
+            self.assertEqual(compared["Warnings"][0], "None")
+            self.assertIn("750", compared["Warnings"][1])
+            self.assertIn("incomplete", compared["Warnings"][1].lower())
+
+            self.select_weapon("Shadow Clones")
+            path.write_text(json.dumps({"weapon": "Braton", "mods": []}), encoding="utf-8")
+            self.window.compare_build()
+            self.assertIn("750", compared["Warnings"][0])
+            self.assertEqual(compared["Warnings"][1], "None")
+
     def test_load_rejects_unknown_weapon_without_changing_current_build(self):
         self.select_weapon("Alternox Prime")
         self.equip(0, "Cryo Rounds")
@@ -438,10 +684,153 @@ class GuiIntegrationTests(unittest.TestCase):
                 self.assertEqual(self.warning.call_count, 2)
                 self.assertEqual(self.window.selected_weapon.weapon, "Alternox Prime")
 
-    def test_safe_float_rejects_nonfinite_values(self):
-        for text in ("nan", "inf", "-inf"):
-            with self.subTest(text=text):
-                self.assertEqual(self.window.safe_float(text), 0.0)
+    def test_invalid_numeric_inputs_clear_results_and_recover_without_modal_errors(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        for field, label in ((self.window.armor_edit, "Armor"),
+                             (self.window.valence_edit, "Valence")):
+            for value in ("not a number", "nan", "inf", "-1", "1e309", "-1e-9999", "1e-9999", "."):
+                with self.subTest(field=label, value=value):
+                    field.setText(value)
+                    self.assertIsNone(self.window.current_results)
+                    self.assertEqual(self.window.cards["hud_total"].value_label.text(), "—")
+                    self.assertIn(label.lower(), self.window.input_warning.text().lower())
+                    self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+                    self.assertFalse(self.critical.called)
+                    field.setText("0")
+                    self.assertIsNotNone(self.window.current_results)
+                    self.assertFalse(self.window.input_warning.isVisible())
+
+    def test_empty_numeric_fields_mean_zero_and_valid_decimals_are_accepted(self):
+        self.select_weapon("Braton")
+        self.window.armor_edit.setText("")
+        self.window.valence_edit.setText("   ")
+        self.assertIsNotNone(self.window.current_results)
+        self.assertFalse(self.window.input_warning.isVisible())
+        path = self.paths["builds"] / "blank-values.json"
+        with patch.object(QFileDialog, "getSaveFileName", return_value=(str(path), "JSON")):
+            self.window.save_build()
+        self.window.armor_edit.setText("10")
+        self.window.valence_edit.setText("10")
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch.object(CompareBuildDialog, "exec", return_value=0):
+            self.window.load_build()
+            self.window.compare_build()
+        self.assertEqual(self.window.armor_edit.text(), "")
+        self.assertEqual(self.window.valence_edit.text(), "   ")
+        self.assertIsNotNone(self.window.current_results)
+        self.assertFalse(self.warning.called)
+        self.window.lich_combo.setCurrentText("HEAT")
+        self.window.armor_edit.setText("500.5")
+        self.window.valence_edit.setText(" 2.5e1 ")
+        self.assertIsNotNone(self.window.current_results)
+        self.assertAlmostEqual(self.window.current_results.weapon_total_damage,
+                               self.window.selected_weapon.dmg + 25)
+
+    def test_overflowing_calculation_is_inline_and_cannot_be_saved_or_compared(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        self.window.lich_combo.setCurrentText("HEAT")
+        self.window.valence_edit.setText("1e308")
+        self.assertIsNone(self.window.current_results)
+        self.assertIn("finite", self.window.input_warning.text().lower())
+        self.assertFalse(self.critical.called)
+        target = self.paths["builds"] / "keep.json"
+        target.write_text("existing build", encoding="utf-8")
+        with patch.object(QFileDialog, "getSaveFileName", return_value=(str(target), "JSON")) as save, \
+             patch.object(QFileDialog, "getOpenFileName") as compare:
+            self.window.save_build()
+            self.window.compare_build()
+        save.assert_not_called()
+        compare.assert_not_called()
+        self.assertEqual(target.read_text(encoding="utf-8"), "existing build")
+        self.assertIn("finite", str(self.warning.call_args).lower())
+        self.window.valence_edit.setText("25")
+        self.assertIsNotNone(self.window.current_results)
+        self.assertFalse(self.window.input_warning.isVisible())
+
+    def test_invalid_numeric_inputs_cannot_overwrite_a_saved_build(self):
+        self.select_weapon("Braton")
+        target = self.paths["builds"] / "keep.json"
+        original = '{"weapon":"existing"}'
+        target.write_text(original, encoding="utf-8")
+        self.window.armor_edit.setText("bad armor")
+        with patch.object(QFileDialog, "getSaveFileName", return_value=(str(target), "JSON")) as dialog:
+            self.window.save_build()
+        dialog.assert_not_called()
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
+        self.assertIn("armor", str(self.warning.call_args).lower())
+
+    def test_overflowing_saved_build_is_rejected_without_changing_the_current_build(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        original = self.window.current_results
+        path = self.paths["builds"] / "overflow.json"
+        content = json.dumps({"weapon": "Hek", "inputs": {
+            "lich_element": "HEAT", "valence_base": "1e308"}})
+        path.write_text(content, encoding="utf-8")
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+             patch.object(CompareBuildDialog, "exec", return_value=0):
+            self.window.load_build()
+            self.window.compare_build()
+        self.assertEqual(self.warning.call_count, 2)
+        self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIs(self.window.current_results, original)
+        self.assertEqual(path.read_text(encoding="utf-8"), content)
+        self.assertFalse(self.critical.called)
+
+    def test_saved_json_numeric_decimals_remain_supported(self):
+        self.select_weapon("Braton")
+        path = self.paths["builds"] / "numeric.json"
+        path.write_text(json.dumps({"weapon": "Braton", "inputs": {
+            "armor": 12.5, "valence_base": 2.5, "lich_element": "HEAT"}}), encoding="utf-8")
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")):
+            self.window.load_build()
+        self.assertEqual(self.window.armor_edit.text(), "12.5")
+        self.assertEqual(self.window.valence_edit.text(), "2.5")
+        self.assertAlmostEqual(self.window.current_results.weapon_total_damage,
+                               self.window.selected_weapon.dmg + 2.5)
+        self.assertFalse(self.warning.called)
+
+    def test_saved_json_numeric_underflow_is_not_silently_converted_to_zero(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        original = self.window.current_results
+        path = self.paths["builds"] / "underflow.json"
+        for value in ("-1e-9999", "1e-9999", "1e" + "9" * 100):
+            content = '{"weapon":"Hek", "inputs":{"armor":' + value + '}}'
+            path.write_text(content, encoding="utf-8")
+            self.warning.reset_mock()
+            with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+                 patch.object(CompareBuildDialog, "exec", return_value=0):
+                self.window.load_build()
+                self.window.compare_build()
+            self.assertEqual(self.warning.call_count, 2)
+            self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+            self.assertIs(self.window.current_results, original)
+            self.assertEqual(path.read_text(encoding="utf-8"), content)
+
+    def test_negative_or_invalid_numeric_build_inputs_are_rejected_before_mutation(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        original = self.window.current_results
+        path = self.paths["builds"] / "bad-numbers.json"
+        for key, value in (("armor", -100), ("valence_base", "-1"),
+                           ("armor", False), ("valence_base", "nan"),
+                           ("armor", "not a number")):
+            with self.subTest(key=key, value=value):
+                path.write_text(json.dumps({"weapon": "Alternox Prime", "inputs": {key: value}}),
+                                encoding="utf-8")
+                self.warning.reset_mock()
+                with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+                     patch.object(CompareBuildDialog, "exec", return_value=0):
+                    self.window.load_build()
+                    self.window.compare_build()
+                self.assertEqual(self.warning.call_count, 2)
+                self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+                self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+                self.assertIs(self.window.current_results, original)
 
     def test_saved_data_rebuild_does_not_call_the_network_and_shows_backup(self):
         seed_source_files(ROOT)
@@ -456,6 +845,7 @@ class GuiIntegrationTests(unittest.TestCase):
                 self.wait_for_pipeline()
             refresh.assert_not_called()
             self.assertIn("backed up", confirm.call_args.args[2])
+            self.assertIn("weapon", confirm.call_args.args[2].lower())
             self.assertIn("rebuilt", dialog.status.toPlainText().lower())
             self.assertTrue(self.information.called)
             backups = list((self.paths["data"] / "backups").glob("*-pre-rebuild-*.sqlite3"))
@@ -469,6 +859,28 @@ class GuiIntegrationTests(unittest.TestCase):
             with closing(sqlite3.connect(backups[0])) as connection, connection:
                 self.assertEqual(connection.execute("SELECT count(*) FROM mods WHERE unique_name='/custom/mod'").fetchone()[0], 1)
         finally:
+            dialog.close()
+
+    def test_rebuild_schema_guard_reports_trigger_and_preserves_other_user_tables(self):
+        seed_source_files(ROOT)
+        with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
+            connection.execute("CREATE TABLE personal_notes (note TEXT)")
+            connection.execute("INSERT INTO personal_notes VALUES ('keep me')")
+            connection.execute("CREATE TRIGGER user_mod_trigger AFTER DELETE ON MODS BEGIN "
+                               "DELETE FROM personal_notes; END")
+        dialog = SettingsDialog(self.window)
+        try:
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+                dialog.use_backup_button.click()
+                self.wait_for_pipeline()
+            self.assertIn("user_mod_trigger", dialog.status.toPlainText())
+            self.assertTrue(self.critical.called)
+            with closing(sqlite3.connect(self.paths["db"])) as connection:
+                self.assertEqual(connection.execute("SELECT note FROM personal_notes").fetchone()[0], "keep me")
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0],
+                                 CURRENT_DATABASE_REVISION)
+        finally:
+            self.critical.reset_mock()
             dialog.close()
 
     def test_backup_failure_is_reported_without_erasing_custom_mods(self):
@@ -500,12 +912,44 @@ class GuiIntegrationTests(unittest.TestCase):
         finally:
             dialog.close()
 
+    def test_locked_catalog_does_not_trigger_an_initial_rebuild_prompt(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        original = self.window.current_results
+        real_connect = sqlite3.connect
+
+        def fast_connect(*args, **kwargs):
+            kwargs["timeout"] = 0.05
+            return real_connect(*args, **kwargs)
+
+        with closing(real_connect(self.paths["db"], timeout=0.05)) as locker:
+            locker.execute("BEGIN EXCLUSIVE")
+            try:
+                with patch.object(startup.sqlite3, "connect", side_effect=fast_connect), \
+                     patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.Yes) as prompt, \
+                     patch.object(self.window, "start_data_pipeline") as pipeline:
+                    startup.maybe_bootstrap_database(self.window)
+            finally:
+                locker.rollback()
+        prompt.assert_not_called()
+        pipeline.assert_not_called()
+        self.assertIn("locked", str(self.warning.call_args).lower())
+        self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+        self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+        self.assertIs(self.window.current_results, original)
+
     def test_first_run_declined_does_not_start_a_download(self):
+        shown = []
+        def inspect_prompt(dialog):
+            shown.append(dialog.text())
+            return QMessageBox.StandardButton.No
         with patch.object(startup, "database_is_ready", return_value=False), \
-             patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.No), \
+             patch.object(QMessageBox, "exec", inspect_prompt), \
              patch.object(self.window, "start_data_pipeline") as pipeline:
             startup.maybe_bootstrap_database(self.window)
         pipeline.assert_not_called()
+        self.assertIn("backed up", shown[0].lower())
+        self.assertIn("replaced", shown[0].lower())
 
     def test_startup_upgrades_before_window_construction(self):
         with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
@@ -535,6 +979,40 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertTrue(any("Database Upgraded" in str(call) for call in self.information.call_args_list))
         self.assertFalse(self.warning.called)
         self.assertEqual(len(list((self.paths["data"] / "backups").glob("*.sqlite3"))), 1)
+
+    def test_startup_source_seed_failure_is_visible_and_does_not_open_window(self):
+        with patch.object(startup, "build_application", return_value=self.app), \
+             patch.object(startup, "seed_source_files", side_effect=OSError("disk full")), \
+             patch.object(startup, "DamageCalculatorWindow") as window_factory, \
+             patch.object(QApplication, "exec", return_value=0) as app_exec, \
+             patch.object(QMessageBox, "critical") as error:
+            status = startup.main()
+        self.assertEqual(status, 1)
+        window_factory.assert_not_called()
+        app_exec.assert_not_called()
+        self.assertIn("disk full", error.call_args.args[2])
+        with closing(sqlite3.connect(self.paths["db"])) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0],
+                             CURRENT_DATABASE_REVISION)
+
+    def test_startup_preserves_orphaned_database_sidecar_before_opening_window(self):
+        database = self.paths["db"]
+        database.unlink()
+        sidecar = Path(str(database) + "-wal")
+        sidecar.write_bytes(b"potentially recoverable WAL")
+        with patch.object(startup, "build_application", return_value=self.app), \
+             patch.object(startup, "seed_source_files"), \
+             patch.object(startup, "DamageCalculatorWindow") as window_factory, \
+             patch.object(startup, "maybe_bootstrap_database") as bootstrap, \
+             patch.object(QApplication, "exec", return_value=0):
+            status = startup.main()
+        self.assertEqual(status, 1)
+        window_factory.assert_not_called()
+        bootstrap.assert_not_called()
+        self.assertIn("sidecar", str(self.critical.call_args).lower())
+        self.assertFalse(database.exists())
+        self.assertEqual(sidecar.read_bytes(), b"potentially recoverable WAL")
+        self.critical.reset_mock()
 
     def test_startup_failure_blocks_window_and_reports_the_error(self):
         with closing(sqlite3.connect(self.paths["db"])) as connection, connection:

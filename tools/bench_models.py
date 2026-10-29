@@ -22,10 +22,10 @@ reorders random draws is caught. Timing is reported for the models with a
 steady per-trial cost; it is wall-clock on this machine, not a benchmark of the
 game.
 
-All five bundled simulators are covered (Jat Kittag slam, Kuva Nukor beam,
-Ocucor, Akarius Prime and Alternox Prime) plus the scalar slam-count model that
-generates ``docs/jat_kittag_expected_slams_results.jsonl``, so a change to any
-of them is checked against the same digest.
+All six bundled simulators are covered (Jat Kittag slam, Kuva Nukor beam,
+Ocucor, Akarius Prime, Alternox Prime and Verglas Prime) plus the scalar
+slam-count model that generates ``docs/jat_kittag_expected_slams_results.jsonl``.
+The digest covers each chosen fixed-seed scenario, not every possible build.
 
 Exit codes
 ----------
@@ -56,6 +56,7 @@ from modules import (  # noqa: E402  (path set above)
     jat_kittag_slam_counts,
     kuva_nukor_sim,
     ocucor_sim,
+    verglas_prime_sim,
 )
 from modules.jat_kittag_slam_analysis import BUILD_BY_KEY  # noqa: E402
 
@@ -64,6 +65,7 @@ NUKOR_SEED = 700
 OCUCOR_SEED = 900
 AKARIUS_SEED = 1100
 ALTERNOX_SEED = 1300
+VERGLAS_SEED = 1500
 SLAM_COUNTS_SEED = 20261028
 SLAM_COUNTS_TRIALS = 100
 
@@ -123,6 +125,15 @@ def _alternox_trials(trials: int) -> Iterator[Any]:
             seed=ALTERNOX_SEED + index)
 
 
+def _verglas_trials(trials: int) -> Iterator[Any]:
+    build = verglas_prime_sim.build_verglas(
+        verglas_prime_sim.BUILD_BY_KEY["final_recommended"])
+    for index in range(trials):
+        yield verglas_prime_sim.simulate(
+            build, verglas_prime_sim.eximus_dummy_factory(),
+            seed=VERGLAS_SEED + index)
+
+
 def _slam_count_trials(trials: int) -> Iterator[Any]:
     """The documented slam-count sweep's own model, not ``jat_kittag_sim``.
 
@@ -149,6 +160,7 @@ MODELS: tuple[tuple[str, Callable[[int], Iterator[Any]]], ...] = (
     ("ocucor_sim", _ocucor_trials),
     ("akarius_sim", _akarius_trials),
     ("alternox_prime_sim", _alternox_trials),
+    ("verglas_prime_sim", _verglas_trials),
     ("jat_kittag_slam_counts", _slam_count_trials),
 )
 
@@ -243,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                                   "ocucor": OCUCOR_SEED,
                                   "akarius": AKARIUS_SEED,
                                   "alternox": ALTERNOX_SEED,
+                                  "verglas": VERGLAS_SEED,
                                   "slam_counts": SLAM_COUNTS_SEED,
                                   "slam_counts_trials":
                                       SLAM_COUNTS_TRIALS}},

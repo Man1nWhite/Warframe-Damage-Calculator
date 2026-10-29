@@ -59,6 +59,7 @@ from modules import status_damage
 from modules.constants import FACTION_MULTIPLIERS
 from modules.crit import (
     COLD_STACK_CAP,
+    COLD_STACK_CAP_OVERGUARD,
     cold_crit_damage_bonus,
     crit_multiplier_for_tier,
     quantize_crit_multiplier,
@@ -390,6 +391,7 @@ class DummyTarget:
         # Bosses and some Eximus detonate Blast at four stacks, not ten.
         self.boss = boss
         self.cold_expiries: list[float] = []
+        self._cold_frozen_until: float | None = None
         self.viral_expiries: list[float] = []
         self.puncture_expiries: list[float] = []
         self.mag_expiries: list[float] = []
@@ -408,14 +410,39 @@ class DummyTarget:
         return len(self.blast_stacks) >= self.blast_stack_cap
 
     def add_cold(self, when: float, duration: float) -> None:
-        """Record a Cold (Freeze) stack, refreshing the ten-stack cap."""
-        self.cold_expiries = [t for t in self.cold_expiries if t > when]
+        """Apply Cold, respecting Overguard/boss caps and the Freeze lockout.
+
+        At ten stacks Freeze lasts half the Cold duration (3 s at base) and
+        leaves three stacks. The wiki does not specify those stacks' residual
+        timers: we approximate them as lasting until the freezing application
+        would have expired, rather than claiming an in-game-verified duration.
+        Target state, as elsewhere in the simulators, is advanced chronologically.
+        """
+        if duration <= 0:
+            return
+        self.cold_stacks(when)
+        if self._cold_frozen_until is not None:
+            return  # Frozen enemies cannot acquire or refresh Cold.
+        cap = (COLD_STACK_CAP_OVERGUARD
+               if self.boss or self.overguard > 0 else COLD_STACK_CAP)
         self.cold_expiries.append(when + duration)
-        self.cold_expiries = self.cold_expiries[-COLD_STACK_CAP:]
-        self.record_status("COLD", when, duration)
+        self.cold_expiries = self.cold_expiries[-cap:]
+        if cap == COLD_STACK_CAP and len(self.cold_expiries) == COLD_STACK_CAP:
+            self._cold_frozen_until = when + duration / 2.0
+            # Preserve the full Frozen bonus for the complete Frozen duration,
+            # even if older individual stacks would have expired during it.
+            self.cold_expiries = [when + duration] * COLD_STACK_CAP
+        self._status_expiries["COLD"] = max(self.cold_expiries)
 
     def cold_stacks(self, now: float) -> int:
+        if self._cold_frozen_until is not None and now >= self._cold_frozen_until:
+            self._cold_frozen_until = None
+            self.cold_expiries = self.cold_expiries[-3:]
         self.cold_expiries = [t for t in self.cold_expiries if t > now]
+        if self.cold_expiries:
+            self._status_expiries["COLD"] = max(self.cold_expiries)
+        else:
+            self._status_expiries.pop("COLD", None)
         return len(self.cold_expiries)
 
     def crit_damage_multiplier(self, base: float, now: float) -> float:
@@ -432,13 +459,23 @@ class DummyTarget:
         return base + bonus
 
     def record_status(self, kind: str, when: float, duration: float) -> None:
+        # Cold has caps and a frozen lockout, so a generic status refresh must
+        # go through the same state machine rather than bypassing those rules.
+        if kind == "COLD":
+            self.add_cold(when, duration)
+            return
         self._status_expiries[kind] = max(
             self._status_expiries.get(kind, 0.0), when + duration)
 
     def clear_status(self, kind: str) -> None:
+        if kind == "COLD":
+            self.cold_expiries.clear()
+            self._cold_frozen_until = None
         self._status_expiries.pop(kind, None)
 
     def unique_status_count(self, now: float) -> int:
+        if self.cold_expiries:
+            self.cold_stacks(now)
         self._status_expiries = {kind: end for kind, end in self._status_expiries.items()
                                  if end > now}
         return len(self._status_expiries)

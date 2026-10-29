@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .constants import DAMAGE_TYPES, SEARCH_LIMIT
+from .database_revision import database_has_contents
 from .mod_effect_policy import usable_direct_effect
 from .models import Mod, ModEffect, Weapon
 
@@ -15,6 +16,9 @@ class DatabaseSession:
         self.db_path = str(db_path)
 
     def connect(self) -> sqlite3.Connection:
+        # SQLite may delete an orphaned WAL on the first query against an
+        # empty/missing main file. Check before opening or creating it.
+        database_has_contents(self.db_path)
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         return connection
@@ -40,19 +44,23 @@ class WeaponRepository(DatabaseSession):
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        try:
-            with closing(self.connect()) as connection:
+        with closing(self.connect()) as connection:
+            try:
                 rows = connection.execute(sql, params).fetchall()
+            except sqlite3.OperationalError as exc:
+                # A brand-new, uninitialised database has no tables yet. Keep
+                # first-run browsing empty, but never mistake a lock or damaged
+                # partially initialised schema for a successful empty search.
+                if str(exc) == "no such table: weapons" and not connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
+                ).fetchone():
+                    return []
+                raise
             return [str(row["weapon"]) for row in rows]
-        except sqlite3.OperationalError:
-            return []
 
     def get_weapon(self, weapon_name: str) -> Weapon | None:
-        try:
-            with closing(self.connect()) as connection:
-                row = connection.execute("SELECT * FROM weapons WHERE weapon = ?", (weapon_name,)).fetchone()
-        except sqlite3.OperationalError:
-            return None
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT * FROM weapons WHERE weapon = ?", (weapon_name,)).fetchone()
         if row is None:
             return None
 
@@ -89,15 +97,12 @@ class ModRepository(DatabaseSession):
             return self._visible_mods(connection, rows)
 
     def list_mods_for_slot(self, slot_group: str, limit: int = 2000) -> list[Mod]:
-        try:
-            with closing(self.connect()) as connection:
-                rows = connection.execute(
-                    "SELECT * FROM mods WHERE supported = 1 AND (slot_group = ? OR slot_group = 'ANY') ORDER BY name COLLATE NOCASE LIMIT ?",
-                    (slot_group, limit),
-                ).fetchall()
-                return self._visible_mods(connection, rows)
-        except sqlite3.OperationalError:
-            return []
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM mods WHERE supported = 1 AND (slot_group = ? OR slot_group = 'ANY') ORDER BY name COLLATE NOCASE LIMIT ?",
+                (slot_group, limit),
+            ).fetchall()
+            return self._visible_mods(connection, rows)
 
     def _visible_mods(self, connection: sqlite3.Connection, rows: Iterable[sqlite3.Row]) -> list[Mod]:
         """Hide official rows whose only parsed effects are out of scope.
@@ -114,22 +119,16 @@ class ModRepository(DatabaseSession):
                 or effects[(mod.unique_name, mod.fusion_limit)]]
 
     def get_mod(self, unique_name: str) -> Mod | None:
-        try:
-            with closing(self.connect()) as connection:
-                row = connection.execute("SELECT * FROM mods WHERE unique_name = ?", (unique_name,)).fetchone()
-            return self._row_to_mod(row) if row else None
-        except sqlite3.OperationalError:
-            return None
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT * FROM mods WHERE unique_name = ?", (unique_name,)).fetchone()
+        return self._row_to_mod(row) if row else None
 
     def fetch_ranked_effects(self, unique_name: str, rank: int) -> list[ModEffect]:
-        try:
-            with closing(self.connect()) as connection:
-                rows = connection.execute(
-                    "SELECT effect_code, effect_value, effect_text, position FROM mod_effects WHERE unique_name = ? AND rank = ? ORDER BY position",
-                    (unique_name, rank),
-                ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                "SELECT effect_code, effect_value, effect_text, position FROM mod_effects WHERE unique_name = ? AND rank = ? ORDER BY position",
+                (unique_name, rank),
+            ).fetchall()
         effects = [self._row_to_effect(row) for row in rows]
         return [effect for effect in effects if usable_direct_effect(unique_name, effect)]
 
@@ -142,11 +141,11 @@ class ModRepository(DatabaseSession):
         keys = list(dict.fromkeys(selections))
         if not keys:
             return {}
-        try:
-            with closing(self.connect()) as connection:
-                return self._fetch_ranked_effects_many(connection, keys)
-        except sqlite3.OperationalError:
-            return {key: [] for key in keys}
+        # A missing row is a valid empty effect set; an SQL failure is not.
+        # Callers must not calculate an apparently valid unmodded result when
+        # the database is locked, incomplete, or unreadable.
+        with closing(self.connect()) as connection:
+            return self._fetch_ranked_effects_many(connection, keys)
 
     def _fetch_ranked_effects_many(self, connection: sqlite3.Connection,
                                    keys: list[tuple[str, int]]) -> dict[tuple[str, int], list[ModEffect]]:

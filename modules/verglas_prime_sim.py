@@ -19,7 +19,8 @@ Weapon model (WARFRAME Wiki, retrieved 2026-10-28):
   (``status_damage.beam_merged_status_chance``), while critical chance stays
   that of a single beam.
 * Fired Up (Sentinel-only): +5% Heat damage per hit, capped at +100% after
-  20 hits, reset after 5 s without a hit. Since Update 34 the bonus "applies
+  20 hits, reset after 5 s without a hit. Damage-over-time ticks from the
+  Sentinel's own attacks also build stacks. Since Update 34 the bonus "applies
   the same way adding a Mod would", so it enters the Heat bracket and the
   Heat DoT's Heat multiplier; it also combines with the weapon's elements.
 * Summoner's Wrath (aura): +75% Companion and Summon damage, additive with
@@ -39,8 +40,9 @@ Deviations, all conservative or documented in ``docs/formula_audit.md``:
 * Punch-through is not simulated: the target is a single dummy, and piercing
   extra bodies only matters against a pack (``Cordon`` clumps). Extra bodies
   do not change this dummy's time to kill.
-* Heat's first-proc "inherit" lock (only the proc's own Heat/faction bracket)
-  is not modelled, because the Verglas is the only Heat source here.
+* Heat's first-proc "inherit" lock is not modelled. Verglas is the only Heat
+  source, but Fired Up changes its Heat bonus during a fight, so the effect
+  of inheritance on this changing bonus remains an unverified limitation.
 * Punch-through, shields, weak points and body parts are out of scope.
 """
 from __future__ import annotations
@@ -54,8 +56,15 @@ from .alternox_prime_sim import load_rifle_riven_averages
 from .calculator import DamageCalculator
 from .constants import FACTION_MULTIPLIERS
 from .crit import crit_multiplier_for_tier, quantize_crit_multiplier
+from .damage_routing import RoutedDamage
 from .enemy_scaling import steel_path_eximus_heavy_gunner, steel_path_heavy_gunner
-from .kuva_nukor_sim import DummyTarget, MagneticSource, roll_multishot
+from .kuva_nukor_sim import (
+    DummyTarget,
+    HeatProc,
+    MagneticBreakProc,
+    MagneticSource,
+    roll_multishot,
+)
 from .models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from .status_damage import heat_tick, wiki_quantized_damage
 from .trial_statistics import sample_percentile
@@ -185,7 +194,12 @@ def verglas_prime_weapon() -> Weapon:
 
 @dataclass(frozen=True)
 class RivenTraits:
-    """Three Riven positives by ``stat_name``, optionally with a curse."""
+    """Three Riven positives by ``stat_name``.
+
+    ``cursed`` identifies a three-positive/one-negative Riven, but the curse
+    itself is not represented. Such a build is rejected by ``build_verglas``
+    rather than granting the larger positives while silently ignoring the malus.
+    """
 
     positives: tuple[str, ...]
     cursed: bool = False
@@ -198,6 +212,10 @@ class RivenTraits:
                    if name not in RIVEN_CODES and name not in COMBINED_RIVEN_FALLBACK]
         if unknown:
             raise ValueError(f"unknown Riven stat names: {unknown}")
+        if len(set(self.positives)) != len(self.positives):
+            raise ValueError("Riven positive traits must be distinct")
+        if sum(stat in COMBINED_RIVEN_FALLBACK for stat in self.positives) > 1:
+            raise ValueError("only one spliced trait can be on a Riven")
 
 
 @dataclass(frozen=True)
@@ -235,9 +253,8 @@ BUILDS: tuple[Loadout, ...] = (
     Loadout("viral_heat", ("Serration", "Split Chamber", "Rime Rounds",
                            "Malignant Force", "Rifle Elementalist", "Hellfire",
                            "Thermite Rounds"), RIVEN_HEAT_MS_CD),
-    # The recommended build: keep the user's +Viral/+Multishot/+Critical Damage
-    # Riven, keep Magnetic for the Overguard break, and spend the eighth slot on
-    # punch-through so a Cordon clump is hit twice by every beam.
+    # A candidate retaining the user's +Viral/+Multishot/+Critical Damage
+    # Riven and adding punch-through. Actual Cordon geometry is not simulated.
     Loadout("final_recommended", _FIXED + ("Hellfire", "Primed Shred"),
             RIVEN_VIRAL_MS_CD),
 )
@@ -340,10 +357,10 @@ class VerglasBuild:
 
     @property
     def headroom_bodies(self) -> int:
-        """Extra bodies one beam can pierce (wiki: 1.2 m per body).
+        """Rough extra-body estimate using 1.2 m per body, not a guarantee.
 
-        Reported for completeness only; the simulated target is a single
-        dummy, so punch-through does not change its time to kill.
+        Enemy hitboxes vary; the simulated target is a single dummy, so no
+        punch-through geometry or additional targets affect its time to kill.
         """
         return max(0, math.floor((self.punch_through + PUNCH_THROUGH) / 1.2))
 
@@ -376,7 +393,17 @@ class VerglasBuild:
 
 
 def build_verglas(loadout: Loadout) -> VerglasBuild:
-    """Resolve one loadout, rejecting proc types this model does not cover."""
+    """Resolve one loadout, rejecting unsupported or impossible inputs."""
+    if loadout.riven.cursed:
+        raise ValueError("cursed Riven negative effects are not modelled")
+    if len(loadout.mods) > 7:  # the required Riven occupies one weapon slot
+        raise ValueError("the Riven plus weapon mods must fit in eight slots")
+    if len(set(loadout.mods)) != len(loadout.mods):
+        raise ValueError("a weapon cannot equip the same mod more than once")
+    for incompatible in ({"Critical Delay", "Point Strike"},
+                         {"Split Chamber", "Galvanized Chamber"}):
+        if incompatible <= set(loadout.mods):
+            raise ValueError(f"incompatible weapon mods: {', '.join(sorted(incompatible))}")
     effects = _static_effects(loadout)
     hud_full = _hud_by_type(loadout, fired_up_heat=FIRED_UP_STEP * FIRED_UP_MAX_STACKS)
     hud_zero = _hud_by_type(loadout, fired_up_heat=0.0)
@@ -468,9 +495,16 @@ def simulate(build: VerglasBuild,
     rng = random.Random(seed)
     dt = 1.0 / build.fire_rate
     gunner_types = FACTION_MULTIPLIERS["Grineer"]
+    status_damage_bonus = build.effects.get("STATUS_DAMAGE", 0.0)
+    duration_multiplier = 1.0 + build.effects.get("STATUS_DURATION", 0.0)
+    proc_duration = PROC_DURATION * duration_multiplier
+    heat_strip_interval = HEAT_STRIP_INTERVAL * duration_multiplier
     magnetic_source = MagneticSource(
-        status_damage_bonus=RIFLE_ELEMENTALIST_SD,
+        status_damage_bonus=status_damage_bonus,
         faction_bonus=build.faction_bonus,
+        # Electricity bonuses still apply when combined into Magnetic.
+        electricity_bonus=build.effects.get("ELEC", 0.0),
+        duration_multiplier=duration_multiplier,
     )
     ammo = float(MAGAZINE)
     now = 0.0
@@ -482,40 +516,70 @@ def simulate(build: VerglasBuild,
     buckets = {"direct_og": 0.0, "direct_hp": 0.0, "dot_og": 0.0,
                "dot_hp": 0.0, "break": 0.0}
     log: list[str] = []
+    # A supplied target can already carry someone else's statuses. Keep
+    # references to our own procs so only our DoT ticks build Fired Up.
+    own_heat: dict[int, HeatProc] = {}
+    own_electric: dict[int, MagneticBreakProc] = {}
+
+    def register_fired_up_hit(when: float) -> None:
+        nonlocal stacks, peak_stacks, last_hit
+        if last_hit is not None and when - last_hit >= FIRED_UP_RESET:
+            stacks = 0
+        previous = stacks
+        stacks = min(FIRED_UP_MAX_STACKS, stacks + 1)
+        peak_stacks = max(peak_stacks, stacks)
+        last_hit = when
+        if trace and previous < FIRED_UP_MAX_STACKS == stacks:
+            log.append(f"  t={when:7.2f}s Fired Up capped (+100% Heat)")
 
     def process_magnetic(when: float) -> None:
-        target.prune(when, PROC_DURATION)
-        for _, result in target.process_magnetic_electric_until(
-                when, HEAT_STRIP_INTERVAL, faction_type_modifiers=gunner_types):
-            buckets["break"] += result.health
+        target.prune(when, proc_duration)
+        while target.health > 0 and target.next_magnetic_electric_tick() <= when:
+            tick_at = target.next_magnetic_electric_tick()
+            own_tick = any(id(proc) in own_electric and proc.next_tick == tick_at
+                           for proc in target.magnetic_break_procs)
+            for _, result in target.process_magnetic_electric_until(
+                    tick_at, heat_strip_interval, faction_type_modifiers=gunner_types):
+                buckets["break"] += result.health
+                if own_tick and (result.overguard > 0 or result.health > 0):
+                    register_fired_up_hit(tick_at)
 
-    def route(damage: dict[str, float], when: float, category: str) -> None:
-        target.prune(when, PROC_DURATION)
-        result = target.absorb(damage, when, HEAT_STRIP_INTERVAL,
+    def route(damage: dict[str, float], when: float, category: str) -> RoutedDamage:
+        target.prune(when, proc_duration)
+        previous_break_procs = len(target.magnetic_break_procs)
+        result = target.absorb(damage, when, heat_strip_interval,
                                faction_type_modifiers=gunner_types)
         buckets[category + "_og"] += result.overguard
         buckets[category + "_hp"] += result.health
         if result.broke_overguard:
+            if (target.magnetic_source is magnetic_source
+                    and len(target.magnetic_break_procs) > previous_break_procs):
+                proc = target.magnetic_break_procs[-1]
+                own_electric[id(proc)] = proc
             if trace:
                 log.append(f"  t={when:6.2f}s Overguard broke "
                            f"(magnetic x{target.mag_stacks(when)})")
             process_magnetic(when)
+        return result
 
     def heat_tick_at(when: float) -> None:
-        ready = target.consume_heat_tick(when, PROC_DURATION)
+        ready = target.consume_heat_tick(when, proc_duration)
         if not ready:
             return
         # Each proc folded its own (1 + Heat bonus) and critical multiplier
         # into its seed, so one consolidated tick uses the shared accumulator.
         weighted = sum(proc.seed * proc.crit_factor for proc in ready)
-        route({"HEAT": heat_tick(weighted,
-                                 faction_bonus=build.faction_bonus,
-                                 status_damage_bonus=RIFLE_ELEMENTALIST_SD,
-                                 accumulator=True)}, when, "dot")
+        result = route({"HEAT": heat_tick(weighted,
+                                          faction_bonus=build.faction_bonus,
+                                          status_damage_bonus=status_damage_bonus,
+                                          accumulator=True)}, when, "dot")
+        if (any(id(proc) in own_heat for proc in ready)
+                and (result.overguard > 0 or result.health > 0)):
+            register_fired_up_hit(when)
 
     def advance_events(until: float) -> float | None:
         while target.health > 0:
-            next_heat = target.next_heat_tick(PROC_DURATION)
+            next_heat = target.next_heat_tick(proc_duration)
             next_electric = target.next_magnetic_electric_tick()
             event = min(next_heat, next_electric)
             if event > until:
@@ -548,13 +612,8 @@ def simulate(build: VerglasBuild,
             now = death_time
             break
 
-        # Fired Up: one stack per hit, reset after a 5 s gap without a hit.
-        if last_hit is not None and now - last_hit > FIRED_UP_RESET:
-            stacks = 0
-        stacks = min(FIRED_UP_MAX_STACKS, stacks + 1)
-        peak_stacks = max(peak_stacks, stacks)
-        last_hit = now
-        ramp = stacks / FIRED_UP_MAX_STACKS
+        # Both weapon hits and the weapon's DoT ticks build Fired Up.
+        register_fired_up_hit(now)
 
         beams = build.multishot_beams(rng)
         crit = _crit_factor(rng, build, target, now)
@@ -582,31 +641,36 @@ def simulate(build: VerglasBuild,
         for ptype in rng.choices(kinds, weights=weights, k=n_procs):
             if target.health <= 0:
                 break
-            target.record_status(ptype, now, PROC_DURATION)
             counts[ptype] += 1
             if ptype == "HEAT":
-                target.add_heat(now, seed_damage, crit, PROC_DURATION)
+                target.record_status(ptype, now, proc_duration)
+                target.add_heat(now, seed_damage, crit, proc_duration)
+                if len(target.heat_procs) == 1:
+                    own_heat.clear()  # a new group replaced expired procs
+                proc = target.heat_procs[-1]
+                own_heat[id(proc)] = proc
             elif ptype == "VIRAL":
-                target.viral_expiries.append(now + PROC_DURATION)
+                target.record_status(ptype, now, proc_duration)
+                target.viral_expiries.append(now + proc_duration)
                 target.viral_expiries = target.viral_expiries[-VIRAL_MAG_CAP:]
             elif ptype == "MAG":
-                target.add_magnetic(now, PROC_DURATION, magnetic_source)
+                target.add_magnetic(now, proc_duration, magnetic_source)
             elif ptype == "COLD":
-                target.add_cold(now, PROC_DURATION)
+                # add_cold owns status bookkeeping and rejects applications
+                # during Freeze; a generic refresh here would bypass it.
+                target.add_cold(now, proc_duration)
 
         if trace and attacks % max(1, int(trace_interval_s * build.fire_rate)) == 0:
             log.append(
                 f"  t={now:7.2f}s og={max(target.overguard, 0):9.0f} "
                 f"hp={max(target.health, 0):10.0f} "
-                f"armor={target.current_armor(now, HEAT_STRIP_INTERVAL):7.0f} "
+                f"armor={target.current_armor(now, heat_strip_interval):7.0f} "
                 f"heat={len(target.heat_procs):3d} "
                 f"viral={target.viral_stacks(now):2d} "
                 f"mag={target.mag_stacks(now):2d} fired_up={stacks:2d}")
 
         if target.health <= 0:
             break
-        if trace and ramp < 1.0 and stacks == FIRED_UP_MAX_STACKS:
-            log.append(f"  t={now:7.2f}s Fired Up capped (+100% Heat)")
         now += dt
 
     if target.health > 0 and now >= max_time:
@@ -627,7 +691,7 @@ def simulate(build: VerglasBuild,
         cold_procs=counts["COLD"],
         fired_up_peak=peak_stacks,
         final_armor=target.current_armor(ttk if math.isfinite(ttk) else now,
-                                         HEAT_STRIP_INTERVAL),
+                                         heat_strip_interval),
         direct_to_overguard=buckets["direct_og"],
         direct_to_health=buckets["direct_hp"],
         dot_to_overguard=buckets["dot_og"],
@@ -716,16 +780,16 @@ def main() -> None:
               f"{summary['timeouts']:3d} "
               f"{summary['final_armor_median']:6.0f}")
     if len(keys) > 1:
-        print("\nhealth damage, median of the killed trials (the shared "
-              "Overguard-break Electricity burst compresses TTK differences):")
+        print("\nhealth damage, medians of the killed trials "
+              "(direct+Heat is the sum of component medians):")
         print(f"{'build':26s} {'direct':>10s} {'Heat DoT':>10s} "
-              f"{'break':>11s} {'gun only':>10s}")
+              f"{'break':>11s} {'direct+Heat':>11s}")
         for key in keys:
             summary = summaries[key]
             gun = summary["direct_health_median"] + summary["dot_health_median"]
             print(f"{key:26s} {summary['direct_health_median']:10,.0f} "
                   f"{summary['dot_health_median']:10,.0f} "
-                  f"{summary['break_electric_median']:11,.0f} {gun:10,.0f}")
+                  f"{summary['break_electric_median']:11,.0f} {gun:11,.0f}")
     if len(keys) == 1:
         build = built[keys[0]]
         summary = summaries[keys[0]]
@@ -738,8 +802,9 @@ def main() -> None:
         print(f"  multishot {build.multishot:.2f} x {build.fire_rate:.2f}/s, "
               f"crit {build.crit_chance:.0%} of {build.crit_multiplier:.2f}x, "
               f"status {build.status_chance:.0%}/beam, "
-              f"PT {build.punch_through:.1f} m ({build.headroom_bodies} extra bodies)")
-        print(f"\nhealth damage, median of {summary['kills']} kills: "
+              f"PT {build.punch_through:.1f} m "
+              f"(~{build.headroom_bodies} extra bodies using 1.2 m/body; hitboxes vary)")
+        print(f"\nhealth damage, component medians of {summary['kills']} kills: "
               f"direct {summary['direct_health_median']:,.0f} + Heat DoT "
               f"{summary['dot_health_median']:,.0f} + Overguard-break Electricity "
               f"{summary['break_electric_median']:,.0f}")

@@ -7,7 +7,10 @@ so the text below the rendered article was reviewed as well. This file records
 *what* the wiki says, *where* the repository implements it, and whether the two
 agree. It is an audit trail, not a claim that the models match the game:
 nothing here was measured in-game, and several wiki pages carry "actively being
-worked on" banners.
+worked on" banners. A focused 2026-10-29 follow-up rechecked Cold, Magnetic,
+Heat, Heat Inherit, Fired Up, Sirocco, Verglas Prime, Continuous Weapon, Punch
+Through, Riven Splicer and relevant mod compatibility; corrections and remaining
+uncertainties are noted below and in the [formula audit](formula_audit.md).
 
 Companion documents:
 
@@ -108,7 +111,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
 | Corrosive strip is **multiplicative** with Heat strip and Corrosive Projection: `(1 − 50%)·[1 − (20% + 6%·n)]·(1 − 18%·projections)` | Damage/Corrosive_Damage | `JatTarget.current_armor` (heat ramp × `corrosive_armor_factor`); Corrosive Projection is in no bundled build | match |
 | Puncture 10 s, 5 stacks, +5 flat critical chance per stack (max +25%), not on AoE | Damage/Puncture_Damage | `DummyTarget.add_puncture` | match |
 | Puncture's flat critical chance only matters where a build actually deals Puncture: the Jat Kittag slam build is Blast + Gas + Toxin and rolls no Puncture procs, so `jat_kittag_sim` needs no term for it | Damage/Puncture_Damage | `ocucor_sim`, `kuva_nukor_sim` (`add_puncture`) | match (n/a for the slam build) |
-| Cold +0.10x critical damage, +0.05x per stack, +1.0x frozen, 4-stack cap under Overguard | Damage/Cold_Damage | `crit.cold_crit_damage_bonus`, `DummyTarget.add_cold` / `crit_damage_multiplier` | match (every simulator now reads the target's Cold stacks when it builds a crit factor) |
+| Cold +0.10x critical damage, +0.05x per stack, +1.0x frozen, 4-stack cap under Overguard; 10 stacks freeze for half status duration then leave 3 | Damage/Cold_Damage | `crit.cold_crit_damage_bonus`, `DummyTarget.add_cold` / `crit_damage_multiplier` | match for caps, Freeze and critical bonus; post-Freeze stack expiry is an approximation |
 | Viral/Magnetic `2 + 0.25·(stacks − 1)`, 10-stack cap | Damage/Viral_Damage, /Magnetic_Damage | `damage_routing.status_vulnerability` | match |
 | Magnetic break: 3% of max defense per stack over 6 s; Status Damage and faction twice, Electricity once | Damage/Magnetic_Damage | `status_damage.magnetic_break_electric_tick` | match |
 | DoT ticks are amplified by live Viral, not double-dipped | Damage/Viral_Damage | `damage_routing` (applies Viral once to health) | match |
@@ -277,20 +280,24 @@ a place where "follow the wiki" is not a single instruction.
    target from its own explosion.
 6. **Cold critical damage (modelled).** `DummyTarget.crit_damage_multiplier`
    adds `crit.cold_crit_damage_bonus` to the build's Critical Damage before the
-   tier, and every simulator builds its crit factor from it. No bundled build
-   leaves Cold as a standalone proc (cold always merges into
-   Viral/Blast/Magnetic), so the term is zero unless a target is primed with
-   Cold, which the `COLD` branch in `alternox_prime_sim` and the Cold tests
-   exercise. Freeze's bonus is deliberately not applied to the Akarius radial
-   Blast instance, matching the wiki's AoE exclusion.
+   tier, and every simulator builds its crit factor from it. Many bundled
+   builds combine Cold into another element, but primed targets and custom
+   Cold-capable builds exercise the bonus. At ten stacks Freeze lasts half the
+   status duration, blocks refresh/reapplication and leaves three stacks on
+   thaw. The Wiki does not specify residual-stack expiry, so the freezing
+   application's original expiry is used as an approximation. Freeze's bonus
+   is deliberately not applied to the Akarius radial Blast instance, matching
+   the wiki's AoE exclusion.
 7. **Blast and Cold are excluded from AoE damage.** Cold's Freeze bonus is
    opted out of the Akarius radial Blast instance, but the simulators still
    apply weapon-wide multipliers to radial Blast damage. That is the same thing
    for a single-target radial and not for the penalty/benefit rules on AoE
    critical additions, which remain unmodelled.
-8. **Heat inherit across sources** (first-proc Heat percentage and faction
-   modifiers applying to later stacks) is only partially modeled: each
-   simulator uses one weapon, so cross-source inheritance cannot occur.
+8. **Heat inherit** (first-proc Heat percentage and faction modifiers applying
+   to later stacks) is not fully modeled. Cross-source effects are out of
+   scope; the same source can also change its elemental bonus during a fight,
+   as Verglas does with Fired Up. The appropriate inheritance for that dynamic
+   case is not established here and is not simulated as a first-proc lock.
 9. **Binary32.** `Damage/Calculation`, `Enemy_Level_Scaling`, `Critical_Hit`
    and the Eximus tables specify binary32 ordering. Python uses binary64; the
    infobox parity is achieved by rounding health/shields to two decimals and
@@ -410,7 +417,7 @@ the expressions below were compared term by term with the code.
 | `Damage_over_Time` §Calculating | `Total Ticks = ⌊Tick Rate × (Duration − Delay)⌋ + 1`, first tick at t = 0 for no-delay effects | `status_damage.total_ticks` | match |
 | `Damage/Heat_Damage` §Damage Over Time | `0.5 × Modded Base × (1 + Heat) × (1 + Faction) × (1 + Status Damage) × Additional`, faction applied twice | `status_damage.heat_tick` via `proc_tick_damage` | match, **except** the accumulator `+1` (see the conflict below) |
 | `Damage/Heat_Damage` §Armor Stripping | 15 / 30 / 40 / 50% every 0.5 s after the proc (2 s to cap, not accelerated by more procs), restore 50 / 40 / 30 / 15 / 0% every 1.5 s | `kuva_nukor_sim._heat_strip_fraction`, `DummyTarget.current_armor` | match |
-| `Damage/Heat_Damage` §Heat Inherit | one consolidated pulse per second; new procs refresh **all** stacks; the first proc's elemental/faction modifiers govern later stacks | `DummyTarget.add_heat` / `consume_heat_tick` / `next_heat_tick` | match within one weapon (§4.8: cross-source inherit not modelled) |
+| `Damage/Heat_Damage` §Heat Inherit | one consolidated pulse per second; new procs refresh **all** stacks; the first proc's elemental/faction modifiers govern later stacks | `DummyTarget.add_heat` / `consume_heat_tick` / `next_heat_tick` | pulse and refresh modeled; first-proc lock is not modeled for multiple sources or changing same-source buffs (§4.8) |
 | `Damage/Viral_Damage` §General | `Modded Damage × [2 + 0.25 × (stacks − 1)]`, cap 325% at 10 stacks, health only, applied to DoT ticks live at the tick | `damage_routing.status_vulnerability`, `route_enemy_hit` | match |
 | `Damage/Magnetic_Damage` §General | same `[2 + 0.25 × (stacks − 1)]` for Shields/Overguard; break deals `3%` of max defense per stack (max 30%) as Electricity over 6 s | `status_vulnerability`, `status_damage.magnetic_break_electric_tick` | match |
 | `Overguard` §Mechanics | neutral to every type except Void `+50%`; no armor mitigation; Magnetic amplifies it; break Electric seed as above | `damage_routing` (`VOID_OVERGUARD_MULTIPLIER`, faction type table skipped on the layer) | match |

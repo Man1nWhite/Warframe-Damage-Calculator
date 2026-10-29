@@ -226,6 +226,35 @@ class SimulationTests(unittest.TestCase):
         self.assertGreaterEqual(result2.reloads, 1)
 
 
+class ColdCriticalDamageTests(unittest.TestCase):
+    @staticmethod
+    def target(with_cold: bool) -> DummyTarget:
+        target = DummyTarget(10**9, 0, 0)
+        if with_cold:
+            target.add_cold(0, 6)
+        else:
+            # Same GunCO status count, but no Cold critical-damage bonus.
+            target.record_status("TEST_STATUS", 0, 6)
+        return target
+
+    def test_single_target_cold_increases_the_crit_not_just_gunco(self) -> None:
+        build = build_ocucor(ARCANE_ENERVATE, "Multishot")
+        plain = simulate(build, self.target(False), seed=7, max_time=0.001)
+        cold = simulate(build, self.target(True), seed=7, max_time=0.001)
+        self.assertEqual((plain.ticks, cold.ticks), (1, 1))
+        self.assertGreater(cold.direct_to_health, plain.direct_to_health)
+
+    def test_room_target_cold_increases_the_crit_not_just_gunco(self) -> None:
+        def damage(with_cold: bool) -> float:
+            target = self.target(with_cold)
+            result = simulate_room(ARCANE_ENERVATE, "Multishot", 1, seed=7,
+                                   max_time=0.001, factory=lambda: target)
+            self.assertEqual(result.n_enemies, 1)
+            return target.max_health - target.health
+
+        self.assertGreater(damage(True), damage(False))
+
+
 class RoomSimTests(unittest.TestCase):
     def test_single_target_room_spawns_no_tendrils(self) -> None:
         result = simulate_room(ARCANE_ENERVATE, "Damage", 1, seed=4)

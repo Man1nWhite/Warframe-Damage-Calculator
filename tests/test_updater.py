@@ -131,6 +131,60 @@ class UpdaterTests(unittest.TestCase):
                 self.updater._expand_lzma(source, self.paths["temp"])
             self.assertFalse(output.exists())
 
+    def test_download_does_not_compare_decoded_body_to_content_length(self) -> None:
+        class EncodedResponse:
+            headers = {"Content-Length": "4", "Content-Encoding": "gzip"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def iter_content(chunk_size: int):
+                yield b"decoded body"
+
+        target = self.paths["temp"] / "download.json"
+        with patch("modules.updater.requests.get", return_value=EncodedResponse()):
+            self.assertEqual(self.updater._download("https://example.invalid/file", target), 12)
+        self.assertEqual(target.read_bytes(), b"decoded body")
+
+    def test_download_rejects_an_oversized_decoded_body_and_removes_partial_file(self) -> None:
+        class OversizedResponse:
+            headers = {"Content-Length": "1"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def iter_content(chunk_size: int):
+                yield b"more bytes than allowed"
+
+        target = self.paths["temp"] / "too-large.bin"
+        with patch("modules.updater.MAX_DOWNLOAD_BYTES", 8), \
+             patch("modules.updater.requests.get", return_value=OversizedResponse()) as get:
+            with self.assertRaisesRegex(DataRefreshError, "safety limit"):
+                self.updater._download("https://example.invalid/file", target)
+        self.assertEqual(get.call_count, 3)  # transient failures retain retry behavior
+        self.assertFalse(target.exists())
+
+    def test_manifest_decompression_stops_at_the_output_limit(self) -> None:
+        bomb = lzma.compress(b"x" * 4_000_000, format=lzma.FORMAT_XZ)
+        with self.assertRaisesRegex(lzma.LZMAError, "safety limit"):
+            self.updater._decompress_lzma_streams(bomb, max_output_bytes=1024)
+
     def test_refresh_does_not_delete_unrelated_temporary_files(self) -> None:
         sentinel = self.paths["temp"] / "other-session.txt"
         sentinel.write_text("keep me", encoding="utf-8")
@@ -162,7 +216,145 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT weapon FROM weapons").fetchone()[0], "Old Weapon")
             self.assertEqual(connection.execute("SELECT name FROM mods").fetchone()[0], "Old Mod")
 
-    def test_second_publication_failure_restores_first_and_falls_back(self) -> None:
+    def test_failed_refresh_does_not_overwrite_a_concurrent_user_edit_during_rollback(self) -> None:
+        real_replace = os.replace
+        user_bytes = b"user changed this file during publication"
+
+        def edit_then_fail(source, destination):
+            if Path(source).name == UPGRADES and Path(destination) == self.upgrades:
+                self.upgrades.write_bytes(user_bytes)
+                raise OSError("publication stopped")
+            return real_replace(source, destination)
+
+        with patch.object(self.updater, "_download", side_effect=self.download_fixture), \
+             patch("modules.updater.os.replace", side_effect=edit_then_fail), \
+             patch("modules.importer.build_database") as build:
+            with self.assertRaises(DataRefreshRecoveryError):
+                self.updater.update_and_build_database(self.root / "failed.db", self.weapons, self.upgrades)
+        build.assert_not_called()
+        self.assertEqual(self.upgrades.read_bytes(), user_bytes)
+        stages = list(self.paths["source"].glob(".wdc-refresh-*"))
+        self.assertEqual(len(stages), 1)
+        self.assertTrue((stages[0] / "PUBLISHING.json").is_file())
+        self.assertEqual((stages[0] / ("previous-" + UPGRADES)).read_bytes(), self.old_bytes[1])
+
+    def test_refresh_refuses_same_size_same_mtime_edit_while_downloading(self) -> None:
+        user_bytes = b"U" * len(self.old_bytes[0])
+        original_stat = self.weapons.stat()
+        real_download = self.download_fixture
+
+        def edit_during_download(url: str, target: Path, min_expected_size: int = 0) -> int:
+            result = real_download(url, target, min_expected_size)
+            if target.name == "ExportUpgrades_en.json":
+                self.weapons.write_bytes(user_bytes)
+                os.utime(self.weapons, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+            return result
+
+        with patch.object(self.updater, "_download", side_effect=edit_during_download), \
+             patch("modules.importer.build_database") as build:
+            with self.assertRaisesRegex(DataRefreshRecoveryError, "changed while fresh data was downloading"):
+                self.updater.update_and_build_database(self.root / "race.db", self.weapons, self.upgrades)
+        build.assert_not_called()
+        self.assertEqual(self.weapons.stat().st_size, original_stat.st_size)
+        self.assertEqual(self.weapons.stat().st_mtime_ns, original_stat.st_mtime_ns)
+        self.assertEqual(self.weapons.read_bytes(), user_bytes)
+        self.assertEqual(self.upgrades.read_bytes(), self.old_bytes[1])
+        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
+        self.assertFalse((self.root / "race.db").exists())
+
+    def test_refresh_refuses_a_new_export_created_while_downloading(self) -> None:
+        self.upgrades.unlink()
+        user_bytes = b"new file created by another process"
+        real_download = self.download_fixture
+
+        def create_during_download(url: str, target: Path, min_expected_size: int = 0) -> int:
+            result = real_download(url, target, min_expected_size)
+            if target.name == "ExportUpgrades_en.json":
+                self.upgrades.write_bytes(user_bytes)
+            return result
+
+        with patch.object(self.updater, "_download", side_effect=create_during_download):
+            with self.assertRaisesRegex(DataRefreshRecoveryError, "changed while fresh data was downloading"):
+                self.updater.refresh()
+        self.assertEqual(self.upgrades.read_bytes(), user_bytes)
+        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
+
+    def test_refresh_does_not_clobber_a_file_created_during_publication(self) -> None:
+        self.upgrades.unlink()
+        user_bytes = b"user created the previously absent export"
+        real_replace = os.replace
+
+        def create_after_first(source, destination):
+            result = real_replace(source, destination)
+            if Path(destination) == self.weapons:
+                self.upgrades.write_bytes(user_bytes)
+            return result
+
+        with patch.object(self.updater, "_download", side_effect=self.download_fixture), \
+             patch("modules.updater.os.replace", side_effect=create_after_first):
+            with self.assertRaises(DataRefreshRecoveryError):
+                self.updater.refresh()
+        self.assertEqual(self.upgrades.read_bytes(), user_bytes)
+        stages = list(self.paths["source"].glob(".wdc-refresh-*"))
+        self.assertEqual(len(stages), 1)
+        marker = json.loads((stages[0] / "PUBLISHING.json").read_text(encoding="utf-8"))
+        self.assertIsNone(next(row for row in marker["archives"]
+                               if row["destination"] == UPGRADES)["previous_copy"])
+
+    def test_refresh_publishes_a_missing_destination_without_clobbering(self) -> None:
+        self.upgrades.unlink()
+        with patch.object(self.updater, "_download", side_effect=self.download_fixture):
+            self.updater.refresh()
+        with zipfile.ZipFile(self.weapons) as archive:
+            self.assertEqual(json.loads(archive.read(WEAPONS_MEMBER))["ExportWeapons"][0]["name"], "New Weapon")
+        with zipfile.ZipFile(self.upgrades) as archive:
+            self.assertEqual(json.loads(archive.read(UPGRADES_MEMBER))["ExportUpgrades"][0]["name"], "New Mod")
+        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
+
+    def test_missing_destination_without_hardlink_support_is_guarded(self) -> None:
+        self.upgrades.unlink()
+        with patch.object(self.updater, "_download", side_effect=self.download_fixture), \
+             patch("modules.updater.os.link", side_effect=OSError("hard links unavailable")), \
+             patch("modules.importer.build_database") as build:
+            with self.assertRaisesRegex(DataRefreshRecoveryError, "hard links unavailable"):
+                self.updater.update_and_build_database(self.root / "failed.db", self.weapons, self.upgrades)
+        build.assert_not_called()
+        self.assertFalse(self.upgrades.exists())
+        stages = list(self.paths["source"].glob(".wdc-refresh-*"))
+        self.assertEqual(len(stages), 1)
+        self.assertTrue((stages[0] / "PUBLISHING.json").is_file())
+        self.assertEqual((stages[0] / ("previous-" + WEAPONS)).read_bytes(), self.old_bytes[0])
+
+    def test_refresh_refuses_to_replace_a_saved_export_symlink(self) -> None:
+        linked = self.paths["source"] / "user-weapons.zip"
+        self.weapons.rename(linked)
+        try:
+            self.weapons.symlink_to(linked.name)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation is unavailable on this platform")
+        with patch.object(self.updater, "_download", side_effect=self.download_fixture):
+            with self.assertRaisesRegex(DataRefreshError, "(?i)symlink|symbolic"):
+                self.updater.refresh()
+        self.assertTrue(self.weapons.is_symlink())
+        self.assertEqual(linked.read_bytes(), self.old_bytes[0])
+        self.assertEqual(self.upgrades.read_bytes(), self.old_bytes[1])
+        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
+
+    def test_refresh_refuses_to_replace_a_dangling_export_symlink(self) -> None:
+        self.weapons.unlink()
+        try:
+            self.weapons.symlink_to("missing-user-weapons.zip")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation is unavailable on this platform")
+        with patch.object(self.updater, "_download", side_effect=self.download_fixture):
+            with self.assertRaisesRegex(DataRefreshError, "(?i)symlink|symbolic"):
+                self.updater.refresh()
+        self.assertTrue(self.weapons.is_symlink())
+        self.assertFalse((self.paths["source"] / "missing-user-weapons.zip").exists())
+        self.assertEqual(self.upgrades.read_bytes(), self.old_bytes[1])
+        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
+
+    def test_second_publication_failure_retains_copies_and_refuses_fallback(self) -> None:
         real_replace = os.replace
         def fail_second(source, destination):
             if Path(source).name == UPGRADES and Path(destination) == self.upgrades:
@@ -170,17 +362,21 @@ class UpdaterTests(unittest.TestCase):
             return real_replace(source, destination)
 
         with patch.object(self.updater, "_download", side_effect=self.download_fixture), \
-             patch("modules.updater.os.replace", side_effect=fail_second):
-            result = self.updater.update_and_build_database(
-                self.root / "fallback.db", self.weapons, self.upgrades)
-        self.assertEqual(result["source_mode"], "saved local exports")
-        self.assertIn("second replace failed", result["refresh_error"])
-        self.assertEqual((self.weapons.read_bytes(), self.upgrades.read_bytes()), self.old_bytes)
-        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
-        with closing(sqlite3.connect(self.root / "fallback.db")) as connection, connection:
-            self.assertEqual(connection.execute("SELECT weapon FROM weapons").fetchone()[0], "Old Weapon")
+             patch("modules.updater.os.replace", side_effect=fail_second), \
+             patch("modules.importer.build_database") as build:
+            with self.assertRaisesRegex(DataRefreshRecoveryError, "second replace failed"):
+                self.updater.update_and_build_database(
+                    self.root / "fallback.db", self.weapons, self.upgrades)
+        build.assert_not_called()
+        stages = list(self.paths["source"].glob(".wdc-refresh-*"))
+        self.assertEqual(len(stages), 1)
+        self.assertTrue((stages[0] / "PUBLISHING.json").is_file())
+        self.assertEqual((stages[0] / ("previous-" + WEAPONS)).read_bytes(), self.old_bytes[0])
+        self.assertEqual((stages[0] / ("previous-" + UPGRADES)).read_bytes(), self.old_bytes[1])
+        self.assertEqual(self.upgrades.read_bytes(), self.old_bytes[1])
+        self.assertFalse((self.root / "fallback.db").exists())
 
-    def test_interrupt_after_replacement_restores_the_old_pair(self) -> None:
+    def test_interrupt_after_replacement_retains_copies_and_blocks_import(self) -> None:
         real_replace = os.replace
         def interrupt_after_first(source, destination):
             result = real_replace(source, destination)
@@ -192,23 +388,31 @@ class UpdaterTests(unittest.TestCase):
              patch("modules.updater.os.replace", side_effect=interrupt_after_first):
             with self.assertRaises(KeyboardInterrupt):
                 self.updater.refresh()
-        self.assertEqual((self.weapons.read_bytes(), self.upgrades.read_bytes()), self.old_bytes)
-        self.assertEqual(list(self.paths["source"].glob(".wdc-refresh-*")), [])
+        stages = list(self.paths["source"].glob(".wdc-refresh-*"))
+        self.assertEqual(len(stages), 1)
+        self.assertTrue((stages[0] / "PUBLISHING.json").is_file())
+        self.assertEqual((stages[0] / ("previous-" + WEAPONS)).read_bytes(), self.old_bytes[0])
+        self.assertEqual((stages[0] / ("previous-" + UPGRADES)).read_bytes(), self.old_bytes[1])
+        self.assertEqual(self.upgrades.read_bytes(), self.old_bytes[1])
+        from modules.export_safety import UnfinishedExportPublication, require_complete_exports
+        with self.assertRaises(UnfinishedExportPublication):
+            require_complete_exports(self.weapons, self.upgrades)
 
-    def test_failed_rollback_retains_backups_and_never_builds_a_mixed_pair(self) -> None:
+    def test_failed_publication_retains_backups_and_never_builds_a_mixed_pair(self) -> None:
         real_replace = os.replace
-        def fail_publish_and_restore(source, destination):
-            if ((Path(source).name == UPGRADES and Path(destination) == self.upgrades)
-                    or Path(source).name.startswith("restore-")):
+        def fail_publish(source, destination):
+            if Path(source).name == UPGRADES and Path(destination) == self.upgrades:
                 raise OSError("simulated failure")
             return real_replace(source, destination)
 
         with patch.object(self.updater, "_download", side_effect=self.download_fixture), \
-             patch("modules.updater.os.replace", side_effect=fail_publish_and_restore), \
+             patch("modules.updater.os.replace", side_effect=fail_publish) as replaces, \
              patch("modules.importer.build_database") as build:
             with self.assertRaises(DataRefreshRecoveryError) as raised:
                 self.updater.update_and_build_database(self.root / "fallback.db", self.weapons, self.upgrades)
         build.assert_not_called()
+        self.assertTrue(all(not Path(call.args[0]).name.startswith("restore-")
+                            for call in replaces.call_args_list))
         stages = list(self.paths["source"].glob(".wdc-refresh-*"))
         self.assertEqual(len(stages), 1)
         self.assertIn(str(stages[0]), str(raised.exception))
@@ -298,6 +502,13 @@ with patch("modules.updater.os.replace", side_effect=replace_then_exit):
         payload["ExportWeapons"][0]["description"] = "Line one  \n  Line two"
         path.write_text(json.dumps(payload), encoding="utf-8")
         self.assertEqual(self.updater._clean_json(path), payload)
+
+    def test_json_cleaning_rejects_duplicate_keys_at_any_depth(self) -> None:
+        path = self.paths["temp"] / "duplicate.json"
+        path.write_text('{"ExportWeapons": [{"name": "first", "name": "second"}]}',
+                        encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "duplicate key 'name'"):
+            self.updater._clean_json(path)
 
     def test_json_cleaning_rejects_invalid_utf8(self) -> None:
         path = self.paths["temp"] / "ExportWeapons_en.json"

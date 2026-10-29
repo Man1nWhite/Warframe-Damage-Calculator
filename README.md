@@ -27,10 +27,12 @@ itself needs network access:
   exactly which numbers appeared or disappeared.
 - **A behaviour-neutral optimisation gate.** The simulators are the slowest
   part of the tree, and every published figure is seeded model output.
-  `tools/bench_models.py --snapshot` / `--check` hashes the complete trial
-  records of all five simulators, so a speed change can be shown to leave results
-  bit-identical; [`docs/optimization_review.md`](docs/optimization_review.md)
-  records the timings and the opportunities that were deliberately left.
+  `tools/bench_models.py --snapshot` / `--check` hashes complete fixed-seed
+  trial records from all six simulators and the scalar slam-count model, so a
+  speed change can be checked for bit-identical results in those scenarios.
+  Adding Verglas changes the digest: take a new reference before optimizing;
+  older snapshots are not comparable. [`docs/optimization_review.md`](docs/optimization_review.md)
+  records the timings and opportunities that were deliberately left.
 - **Exact numbers under test.** The suite pins worked examples and regressions
   (armor reduction, 32-quantization, DoT ticks, crit tiers, Cold/Blast stack
   caps, Riven values, Condition Overload) instead of asserting that "something
@@ -116,7 +118,26 @@ The bundled player Grimoire export, for example, lists 150 Electricity: the
 [Wiki](https://wiki.warframe.com/w/Grimoire) separates its primary attack into
 100 direct plus 50 radial damage. WDC currently treats that 150 as one hit;
 it does not model the separate hits, radial falloff, or alternate fire. This
-limitation also applies to other aggregated attack rows.
+limitation also applies to other aggregated attack rows. When the exported base
+amount exceeds the supported damage components, the result includes a warning
+that its totals are incomplete. For example, Shadow Clones' exported Finisher
+damage is not modeled; it is not silently treated as Void or True damage.
+The comparison dialog shows these warnings separately for both builds.
+
+Armor and Valence Base must be representable, finite, non-negative numbers; a
+blank field means zero. Valence Base is an absolute damage amount, not a
+percentage. Invalid text or a numeric overflow leaves the entered text and
+equipped mods in place, shows an inline error, and clears the results until
+corrected. Such a build
+cannot be saved or compared. Invalid numeric values in an existing build file
+are rejected without changing the file or the current build.
+
+If the database is locked or unreadable, the app keeps the existing equipped
+slots instead of treating failed mod reads as an empty loadout. Failed
+calculations are marked unavailable and their old numbers are cleared; once
+the database is accessible again, recalculate to retry. Loading a saved build
+checks its mod effects and calculates it before replacing the current build,
+so a failed read or calculation leaves the current build in place.
 
 ## App Data Layout
 
@@ -149,41 +170,71 @@ python main.py
 ```
 
 If there is no database, the app prompts before attempting to download fresh
-DE data; the Settings dialog can also rebuild offline using saved local export
-files. On first use, the two exports are seeded together from the bundled
+DE data; the prompt warns that rebuilding replaces the mod/effect catalog and
+matching weapon rows, and any existing database is backed up first. The Settings
+dialog can also rebuild offline using saved local export files. On first use,
+the two exports are seeded together from the bundled
 snapshot. If only one saved export is present, WDC does **not** fill the other
 from a potentially different snapshot: restore a known matching pair or use a
-fresh download before rebuilding. Other independent reference files are seeded
-individually.
+fresh download before rebuilding. Independent reference files are staged and
+published individually without overwriting a file created during the copy.
+First-time automatic seeding requires hard-link support on the app-data
+filesystem; if unavailable, WDC reports an error rather than publishing an
+unsafe partial file. After closing WDC, a complete matching export pair and
+needed reference files can instead be copied there manually without overwriting
+existing user files.
 
 ## Existing Databases And Backups
 
 On startup, legacy databases are upgraded **before** weapon values are shown.
 The upgrade corrects the older Heat/Cold/Electricity export mapping, reparses
-mod effects and repairs the known Grimoire export collision when safe, using
-the saved local exports; it makes no network request. SQLite's backup API first
+mod effects, repairs the known Grimoire export collision when safe, and adds
+missing Void damage from matching exports, including Sirocco. It uses the saved
+local exports and makes no network request. SQLite's backup API first
 creates a uniquely named, consistent copy
 in `data/backups/`, including committed WAL data. The import and version mark
 are committed together; on failure the database is left unmodified by the
 upgrade, and startup stops with an error rather than displaying stale data.
 Databases from a newer, unsupported app version are also refused.
 
-Build JSON, settings, unrelated tables, and unmatched custom weapon/mod/effect
-rows are retained. A revision-0 upgrade refreshes matching exported weapons
-and mods; a revision-1 upgrade refreshes matching mods and only the specific
-Grimoire correction below. Manual edits to other refreshed official entries are
-replaced but retained in the backup. A revision-2 upgrade changes no mods and
-only repairs the known Grimoire row. The repair requires both player and
-Doppelganger entries in the saved export and an exact match between the current
-row and the old Doppelganger entry; otherwise it refuses to overwrite the row.
-Custom or already-correct Grimoire rows are not replaced. If the row was edited
-or the matching export is unavailable, first copy the database and source files
-to a safe location; restore the matching export or preserve the edited row under
-a non-DE identifier before retrying. Do not blindly rebuild: a full rebuild
-can overwrite matching names.
+Build JSON, settings, unrelated tables, and custom weapon/mod/effect rows are
+retained, including custom rows colliding with exported names or IDs. A
+revision-0 upgrade refreshes source-matching official weapons and mods; a
+revision-1 upgrade refreshes official mods. Identifiable edits to those rows
+are rejected rather than overwritten. The old mod parsers and current parser
+can legitimately disagree, so derived fields and missing effects are reparsed;
+the backup retains their original state if those fields had been intentionally
+edited. Extra columns on existing mod and weapon rows are preserved. If a
+reparsed official effect contains data in a custom column, or a custom trigger
+could run on a table being updated, the upgrade stops for manual review rather
+than risking user data. Declared foreign keys referencing affected catalog rows,
+or unresolved links into those tables, also cause a refusal; links to untouched
+custom rows can remain. Revision 1/2 may also repair Grimoire: that requires
+both player and Doppelganger entries in the saved export and an exact match
+with the old row. Custom or already-correct Grimoire rows are not replaced.
+Before resolving a custom-schema refusal, copy the database and export any
+annotations; effects can change position during reparse, so their association
+must be reviewed manually. Preserve and review triggers and foreign-key links
+before changing them. Relationships without declared foreign keys cannot be
+automatically identified.
+
+Revision 4 repairs a zero Void component on matching official rows, without
+replacing other columns. For the known Sirocco ID, a missing or mismatched
+source aborts the upgrade instead of marking the database current. Edited rows
+with nonzero Void and custom rows are left intact. If an affected row was
+edited or its matching export is unavailable, first copy the database and
+source files to a safe location; restore a matching export or preserve the
+edited row under a non-DE identifier before retrying. Do not blindly rebuild:
+a full rebuild can overwrite matching names.
 
 Both saved export ZIPs must be readable and free of an interrupted-publication
-marker. The upgrade refuses an older or partial export that does not cover the
+marker. If the database main file is missing or empty while a `-wal`, `-shm`,
+or `-journal` sidecar exists, WDC refuses to open or recreate it: SQLite can
+discard an orphaned WAL when opening a new database, and the sidecar may hold
+committed user data. Close every SQLite/WDC process, preserve the main file and
+all sidecars together, and restore or inspect the matching database before
+retrying. The refusal applies to zero-byte sidecars and sidecar symlinks too.
+The upgrade refuses an older or partial export that does not cover the
 official mod rows/effect fragments it would refresh; revision 0 also requires
 coverage of official weapon rows. Restore matching exports and restart if this
 check fails. The spreadsheet is optional. Custom rows using a `/Lotus/`
@@ -193,8 +244,9 @@ than silently selected, except for the explicitly identified Grimoire pair.
 
 Backups are retained until removed manually. To restore one, close all WDC and
 other SQLite connections. Move the current `data/weapons.db` and any
-`data/weapons.db-wal` / `data/weapons.db-shm` sidecars together into a separate
-safe folder; do not leave the old sidecars beside the restored file. Then copy
+`data/weapons.db-wal`, `data/weapons.db-shm` or `data/weapons.db-journal`
+sidecars together into a separate safe folder; do not leave old sidecars beside
+the restored file. Then copy
 the desired standalone backup to `data/weapons.db`. A restored legacy backup
 will attempt the upgrade again on the next startup.
 
@@ -211,7 +263,9 @@ two Settings rebuild actions also perform a full catalog rebuild (the download
 option tries DE first). A full rebuild **replaces the mod/effect catalog**,
 including custom rows, and overwrites weapon entries with matching names;
 unmatched weapons are retained. Builds and settings are separate files, and
-Settings asks for confirmation.
+Settings asks for confirmation. A rebuild also refuses catalog triggers and
+foreign-key links to affected rows when those could alter or orphan data in
+other tables; review such schemas before retrying.
 
 Before changing an existing database, a full rebuild uses SQLite's backup API
 to create a uniquely named copy in `data/backups/`, including committed WAL
@@ -232,24 +286,45 @@ import or refresh the possibly mixed files. To recover:
 1. Close **all** WDC instances. Make a separate copy of the whole app-data
    `source` folder, including the hidden `.wdc-refresh-*` directories; do not
    rebuild or refresh yet.
-2. In the reported staging directory, inspect `PUBLISHING.json`. For each
-   entry, copy its `previous_copy` from that directory over its `destination`
-   in `source`. If `previous_copy` is `null`, that destination did not exist
-   before this refresh and should be removed instead. Restore **both** entries,
+2. Inspect `PUBLISHING.json`. For `"mode": "seed-no-clobber"`, WDC did not
+   replace an existing destination, but another program may have created or
+   edited one while seeding. Preserve all destinations and the `staged_copy`
+   files separately; do **not** delete a destination merely because its
+   `previous_copy` is `null`. Decide which files to keep and restore a verified
+   matching pair, or move both destinations to a safe location before retrying
+   a fresh first-time seed.
+3. For other markers, copy each `previous_copy` from the staging directory over
+   its `destination` in `source`. If `previous_copy` is `null`, that destination
+   was absent before publication; move any file that appeared there to safety
+   rather than deleting an unrecognized user file. Restore **both** entries,
    even if only one appears changed. Keep the staged copies until recovery is
    complete.
-3. If a required previous copy is missing, the marker is unreadable, or there
+4. If a required previous copy is missing, the marker is unreadable, or there
    are multiple interrupted stages and their order is unclear, do not guess or
    simply delete the marker: retain the copies and obtain a known-good matching
    pair of exports. Once the saved pair is verified and restored, remove the
    resolved staging directory (including its marker), then retry.
 
-The marker and rollback protect against ordinary exceptions and many process
-interruptions; they are **not** a cross-process lock or a power-loss durability
-guarantee. Do not run multiple refreshes or rebuilds concurrently. Export
-publication and the database rebuild are separate operations: if the rebuild
-fails after a successful refresh, the saved exports can be newer than the
-unchanged database; retry the rebuild after resolving the error.
+An interruption during an independent reference-file copy can leave a hidden
+`source/.wdc-reference-*` staging directory. It is not read as a reference
+file; after closing all WDC instances, it can be removed once any contents the
+user wants to keep have been copied elsewhere.
+
+WDC also fingerprints the saved export pair before downloading and checks it
+again before publication, so even a same-size, same-mtime edit made during the
+network request is not silently overwritten. An absent export created during
+that interval is also preserved. The marker and retained previous copies
+protect against ordinary exceptions and many process interruptions; WDC does
+not automatically roll back a failed publication because an unrelated program
+may have changed a destination. This is **not** a power-loss durability
+guarantee. Cooperating
+WDC processes use a persistent `source/.wdc-exports.lock` OS lock to serialize
+export publication and import reads; nested reads by the same thread reuse the
+lock. The lock does not prevent unrelated programs from editing files and does
+not lock the database for the whole rebuild. Close other WDC instances before
+refreshing or rebuilding. Export publication and the database rebuild are
+separate operations: if the rebuild fails after a successful refresh, the saved
+exports can be newer than the unchanged database; retry after resolving the error.
 
 ## Riven Stat Tables
 
@@ -465,9 +540,10 @@ python -m unittest discover -s tests -q
 
 The suite is fully offline and takes roughly eight seconds on a laptop. Each
 migration or rebuild test parses the same bundled exports, so the workbook and
-both JSON export parsers in `modules/importer.py` are memoized on the source
-file's identity (path, mtime, size) and invalidate themselves when the file
-changes. A locked-database test exercises the real backup path, so it shortens
+both JSON export parsers in `modules/importer.py` cache parsed results by path
+and file contents. A same-size replacement with a preserved timestamp is still
+reparsed, and the parsed bytes are the bytes used for the cache key. A
+locked-database test exercises the real backup path, so it shortens
 `modules.database_backup.BACKUP_LOCK_DEADLINE_SECONDS` instead of waiting out
 the production five seconds.
 

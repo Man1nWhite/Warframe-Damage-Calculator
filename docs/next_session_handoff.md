@@ -1,253 +1,36 @@
-# Next-session handoff — 2026-10-28 (afternoon pass)
+# Next-session handoff
 
-Snapshot of the repository, what the last session verified, and what to do next.
-It is not a claim that every Warframe mechanic is correct. Start by checking
-`git status`, `git log --oneline -12` and the current pull request; the code,
-tests and reports are the source of truth if this note goes stale. The longer
-handoff written by the previous pass — the full audit narrative, the bundle-size
-and filter-refresh measurements — is in git history at
-`8dea645:docs/next_session_handoff.md` and was condensed here.
+## Current state
 
-- Branch: `arena/53406422-warframe-damage-calculator`
-- HEAD at handoff: `470e9dd` (pushed)
-- Base of this branch's work: `30b5a9f` (merge of PR #2)
+- Repo: `/home/user/Warframe-Damage-Calculator` (`Man1nWhite/Warframe-Damage-Calculator`).
+- Stay on branch `arena/f058f23e-warframe-damage-calculator`; do not switch or rename it.
+- Base/HEAD: `f781ac0`; all current work is uncommitted. Preserve the user's data and fix every confirmed issue found along the way.
+- User asked to keep auditing and fixing, then requested this handoff be optimized for the next AI session. Read this file first, then check `git status` and the current diff; do not repeat completed investigations unnecessarily.
 
-## 2026-10-28 late-evening pass (branch `arena/923b33f6-warframe-damage-calculator`)
+## What has been fixed
 
-- Formula re-check with the wiki open while optimising: `Armor`,
-  `Damage/Calculation` (quantization, armored DM, the DoT accumulator, average
-  shot), `Damage_over_Time`, `Critical_Hit`, `Damage/Heat_Damage` (tick, strip
-  ramp, inherit), `Damage/Viral_Damage`, `Damage/Magnetic_Damage` and
-  `Overguard` were fetched again and compared term by term. No drift; one
-  unresolved *source conflict* is now recorded in
-  `wiki_formula_verification.md` §7 (the `+1` DoT accumulator is on
-  `Damage/Calculation` and absent from the per-type pages' own example).
-- Optimisation, second pass: §7 of `docs/optimization_review.md`. Interleaved
-  re-measurement against a worktree of the pre-change commit: Jat slam
-  6.65 → 5.53 ms/trial (−17%), Ocucor 2.94 → 2.36 (−20%), Kuva Nukor
-  0.91 → 0.82 (−10%), Akarius 0.86 → 0.76 (−12%), Alternox 1.17 → 1.19
-  (within the ±10% run-to-run noise), digest `sha256 476ec4f75e018a89…`
-  identical before and after. Quote the ranges, not single digits.
-- `tools/bench_models.py` now hashes **six** models: the five simulators plus
-  `jat_kittag_slam_counts`, which generates
-  `docs/jat_kittag_expected_slams_results.jsonl` and had no equivalence check
-  before.
-- Correction to an earlier estimate: that 170,000-trial sweep runs the scalar
-  slam-count model, not `jat_kittag_sim`, and the whole suite measures
-  ≈ 55–60 s of single-core CPU — not the "~36 min" quoted in
-  `optimization_review.md` §2 (see §7.4).
-- Finding, **fixed**: the committed `docs/jat_kittag_expected_slams_results.jsonl`
-  had gone stale — it predated the critical-damage quantization, so 34/44 rows
-  no longer reproduced (≤ 0.04 slams, no median/percentile change; confirmed by
-  disabling `crit.quantize_crit_multiplier` and reproducing the old artifact
-  exactly). It was regenerated with the documented command (seed `20261028`,
-  170,000 trials, ~50 s, byte-identical across two runs) and the new SHA-256 is
-  `7c584c34…`; seven sensitivity cells moved in the second decimal and were
-  taken from the new file. Record: `docs/jat_kittag_expected_slams.md`.
-- New guard: `tests/test_slam_results_artifact.py` re-simulates the cheapest
-  artifact row (1,000 trials, ~0.3 s) and requires exact equality with the
-  committed record, plus structural checks over all 44 records.
-- Gates on this pass: `ruff check .` clean, `mypy` clean (35 files),
-  630 tests OK (one GUI skip), digest `--check` exit 0.
+The current diff includes calculator/GUI validation and preservation, simulator corrections, offline revision-4 migration, custom-schema guards, export/database safety, import-cache fixes, tests and docs. In particular:
 
-## 2026-10-28 evening pass (branch `arena/e06d059d-warframe-damage-calculator`)
+- Invalid/non-finite/underflowed Armor and Valence inputs fail visibly; invalid builds cannot be saved or compared. Loading preflights effects and calculation before changing the current build.
+- Direct calculations reject non-finite components and overflow. Shadow Clones' unmodeled Finisher damage warns rather than being guessed. Percentile edge cases are covered.
+- Sirocco imports 2,000 Void. Guarded migration protects identifiable user edits/custom rows and retains a consistent SQLite backup. Custom triggers, affected foreign keys, and populated reparsed effect extensions cause refusal; rebuilds have related guards.
+- Failed catalog reads do not masquerade as empty data. Missing/empty DB files with WAL/SHM/rollback-journal sidecars are refused before SQLite can discard recoverable data.
+- Export publication preserves prior copies and recovery markers on uncertain failures; it never rolls back over a possibly user-edited destination. Same-size/same-mtime edits during download are detected, absent concurrent files are preserved, symlinked exports are rejected, and lock/recovery checks cover symlink targets.
+- Import rejects ambiguous multi-JSON weapon ZIPs, duplicate upgrade ZIP members and duplicate JSON object keys. Cache keys and parsing use the same immutable bytes.
+- HTTP `Content-Length` is not compared with Requests' transparently decoded body. Download size is capped at 512 MiB; manifest LZMA expansion is capped at 32 MiB incrementally.
+- Research caveats/results are in `docs/formula_audit.md`, `docs/wiki_formula_verification.md`, and `docs/verglas_prime_sim.md`. Do not describe simulator results as in-game validation.
 
-- Formula re-check: the core pages were fetched live again and compared
-  expression by expression; §6 of `wiki_formula_verification.md` is the table.
-  No drift was found. One *missing* expression was added:
-  `crit.headshot_crit_multiplier` (Critical_Hit's headshot-crit form, which is
-  not the weak-point average already implemented). Nothing calls it yet.
-- Optimisation: `docs/optimization_review.md` records the measurements.
-  `route_enemy_hit` now fills one dictionary instead of two,
-  `jat_kittag_sim._next_status_tick` scans instead of building two generators,
-  and the seven inline `1 + tier * (CDM - 1)` spellings now call
-  `crit.crit_multiplier_for_tier`. Jat slam trials went 9.54 → 7.71 ms
-  (−19%), Ocucor 3.70 → 3.34, Kuva Nukor 1.16 → 1.06, with **byte-identical**
-  trial records.
-- New tooling: `tools/bench_models.py` (fixed-seed digest + ms/trial table,
-  `tests/test_bench_models.py`). Use it before and after touching a
-  simulator; the digest, not the wall clock, is the contract.
-- Gates on this pass: `ruff check .` clean, `mypy` clean (35 files),
-  626 tests OK (one GUI skip).
-- Still open from the list below: item 2 (Jat Riven crit damage 1.013 vs
-  1.0125 — untouched here), item 3 (`docs/wiki_numbers.json` needs a
-  networked machine), items 4–6.
+## Verification and limits
 
-## Verified state
+- Latest focused updater/importer/weapon-export/migration/rebuild suites: **115 tests passed**. Re-run with `PYTHONPATH=/home/user/.cache/wdc-review-deps python -m unittest tests.test_updater tests.test_weapon_export_safety tests.test_import_cache_safety tests.test_database_migration tests.test_database_rebuild_safety -q`.
+- A prior full required-offscreen suite passed **809 tests**, before the latest refresh/import-parser changes. It has not been rerun: the refreshed environment lacks `libxkbcommon.so.0`, so QtGui cannot import. A Qt offscreen shim existed in a disposable cache but did not persist.
+- Latest static checks passed: Ruff, mypy (**38 source files**), compileall, and `git diff --check`.
+- Bundled DB: revision 4; `quick_check=ok`; 827 weapons, 1,594 mods, 1,856 effects. Two stored benchmark digests matched before the latest non-simulation changes.
+- Native graphics, live DE refresh, Windows packaging, and remote CI for this uncommitted diff are unverified. Historical CI success is not evidence for current changes.
 
-Run from the repository root with `requirements.txt` and
-`requirements-dev.txt` installed. All four were run at this commit:
+## Next steps
 
-```bash
-python -m ruff check .                  # All checks passed
-python -m mypy                          # Success: no issues found in 35 source files
-python -m unittest discover -s tests -q  # 614 tests, OK (skipped=1), ~7.2 s
-python -m compileall -q modules gui tests tools main.py build_database.py \
-    build_gunco_tables.py build_riven_tables.py
-```
-
-- The single skip is the Qt integration suite: this sandbox has no PyQt6/GL, so
-  **GUI edits are compile-checked only**. On a machine with Qt, run
-  `QT_QPA_PLATFORM=offscreen WDC_REQUIRE_GUI_TESTS=1 python -m unittest discover -s tests -q`
-  before trusting any `gui/` change; `tools/run_tests_ci.py` is what CI runs.
-- Slowest module: `tests/test_database_migration.py` (~3.3 s). It parses the
-  bundled exports repeatedly; the parsers are memoized on
-  `(resolved path, mtime_ns, size)` in `modules/importer.py`, so changing files
-  mid-run invalidates the cache on purpose.
-- `tools/wiki_audit.py` works offline against saved page text only. With a
-  fixture directory holding just `Damage__Blast_Damage.wikitext`,
-  `python tools/wiki_audit.py --pages DIR --topic Blast` prints three `ok`
-  claims plus one `unverified` claim and exits `0`; a full run with the other
-  pages missing exits `2`. The live wiki is unreachable from this sandbox, so
-  `docs/wiki_numbers.json` does not exist yet — see item 3 below.
-
-## What this session changed
-
-Earlier passes on this branch (`d54bd43` … `8dea645`) re-derived every formula
-family from the WARFRAME Wiki, added the per-formula reports, the lint/type
-gates, source-parse caching and `tools/wiki_audit.py`. This session added:
-
-1. `4178f0a` **The calculator aggregates the equipped slots itself.** Callers
-   that passed only `equipped_mods` (no pre-aggregated `mods` dictionary) lost
-   +Damage, Bane and elemental bonuses: the seeded Grineer build reported
-   `hud_total 934.2` / `quanta 5.40625` instead of `2525.1426` / `14.326562`.
-   Slots are now authoritative and `inputs.mods` is ignored when slots are
-   present; the dictionary-only path is unchanged. `Zairman` is aliased to
-   `Zariman` so old saves keep their Bane multiplier.
-2. `a3adebb` **The wiki audit no longer fails on a claim it cannot read.** The
-   four-stack Blast cap is stated in prose on `Damage/Calculation`, so the
-   keyword extraction cannot verify it and every Blast run exited `2` even
-   with all readable numbers matching. Claims can now be `optional`: they
-   report `[unverified]`, do not change the exit code, and still report code
-   drift as `code-changed` (exit 1).
-3. `7e00fb1` **A dying target detonates its Blast stacks** in the Kuva Nukor
-   room model (Damage/Blast_Damage: ten stacks *or* the target dying, including
-   a Blast proc from the killing blow). `RoomResult.death_detonations` reports
-   them: the Frostbite build now has 8 death-driven detonations out of 31
-   radials, previously none.
-4. `3c98f61` **README describes the repository as a fork** kept for damage
-   testing, with upstream credited and the app docs kept below.
-5. `470e9dd` **Cleanup pass.** See the list below; the numbers of every bundled
-   scenario are unchanged.
-
-## Cleanup findings (what was wrong and why it mattered)
-
-- Dead code: `modules/rounding.py` (no importer), the `app_paths` settings
-  helpers, and `CalculationInputs.mod_for`. The README listed `settings.json`
-  among the files the app keeps; the app never wrote or read one.
-- Duplicated sources of truth: the six combined elements were spelled out twice
-  in `calculator.py` while `constants.COMBINED_ELEMENT_TYPES` sat unused; the
-  `Zairman` alias lived in the calculator *and* as a `BANE_CODE_MAP` key.
-  Both now come from `modules/constants.py` (`faction_key`, the element set),
-  and `ModAggregator.aggregate` normalises the faction too.
-- An unknown faction raised `KeyError` from a table lookup; the calculator now
-  raises `ValueError("Unknown faction: ...")`, matching the GUI's build
-  preflight.
-- `akarius_sim.corrosive_armor_factor` hardcoded `0.20 + 0.06n` next to unused
-  `CORROSIVE_FIRST_STACK`/`CORROSIVE_PER_STACK` constants that documented the
-  same numbers; it now uses them (values verified identical, 0.74/0.68/0.20).
-- Constants no model read were removed (`SLAM_RADIUS`, `COMBO_DURATION`,
-  `R_EFFICIENCY`, `RANK_STEPS`, `AOE_PROC_DELAY`, `CHAIN_RANGE_M`,
-  `BLAST_RADIUS_M`, `VIRAL_BASE_DURATION`, `HUD_ROUNDING_PRECISION`,
-  `DEFAULT_HUD_DECIMALS`, `FINAL_DAMAGE_DECIMALS`). The facts they recorded
-  (10 m slam radius, 9 m chain, 5 m Blast radial, the 5 s combo window) are in
-  the module docstrings.
-- The GUI aggregated the slots a second time on every keystroke and passed the
-  result as `mods`, which the calculator now ignores; both call sites pass only
-  `equipped_mods` and the unused `mod_aggregator` attribute is gone.
-- Non-finite export values are rejected inside the source parsers (once per
-  unchanged file) instead of once per payload: `test_database_migration` went
-  from 3.9 s to 3.3 s.
-- `docs/wiki_formula_verification.md` claimed `test_wiki_cross_checks.py` holds
-  18 tests; it holds 24.
-
-## Repository map
-
-- `main.py` → `gui/app.py`: the PyQt6 app. Startup migrates or bootstraps the
-  AppData database (`%APPDATA%/WDC`, else `~/.local/share/WDC`).
-- `modules/importer.py`, `database*.py`, `updater.py`, `export_safety.py`,
-  `weapon_export_policy.py`: data pipeline, transactional migration, backups,
-  staged export publication.
-- `modules/calculator.py`, `mod_engine.py`, `mod_parser.py`, `models.py`,
-  `status_damage.py`, `damage_routing.py`, `crit.py`, `enemy_scaling.py`,
-  `constants.py`: the core model. Tables live only in `constants.py`.
-- `modules/*_sim.py`, `*_comparison.py`, `jat_kittag_slam_*.py`: experimental
-  research models; their reports are in `docs/`.
-- `docs/formula_audit.md` (scope, source conflicts, open deviations) and
-  `docs/wiki_formula_verification.md` (per-formula verdicts, dated pages) are
-  the authoritative write-ups; `tools/wiki_audit.py` re-checks the numbers.
-- `data/weapons.db` is a curated revision-3 snapshot, not live game data;
-  `source/` holds the bundled exports and reference tables.
-
-## Open items, in suggested order
-
-1. **Three documented wiki deviations are still open** (see
-   `docs/formula_audit.md`): Cold's critical-damage bonus is implemented and
-   tested but no bundled scenario can produce a standalone Cold proc; the
-   four-stack Blast cap is not exercised by any scenario; faction type
-   modifiers are applied to Overguard, which the wiki does not confirm. Change
-   these only with page evidence plus a scenario that shows the difference, and
-   update both reports.
-2. **Jat Kittag Riven crit damage:** `jat_kittag_sim.R3_CRIT_DAMAGE` is `1.013`
-   (three decimals) while `jat_kittag_slam_analysis.R3_CRIT_DAMAGE` is the
-   derived `1.0125` midpoint. The 0.05 % gap is documented in a comment; the
-   tests pass either way, but published numbers in `docs/jat_kittag_*.md` were
-   generated with `1.013`. Decide one value, regenerate the affected reports,
-   and say so in the commit.
-3. **Create `docs/wiki_numbers.json` from a networked machine** and commit it,
-   so the audit's `--baseline` diff becomes usable in review. Then decide
-   whether a weekly audit run is worth a workflow (it must tolerate an
-   unreachable wiki: exit 2 means "incomplete", not "wrong").
-4. **Exercise the Qt suite** (`WDC_REQUIRE_GUI_TESTS=1`) for the GUI changes in
-   `470e9dd`/`4178f0a`; nothing here could run it.
-5. **Remote CI:** inspect `gh pr checks` and the latest Actions run rather than
-   trusting this note. The historical Windows full-suite failure was a
-   SQLite-handle cleanup bug that fixtures now close explicitly; confirm it
-   passes. **Windows packaging is very low priority** (possibly 2028) — do not
-   disable or delete the packaging job without asking.
-6. **Live DE refresh** is untested here (network blocked); the updater's
-   staging, markers and recovery are covered by fixtures only.
-7. **Longer-standing work:** model attack components instead of treating one
-   export row as one hit (Grimoire's 100 direct + 50 radial), give Rivens an
-   explicit identity instead of the name-substring heuristic, strengthen
-   publication safety for concurrent use, and extend mod-compatibility coverage
-   only with evidence.
-
-## Reproduction recipes
-
-```bash
-# Full gate
-python -m ruff check . && python -m mypy && python -m unittest discover -s tests -q
-
-# One module, timed
-time python -m unittest tests.test_database_migration -q
-
-# Offline wiki audit against saved text (no network)
-mkdir -p /tmp/wiki_pages   # put Damage__Blast_Damage.wikitext there
-python tools/wiki_audit.py --pages /tmp/wiki_pages --topic Blast
-
-# Jat sweep smoke test, if touching the slam models
-python -m modules.jat_kittag_slam_count_sweep --sample-scale 0.01 > jat-smoke.jsonl
-```
-
-Delivered artifacts must not be regenerated casually: the full Jat sweep uses
-seed `20261028`, 170,000 trials over 44 JSONL records, and
-`docs/jat_kittag_expected_slams_results.jsonl` has SHA-256
-`7c584c3454239dbd6be79a83fe2a695f4bbcc389fdbfff0beef62146f091000e`
-(regenerated 2026-10-28; the previous hash was
-`94422cf20a535c30d58e32fd584bdca1672ae37c8a0edd4232cc22112218c982` — see the
-regeneration record in `docs/jat_kittag_expected_slams.md`). The sweep is
-deterministic: two consecutive runs are byte-identical, so a mismatch means a
-real change.
-Simulated numbers are model output, not measurements; keep seeds, trial counts
-and timeouts with any new result, and check attempted-versus-killed trials.
-
-## Do not
-
-- Do not silently change assumptions, seeds or delivered result artifacts; if
-  evidence changes a mechanic, update tests and reports and separate researched
-  facts from assumptions and model output.
-- Do not reintroduce the duplicated tables this pass removed: factions, the
-  combined-element set and the bane map live in `modules/constants.py`.
-- Do not report a CI pass from a pending or failed run, and do not present
-  sandbox results as native-display, Windows-installer or in-game validation.
+1. Re-establish a usable Qt/offscreen environment if feasible; run `PYTHONPATH=/home/user/.cache/wdc-review-deps LD_LIBRARY_PATH=/home/user/.cache/wdc-qt-libs QT_QPA_PLATFORM=offscreen WDC_REQUIRE_GUI_TESTS=1 python tools/run_tests_ci.py`. If blocked, report it accurately; do not claim a fresh full-suite pass.
+2. Rerun Ruff, mypy, compileall, `git diff --check`, the focused 115-test command, database quick-check, and benchmark equivalence checks if simulator code changed.
+3. Continue the targeted bug audit; add a regression before each confirmed fix. Check updated code/tests before trusting older counts or claims.
+4. Keep documentation concise and consistent. Do not commit, push, or open a PR unless asked.

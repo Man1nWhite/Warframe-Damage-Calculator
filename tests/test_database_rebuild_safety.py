@@ -72,6 +72,66 @@ class DatabaseRebuildSafetyTests(unittest.TestCase):
         self.assertEqual(self.inspect(backup), before)
         self.assertTrue(second.is_file())
 
+    def test_rebuild_refuses_custom_catalog_triggers_before_modifying_unrelated_data(self):
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("CREATE TRIGGER user_mod_trigger AFTER DELETE ON MODS BEGIN "
+                               "DELETE FROM personal_notes; END")
+        before = self.inspect(self.db)
+        with self.assertRaisesRegex(RuntimeError, "trigger.*user_mod_trigger"):
+            build_database(self.db, self.weapons, self.upgrades)
+        self.assertEqual(self.inspect(self.db), before)
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_rebuild_refuses_to_orphan_custom_mod_references(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("CREATE TABLE mod_notes (mod TEXT REFERENCES MODS(unique_name), note TEXT)")
+            connection.execute("INSERT INTO mod_notes VALUES ('/custom/mod', 'keep me')")
+            connection.commit()
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        before = self.inspect(self.db)
+        with self.assertRaisesRegex(RuntimeError, "foreign key.*mods"):
+            build_database(self.db, self.weapons, self.upgrades)
+        self.assertEqual(self.inspect(self.db), before)
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("SELECT note FROM mod_notes").fetchone()[0], "keep me")
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_rebuild_refuses_to_break_a_reference_to_an_updated_weapon_field(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("CREATE UNIQUE INDEX user_weapon_damage_key ON weapons(weapon,dmg)")
+            connection.execute("CREATE TABLE weapon_notes (weapon TEXT, dmg REAL, note TEXT, "
+                               "FOREIGN KEY(weapon,dmg) REFERENCES WEAPONS(weapon,dmg))")
+            connection.execute("INSERT INTO weapon_notes VALUES ('Exported Weapon',100,'keep me')")
+            connection.commit()
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        with zipfile.ZipFile(self.weapons, "w") as archive:
+            archive.writestr("weapons.json", json.dumps({"ExportWeapons": [{
+                "name": "Exported Weapon", "uniqueName": "/Lotus/Weapons/Test",
+                "productCategory": "LongGuns", "totalDamage": 150, "damagePerShot": [150],
+            }]}))
+        with self.assertRaisesRegex(RuntimeError, "foreign key.*weapons"):
+            build_database(self.db, self.weapons, self.upgrades)
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("SELECT dmg FROM weapons WHERE weapon='Exported Weapon'").fetchone()[0], 100)
+        self.assertFalse((self.db.parent / "backups").exists())
+
+    def test_rebuild_preserves_references_to_unmodified_custom_weapons(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("INSERT INTO weapons (weapon,dmg) VALUES ('Custom Weapon',42)")
+            connection.execute("CREATE TABLE weapon_notes (weapon TEXT REFERENCES weapons(weapon), note TEXT)")
+            connection.execute("INSERT INTO weapon_notes VALUES ('Custom Weapon','keep me')")
+            connection.commit()
+        build_database(self.db, self.weapons, self.upgrades)
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("SELECT note FROM weapon_notes").fetchone()[0], "keep me")
+            self.assertEqual(connection.execute("SELECT dmg FROM weapons WHERE weapon='Custom Weapon'").fetchone()[0], 42)
+
     def test_rebuild_backup_contains_committed_wal_content(self):
         with closing(sqlite3.connect(self.db)) as writer:
             writer.execute("PRAGMA journal_mode=WAL")

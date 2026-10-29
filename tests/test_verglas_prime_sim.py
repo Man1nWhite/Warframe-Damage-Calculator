@@ -10,8 +10,11 @@ import io
 import math
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from unittest import mock
 
+from modules.kuva_nukor_sim import DummyTarget, MagneticSource
+from modules.status_damage import heat_tick
 from modules.verglas_prime_sim import (
     BASE_DAMAGE,
     BASE_DAMAGE_TYPE,
@@ -22,6 +25,7 @@ from modules.verglas_prime_sim import (
     RIVEN_VIRAL_MS_CD,
     SUMMONERS_WRATH,
     Loadout,
+    RivenTraits,
     Trial,
     VerglasBuild,
     _static_effects,
@@ -109,13 +113,31 @@ class WeaponStatTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_verglas(loadout)
 
-    def test_riven_needs_three_positives(self) -> None:
-        from modules.verglas_prime_sim import RivenTraits
+    def test_riven_needs_three_distinct_positives_and_at_most_one_splice(self) -> None:
+        for positives in (("Viral", "Multishot"),
+                          ("Viral", "Multishot", "Not A Stat"),
+                          ("Viral", "Viral", "Multishot"),
+                          ("Viral", "Magnetic", "Multishot")):
+            with self.subTest(positives=positives), self.assertRaises(ValueError):
+                RivenTraits(positives)
 
-        with self.assertRaises(ValueError):
-            RivenTraits(("Viral", "Multishot"))
-        with self.assertRaises(ValueError):
-            RivenTraits(("Viral", "Multishot", "Not A Stat"))
+    def test_incomplete_cursed_riven_is_rejected_instead_of_ignoring_its_negative(self) -> None:
+        loadout = replace(BUILD_BY_KEY["heat_pair"],
+                          riven=RivenTraits(RIVEN_VIRAL_MS_CD.positives, cursed=True))
+        with self.assertRaisesRegex(ValueError, "(?i)curse|negative"):
+            build_verglas(loadout)
+
+    def test_invalid_weapon_mod_loadouts_fail_loudly(self) -> None:
+        base = BUILD_BY_KEY["heat_pair"]
+        invalid = (
+            replace(base, mods=base.mods + ("Vile Acceleration",)),  # nine with Riven
+            replace(base, mods=base.mods[:-1] + ("Serration",)),
+            replace(base, mods=base.mods[:-2] + ("Critical Delay", "Point Strike")),
+            replace(base, mods=base.mods[:-1] + ("Galvanized Chamber",)),
+        )
+        for loadout in invalid:
+            with self.subTest(mods=loadout.mods), self.assertRaises(ValueError):
+                build_verglas(loadout)
 
 
 class DummyTest(unittest.TestCase):
@@ -184,6 +206,111 @@ class SimulateTest(unittest.TestCase):
                          max_time=2.0)
         self.assertEqual(trial.ttk, math.inf)
         self.assertTrue(math.isfinite(trial.overguard_break_time))
+
+    def test_magnetic_source_receives_even_combined_electricity_mods(self) -> None:
+        # High Voltage combines into Magnetic. The break Electricity still
+        # benefits, including an Electricity Riven positive when present.
+        for loadout in (
+            BUILD_BY_KEY["heat_pair"],
+            replace(BUILD_BY_KEY["heat_pair"],
+                    riven=RivenTraits(("Viral", "Electricity", "Critical Damage"))),
+        ):
+            with self.subTest(loadout=loadout):
+                build = build_verglas(loadout)
+                with mock.patch("modules.verglas_prime_sim.MagneticSource",
+                                wraps=MagneticSource) as source:
+                    simulate(build, DummyTarget(1e12, 0, 1e9), seed=7, max_time=0.1)
+                source.assert_called_once()
+                self.assertAlmostEqual(source.call_args.kwargs["electricity_bonus"],
+                                       build.effects["ELEC"])
+        self.assertGreater(build.effects["ELEC"], 0.6)
+
+    def test_status_damage_depends_on_equipped_elementalist(self) -> None:
+        equipped = BUILD_BY_KEY["heat_pair"]
+        absent = replace(equipped, key="no_elementalist",
+                         mods=tuple(mod for mod in equipped.mods if mod != "Rifle Elementalist"))
+        for loadout, bonus in ((equipped, 0.9), (absent, 0.0)):
+            with self.subTest(loadout=loadout.key):
+                build = build_verglas(loadout)
+                target = DummyTarget(1e12, 0, 1e9)
+                with mock.patch("modules.verglas_prime_sim.MagneticSource",
+                                wraps=MagneticSource) as source, \
+                     mock.patch("modules.verglas_prime_sim.heat_tick", wraps=heat_tick) as tick:
+                    simulate(build, target, seed=7, max_time=2.5)
+                self.assertAlmostEqual(source.call_args.kwargs["status_damage_bonus"], bonus)
+                self.assertGreater(tick.call_count, 0)
+                for call in tick.call_args_list:
+                    self.assertAlmostEqual(call.kwargs["status_damage_bonus"], bonus)
+
+    def test_status_duration_riven_reaches_the_live_statuses(self) -> None:
+        loadout = replace(BUILD_BY_KEY["heat_pair"],
+                          riven=RivenTraits(("Viral", "Multishot", "Status Duration")))
+        build = build_verglas(loadout)
+        duration_mult = 1.0 + build.effects["STATUS_DURATION"]
+        target = DummyTarget(1e12, 2700, 1e9)
+        with mock.patch.object(target, "add_heat", wraps=target.add_heat) as heat, \
+             mock.patch.object(target, "add_magnetic", wraps=target.add_magnetic) as magnetic, \
+             mock.patch.object(target, "absorb", wraps=target.absorb) as absorb:
+            simulate(build, target, seed=7, max_time=2.0)
+        self.assertGreater(heat.call_count, 0)
+        self.assertGreater(magnetic.call_count, 0)
+        self.assertAlmostEqual(heat.call_args.args[3], 6.0 * duration_mult)
+        self.assertAlmostEqual(magnetic.call_args.args[1], 6.0 * duration_mult)
+        self.assertAlmostEqual(magnetic.call_args.args[2].duration_multiplier, duration_mult)
+        self.assertAlmostEqual(absorb.call_args.args[2], 0.5 * duration_mult)
+
+    def test_trace_records_fired_up_cap_once(self) -> None:
+        target = DummyTarget(1e12, 0, 1e9)
+        trial = simulate(self.build, target, seed=7, max_time=4.0, trace=True)
+        self.assertEqual(sum("Fired Up capped" in line for line in trial.trace), 1)
+
+    def test_fired_up_counts_own_heat_ticks_between_weapon_hits(self) -> None:
+        build = replace(self.build, fire_rate=1.0, multishot=1.0, status_chance=1.0)
+        with mock.patch.object(type(build), "proc_weights", return_value=(["HEAT"], [1.0])), \
+             mock.patch.object(type(build), "type_damage", autospec=True,
+                               side_effect=type(build).type_damage) as damage:
+            trial = simulate(build, DummyTarget(1e12, 0, 0), seed=7, max_time=2.5)
+        self.assertEqual([call.args[1] for call in damage.call_args_list], [1, 3, 5])
+        self.assertEqual(trial.fired_up_peak, 5)
+
+    def test_fired_up_counts_own_magnetic_break_electricity_ticks(self) -> None:
+        build = replace(self.build, fire_rate=1.0, multishot=1.0,
+                        status_chance=1.0, crit_chance=0.0)
+        with mock.patch.object(type(build), "proc_weights", return_value=(["MAG"], [1.0])), \
+             mock.patch.object(type(build), "type_damage", autospec=True,
+                               return_value={"MAG": 100.0}) as damage:
+            trial = simulate(build, DummyTarget(1e12, 0, 300), seed=7, max_time=2.5)
+        # First hit procs Magnetic; the second breaks Overguard and triggers
+        # an immediate Electricity tick, followed by another tick at t=2.
+        self.assertEqual(trial.overguard_break_time, 1.0)
+        self.assertEqual([call.args[1] for call in damage.call_args_list], [1, 2, 5])
+
+    def test_cold_proc_is_applied_once_and_does_not_refresh_freeze(self) -> None:
+        build = replace(self.build, fire_rate=1.0, multishot=1.0, status_chance=1.0)
+        target = DummyTarget(1e12, 0, 0)
+        with mock.patch.object(type(build), "proc_weights", return_value=(["COLD"], [1.0])):
+            simulate(build, target, seed=7, max_time=2.5)
+        self.assertEqual(target.cold_stacks(2.5), 3)
+
+        frozen = DummyTarget(1e12, 0, 0)
+        for _ in range(10):
+            frozen.add_cold(0, 6)
+        with mock.patch.object(type(build), "proc_weights", return_value=(["COLD"], [1.0])):
+            simulate(build, frozen, seed=7, max_time=2.5)
+        self.assertEqual(frozen.cold_stacks(3.0), 3)
+        self.assertEqual(frozen.unique_status_count(6.0), 0)
+
+    def test_external_damage_over_time_does_not_stack_fired_up(self) -> None:
+        build = replace(self.build, fire_rate=0.25, status_chance=0.0)
+        heat_primed = DummyTarget(1e12, 0, 0)
+        heat_primed.add_heat(0, 100.0, 1.0, 6.0)
+        magnetic_primed = DummyTarget(1e12, 0, 1)
+        magnetic_primed.add_magnetic(0, 6.0, MagneticSource())
+        for target in (heat_primed, magnetic_primed):
+            with self.subTest(target=target):
+                trial = simulate(build, target, seed=7, max_time=2.5)
+                self.assertEqual(trial.attacks, 1)
+                self.assertEqual(trial.fired_up_peak, 1)
 
 
 class RunTrialsTest(unittest.TestCase):
