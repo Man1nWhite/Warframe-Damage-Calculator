@@ -44,8 +44,7 @@ def maybe_bootstrap_database(window: DamageCalculatorWindow) -> None:
     if message.exec() != QMessageBox.StandardButton.Yes:
         return
 
-    try:
-        outputs = window.run_data_pipeline(prefer_online=True)
+    def data_ready(outputs: dict[str, str | Path | None]) -> None:
         details = [
             f"Data source: {outputs['source_mode']}",
             f"Manifest decode path: {outputs['lzma_method']}",
@@ -56,12 +55,19 @@ def maybe_bootstrap_database(window: DamageCalculatorWindow) -> None:
         if outputs.get("refresh_error"):
             details.append(f"Fresh download failed, so WDC used saved local exports: {outputs['refresh_error']}")
         QMessageBox.information(window, "Initial Data Ready", "\n".join(details))
-    except Exception as exc:
+
+    def data_failed(error: str) -> None:
         QMessageBox.critical(
             window,
             "Initial Data Failed",
-            "WDC could not build its initial data. Open Settings later to retry with fresh data or saved local exports.\n\n" + str(exc),
+            "WDC could not build its initial data. Open Settings later to retry with fresh data or saved local exports.\n\n" + error,
         )
+
+    window.start_data_pipeline(
+        prefer_online=True,
+        on_succeeded=data_ready,
+        on_failed=data_failed,
+    )
 
 
 def migrate_existing_database(paths: dict[str, Path]) -> MigrationResult:

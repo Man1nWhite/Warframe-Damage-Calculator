@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from modules.constants import APP_NAME
-from modules.export_safety import UnfinishedExportPublication, require_complete_exports
+from modules.export_safety import UnfinishedExportPublication, locked_exports
 
 DB_NAME = "weapons.db"
 EXPORT_FILES = ("ExportWeapons_en_Cleaned.zip", "ExportKeys_en_Cleaned.zip")
@@ -60,26 +60,27 @@ def seed_source_files(project_root: Path) -> None:
     bundled_pair = [bundled_source / name for name in EXPORT_FILES]
     targets = [source / name for name in EXPORT_FILES]
     try:
-        require_complete_exports(*targets)
-        safe_to_seed = True
+        # Serialize the existence check with refresh publication. Seeded files
+        # must never fill one half of a pair being installed by another process.
+        with locked_exports(*targets):
+            if (not any(target.exists() for target in targets)
+                    and all(path.is_file() for path in bundled_pair)):
+                # Imported lazily to avoid a module-level app_paths/updater cycle.
+                from .updater import WarframeDataUpdater
+
+                stage = Path(tempfile.mkdtemp(prefix=".wdc-refresh-seed-", dir=source))
+                try:
+                    staged = [stage / name for name in EXPORT_FILES]
+                    for original, copy in zip(bundled_pair, staged, strict=True):
+                        shutil.copy2(original, copy)
+                    WarframeDataUpdater._publish_exports_locked(
+                        tuple(zip(staged, targets, strict=True)), stage)
+                finally:
+                    if not (stage / "PUBLISHING.json").exists():
+                        shutil.rmtree(stage, ignore_errors=True)
     except UnfinishedExportPublication:
         # Do not touch a pair that requires manual refresh recovery.
-        safe_to_seed = False
-    if (safe_to_seed and not any(target.exists() for target in targets)
-            and all(path.is_file() for path in bundled_pair)):
-        # Imported lazily to avoid a module-level app_paths/updater cycle.
-        from .updater import WarframeDataUpdater
-
-        stage = Path(tempfile.mkdtemp(prefix=".wdc-refresh-seed-", dir=source))
-        try:
-            staged = [stage / name for name in EXPORT_FILES]
-            for original, copy in zip(bundled_pair, staged, strict=True):
-                shutil.copy2(original, copy)
-            WarframeDataUpdater._publish_exports(
-                tuple(zip(staged, targets, strict=True)), stage)
-        finally:
-            if not (stage / "PUBLISHING.json").exists():
-                shutil.rmtree(stage, ignore_errors=True)
+        pass
 
     for file_name in SOURCE_FILES:
         if file_name in EXPORT_FILES:

@@ -17,7 +17,7 @@ import openpyxl
 from .constants import DAMAGE_TYPES, JSON_DAMAGE_INDEX_MAP, WEAPON_SLOT_MAP
 from .database_backup import create_database_backup
 from .database_revision import CURRENT_DATABASE_REVISION, require_supported_revision
-from .export_safety import require_complete_exports
+from .export_safety import locked_exports
 from .mod_effect_policy import is_supported_export_mod
 from .mod_parser import parse_effects
 from .weapon_export_policy import order_export_weapons
@@ -488,13 +488,17 @@ def load_import_payload(
     spreadsheet_xlsx_path: str | Path | None = None,
 ) -> ImportPayload:
     """Parse and validate all source files before changing a database."""
-    require_complete_exports(cleaned_weapons_zip_path, cleaned_upgrades_zip_path)
     spreadsheet = (rows_from_spreadsheet(spreadsheet_xlsx_path)
                    if spreadsheet_xlsx_path and Path(spreadsheet_xlsx_path).exists()
                    else [])
-    weapons = rows_from_cleaned_json(cleaned_weapons_zip_path)
-    source_mod_stats: dict[tuple[str, int], tuple[str, ...]] = {}
-    mods, effects = mods_from_cleaned_json(cleaned_upgrades_zip_path, source_stats=source_mod_stats)
+    # Keep the shared lock from the marker check until both ZIPs have been
+    # completely parsed; otherwise publication could replace one half between
+    # the two reads and feed a mixed pair to the database rebuild.
+    with locked_exports(cleaned_weapons_zip_path, cleaned_upgrades_zip_path):
+        weapons = rows_from_cleaned_json(cleaned_weapons_zip_path)
+        source_mod_stats: dict[tuple[str, int], tuple[str, ...]] = {}
+        mods, effects = mods_from_cleaned_json(
+            cleaned_upgrades_zip_path, source_stats=source_mod_stats)
     if not weapons or not mods or not effects:
         raise ValueError("Export data is incomplete: weapons, mods and parsed mod effects are required.")
     return ImportPayload(spreadsheet, weapons, mods, effects, source_mod_stats)

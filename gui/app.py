@@ -5,10 +5,12 @@ import math
 import os
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QFont, QIcon
+from PyQt6.QtCore import QObject, Qt, QThread, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCloseEvent, QDesktopServices, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -52,7 +54,6 @@ from modules.constants import (
     WINDOW_TITLE,
 )
 from modules.database import ModRepository, WeaponRepository
-from modules.importer import build_database
 from modules.mod_compatibility import ModCompatibility
 from modules.models import CalculationInputs, EquippedMod, Mod, Weapon
 from modules.updater import WarframeDataUpdater
@@ -220,6 +221,39 @@ How does the data updater work?
 -------------------------------
 WDC can download fresh public export data from DE and rebuild the SQLite database in one step. If the download cannot be completed, WDC can fall back to saved local export files, initially seeded from the app.
 """.strip()
+
+
+PipelineResult = dict[str, str | Path | None]
+
+
+@dataclass
+class PipelineCallbacks:
+    progress: Callable[[str], None] | None = None
+    succeeded: Callable[[PipelineResult], None] | None = None
+    failed: Callable[[str], None] | None = None
+    finished: Callable[[], None] | None = None
+
+
+class DataPipelineWorker(QObject):
+    """Run network refresh and database rebuild without touching Qt widgets."""
+
+    progress = pyqtSignal(str)
+    completed = pyqtSignal(object, object)
+
+    def __init__(self, pipeline: Callable[[bool, Callable[[str], None] | None], PipelineResult],
+                 prefer_online: bool) -> None:
+        super().__init__()
+        self.pipeline = pipeline
+        self.prefer_online = prefer_online
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            result = self.pipeline(self.prefer_online, self.progress.emit)
+        except Exception as exc:
+            self.completed.emit(None, str(exc))
+        else:
+            self.completed.emit(result, None)
 
 
 class SummaryCard(QFrame):
@@ -476,8 +510,50 @@ class SettingsDialog(QDialog):
         self.close_button.clicked.connect(self.accept)
 
     def set_status(self, message: str) -> None:
+        # Called only from the GUI thread via queued worker signals.
         self.status.append(message)
-        QApplication.processEvents()
+
+    def _set_pipeline_busy(self, busy: bool) -> None:
+        for button in (self.update_and_rebuild_button, self.use_backup_button,
+                       self.open_folder_button, self.close_button):
+            button.setEnabled(not busy)
+
+    def _start_pipeline(self, *, prefer_online: bool) -> None:
+        self._set_pipeline_busy(True)
+        started = self.window.start_data_pipeline(
+            prefer_online,
+            on_progress=self.set_status,
+            on_succeeded=self._pipeline_succeeded,
+            on_failed=self._pipeline_failed,
+            on_finished=self._pipeline_finished,
+        )
+        if not started:
+            self._set_pipeline_busy(False)
+            self.set_status("A data refresh or rebuild is already running.")
+
+    def _pipeline_succeeded(self, outputs: PipelineResult) -> None:
+        self.set_status(f"Database rebuilt at: {outputs['db_path']}")
+        self.set_status(f"Data source: {outputs['source_mode']}")
+        self.set_status(f"Manifest decode path: {outputs['lzma_method']}")
+        if outputs.get("backup_path"):
+            self.set_status(f"Previous database backup: {outputs['backup_path']}")
+        if outputs.get("refresh_error"):
+            self.set_status(
+                "Fresh download failed, so WDC used saved local exports: "
+                f"{outputs['refresh_error']}")
+        backup_note = (f"\n\nPrevious database backup: {outputs['backup_path']}"
+                       if outputs.get("backup_path") else "")
+        title = "Update Complete" if outputs.get("source_mode") == "fresh DE data" else "Rebuild Complete"
+        summary = ("WDC finished rebuilding the database." if title == "Update Complete"
+                   else "The SQLite database was rebuilt from saved local exports.")
+        QMessageBox.information(self, title, summary + backup_note)
+
+    def _pipeline_failed(self, error: str) -> None:
+        self.set_status(f"Database rebuild failed: {error}")
+        QMessageBox.critical(self, "Rebuild Failed", error)
+
+    def _pipeline_finished(self) -> None:
+        self._set_pipeline_busy(False)
 
     def _confirm_catalog_rebuild(self) -> bool:
         choice = QMessageBox.question(
@@ -492,37 +568,27 @@ class SettingsDialog(QDialog):
     def update_and_rebuild(self) -> None:
         if not self._confirm_catalog_rebuild():
             return
-        try:
-            self.set_status("Downloading fresh data from DE and rebuilding the SQLite database...")
-            outputs = self.window.run_data_pipeline(prefer_online=True, log_callback=self.set_status)
-            self.set_status(f"Database rebuilt at: {outputs['db_path']}")
-            self.set_status(f"Data source: {outputs['source_mode']}")
-            self.set_status(f"Manifest decode path: {outputs['lzma_method']}")
-            if outputs.get("backup_path"):
-                self.set_status(f"Previous database backup: {outputs['backup_path']}")
-            if outputs.get("refresh_error"):
-                self.set_status(f"Fresh download failed, so WDC used saved local exports: {outputs['refresh_error']}")
-            backup_note = f"\n\nPrevious database backup: {outputs['backup_path']}" if outputs.get("backup_path") else ""
-            QMessageBox.information(self, "Update Complete", "WDC finished rebuilding the database." + backup_note)
-        except Exception as exc:
-            self.set_status(f"Update failed: {exc}")
-            QMessageBox.critical(self, "Update Failed", str(exc))
+        self.set_status("Downloading fresh data from DE and rebuilding the SQLite database...")
+        self._start_pipeline(prefer_online=True)
 
     def rebuild_from_backup(self) -> None:
         if not self._confirm_catalog_rebuild():
             return
-        try:
-            self.set_status("Rebuilding the database from saved local exports...")
-            outputs = self.window.run_data_pipeline(prefer_online=False, log_callback=self.set_status)
-            self.set_status(f"Database rebuilt at: {outputs['db_path']}")
-            self.set_status("WDC used saved local exports for this rebuild.")
-            if outputs.get("backup_path"):
-                self.set_status(f"Previous database backup: {outputs['backup_path']}")
-            backup_note = f"\n\nPrevious database backup: {outputs['backup_path']}" if outputs.get("backup_path") else ""
-            QMessageBox.information(self, "Rebuild Complete", "The SQLite database was rebuilt from saved local exports." + backup_note)
-        except Exception as exc:
-            self.set_status(f"Rebuild failed: {exc}")
-            QMessageBox.critical(self, "Rebuild Failed", str(exc))
+        self.set_status("Rebuilding the database from saved local exports (no download)...")
+        self._start_pipeline(prefer_online=False)
+
+    def reject(self) -> None:
+        if self.window.data_pipeline_running:
+            self.set_status("The rebuild cannot be cancelled; wait for it to finish before closing Settings.")
+            return
+        super().reject()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.window.data_pipeline_running:
+            self.set_status("The rebuild cannot be cancelled; wait for it to finish before closing Settings.")
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def open_appdata_folder(self) -> None:
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.paths["root"])))
@@ -671,6 +737,10 @@ class DamageCalculatorWindow(QMainWindow):
         self.mod_slots: list[ModSlotWidget] = []
         self.available_mods: list[Mod] = []
         self.current_results = None
+        self._pipeline_thread: QThread | None = None
+        self._pipeline_worker: DataPipelineWorker | None = None
+        self._pipeline_callbacks: PipelineCallbacks | None = None
+        self._pipeline_busy = False
 
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(1800, 1040)
@@ -943,20 +1013,8 @@ class DamageCalculatorWindow(QMainWindow):
         return callback
 
     def rebuild_database(self) -> None:
-        build_database(
-            db_path=self.paths["db"],
-            cleaned_weapons_zip_path=self.paths["source"] / "ExportWeapons_en_Cleaned.zip",
-            cleaned_upgrades_zip_path=self.paths["source"] / "ExportKeys_en_Cleaned.zip",
-            spreadsheet_xlsx_path=(self.paths["source"] / "Warframe-Damage-Calculator_v2.xlsx"),
-        )
-        self.refresh_weapon_list()
-        if self.selected_weapon is not None:
-            refreshed = self.weapon_repository.get_weapon(self.selected_weapon.weapon)
-            if refreshed is not None:
-                self.selected_weapon = refreshed
-                self._show_weapon_summary(refreshed)
-                self._load_mod_options_for_weapon(refreshed)
-                self.recalculate()
+        """Preserve the legacy entry point while rebuilding on the worker thread."""
+        self.start_data_pipeline(prefer_online=False)
 
     def refresh_weapon_list(self) -> None:
         # The sidebar is the catalogue browser, so it asks for every weapon: the
@@ -1338,29 +1396,123 @@ class DamageCalculatorWindow(QMainWindow):
         if preset_name == "Custom":
             self.recalculate()
 
-    def run_data_pipeline(self, prefer_online: bool, log_callback: Callable[[str], None] | None = None) -> dict[str, str | Path | None]:
+    @property
+    def data_pipeline_running(self) -> bool:
+        return self._pipeline_busy
+
+    def start_data_pipeline(
+        self,
+        prefer_online: bool,
+        *,
+        on_progress: Callable[[str], None] | None = None,
+        on_succeeded: Callable[[PipelineResult], None] | None = None,
+        on_failed: Callable[[str], None] | None = None,
+        on_finished: Callable[[], None] | None = None,
+    ) -> bool:
+        """Start the updater/rebuild worker and deliver all UI work on the GUI thread."""
+        if self._pipeline_busy:
+            return False
+
+        thread = QThread(self)
+        worker = DataPipelineWorker(self.run_data_pipeline, prefer_online)
+        worker.moveToThread(thread)
+        self._pipeline_thread = thread
+        self._pipeline_worker = worker
+        self._pipeline_callbacks = PipelineCallbacks(
+            progress=on_progress,
+            succeeded=on_succeeded,
+            failed=on_failed,
+            finished=on_finished,
+        )
+        self._pipeline_busy = True
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_data_pipeline_progress)
+        worker.completed.connect(self._on_data_pipeline_completed)
+        worker.completed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_data_pipeline_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.statusBar().showMessage("Starting data refresh and database rebuild...")
+        thread.start()
+        return True
+
+    @pyqtSlot(str)
+    def _on_data_pipeline_progress(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+        if self._pipeline_callbacks and self._pipeline_callbacks.progress:
+            self._pipeline_callbacks.progress(message)
+
+    @pyqtSlot(object, object)
+    def _on_data_pipeline_completed(self, result: object, error: object) -> None:
+        callbacks = self._pipeline_callbacks
+        if error is not None:
+            message = str(error)
+            self.statusBar().showMessage(f"Data refresh/rebuild failed: {message}", 15000)
+            if callbacks and callbacks.failed:
+                callbacks.failed(message)
+            return
+
+        outputs = cast(PipelineResult, result)
+        try:
+            self.refresh_after_data_pipeline()
+        except Exception as exc:
+            message = f"The database was rebuilt, but the window could not refresh: {exc}"
+            self.statusBar().showMessage(message, 15000)
+            if callbacks and callbacks.failed:
+                callbacks.failed(message)
+            return
+
+        self.statusBar().showMessage("Database rebuild complete.", 8000)
+        if callbacks and callbacks.succeeded:
+            callbacks.succeeded(outputs)
+
+    @pyqtSlot()
+    def _on_data_pipeline_thread_finished(self) -> None:
+        callbacks = self._pipeline_callbacks
+        self._pipeline_busy = False
+        self._pipeline_thread = None
+        self._pipeline_worker = None
+        self._pipeline_callbacks = None
+        if callbacks and callbacks.finished:
+            callbacks.finished()
+
+    def run_data_pipeline(self, prefer_online: bool,
+                          log_callback: Callable[[str], None] | None = None) -> PipelineResult:
+        """Perform network, source parsing, and database work without touching widgets."""
         updater = WarframeDataUpdater()
         if log_callback:
             if prefer_online:
                 log_callback("Trying to download fresh data from DE. If that fails, WDC will fall back to saved local exports.")
             else:
                 log_callback("Using saved local export data (no download).")
-        outputs = updater.update_and_build_database(
+        return updater.update_and_build_database(
             db_path=self.paths["db"],
             cleaned_weapons_zip_path=self.paths["source"] / "ExportWeapons_en_Cleaned.zip",
             cleaned_upgrades_zip_path=self.paths["source"] / "ExportKeys_en_Cleaned.zip",
-            spreadsheet_xlsx_path=(self.paths["source"] / "Warframe-Damage-Calculator_v2.xlsx"),
+            spreadsheet_xlsx_path=self.paths["source"] / "Warframe-Damage-Calculator_v2.xlsx",
             allow_bundled_fallback=prefer_online,
         )
+
+    def refresh_after_data_pipeline(self) -> None:
+        """Refresh repositories and widgets after a successful worker result."""
         self.refresh_weapon_list()
-        if self.selected_weapon is not None:
-            refreshed = self.weapon_repository.get_weapon(self.selected_weapon.weapon)
-            if refreshed is not None:
-                self.selected_weapon = refreshed
-                self._show_weapon_summary(refreshed)
-                self._load_mod_options_for_weapon(refreshed)
-                self.recalculate()
-        return outputs
+        if self.selected_weapon is None:
+            return
+        refreshed = self.weapon_repository.get_weapon(self.selected_weapon.weapon)
+        if refreshed is not None:
+            self.selected_weapon = refreshed
+            self._show_weapon_summary(refreshed)
+            self._load_mod_options_for_weapon(refreshed)
+            self.recalculate()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.data_pipeline_running:
+            self.statusBar().showMessage(
+                "A data refresh/rebuild is still running; wait for it to finish before closing.", 15000)
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def compare_build(self) -> None:
         if self.selected_weapon is None or self.current_results is None:

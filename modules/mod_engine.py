@@ -29,8 +29,11 @@ def ordered_mod_effects(equipped: EquippedMod) -> Iterable[ModEffect]:
     primary = [effect for effect in effects if effect.code in BASE_ELEMENT_TYPES]
     if len(primary) < 2:
         return effects
-    reversed_primary = iter(reversed(primary))
-    return tuple(next(reversed_primary) if effect.code in BASE_ELEMENT_TYPES else effect
+    # Give only the last-listed primary priority. Rotate it to the first
+    # primary position while retaining the order of all earlier primaries;
+    # reversing the whole list changes pairings when a Riven has 3+ elements.
+    prioritized_primary = iter((primary[-1], *primary[:-1]))
+    return tuple(next(prioritized_primary) if effect.code in BASE_ELEMENT_TYPES else effect
                  for effect in effects)
 
 

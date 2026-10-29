@@ -14,7 +14,12 @@ import requests
 
 from .app_paths import ensure_app_dirs
 from .database_revision import require_supported_revision
-from .export_safety import UnfinishedExportPublication, require_complete_exports
+from .export_safety import (
+    UnfinishedExportPublication,
+    _require_complete_exports_unlocked,
+    export_lock,
+    require_complete_exports,
+)
 
 KEY_URL = "https://origin.warframe.com/PublicExport/index_en.txt.lzma"
 DATA_URL = "https://content.warframe.com/PublicExport/Manifest/"
@@ -108,14 +113,21 @@ class WarframeDataUpdater:
 
     @staticmethod
     def _publish_exports(archives: tuple[tuple[Path, Path], ...], stage: Path) -> None:
-        """Publish a validated pair, restoring originals on ordinary failures.
+        """Publish a validated pair under the shared process-level export lock.
 
-        Two filesystem entries cannot be replaced as one atomic operation.
-        Copies and a publication marker are kept until both replacements
-        succeed or a rollback succeeds. Later imports refuse marked pairs.
-        Concurrent readers and crash consistency under power loss still need
-        cross-process locking and filesystem-specific durability guarantees.
+        Two filesystem entries cannot be replaced as one atomic operation, so
+        readers and every publisher cooperate through a lock spanning the full
+        publication and rollback. Copies and a publication marker still allow
+        a later process to detect and manually recover a crash mid-publication.
         """
+        targets = tuple(target for _, target in archives)
+        with export_lock(*targets):
+            _require_complete_exports_unlocked(*targets)
+            WarframeDataUpdater._publish_exports_locked(archives, stage)
+
+    @staticmethod
+    def _publish_exports_locked(archives: tuple[tuple[Path, Path], ...], stage: Path) -> None:
+        """Perform publication with the parent folder lock already held."""
         backups: dict[Path, Path | None] = {}
         for _, target in archives:
             if target.exists():

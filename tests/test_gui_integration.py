@@ -6,6 +6,8 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -54,11 +56,54 @@ class GuiIntegrationTests(unittest.TestCase):
         self.window.show()
         self.app.processEvents()
 
+    def wait_for_pipeline(self, timeout=20):
+        deadline = time.monotonic() + timeout
+        while self.window.data_pipeline_running and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.005)
+        self.app.processEvents()
+        self.assertFalse(self.window.data_pipeline_running, "the data pipeline did not finish in time")
+
     def tearDown(self):
+        if self.window.data_pipeline_running:
+            self.wait_for_pipeline()
         self.window.close()
         self.window.deleteLater()
         self.app.processEvents()
         self.assertFalse(self.critical.called, f"Unexpected GUI error: {self.critical.call_args}")
+
+    def test_data_pipeline_runs_off_gui_thread_and_delivers_results_on_gui_thread(self):
+        gui_thread = threading.get_ident()
+        worker_threads = []
+        online_options = []
+        progress_threads = []
+        completion_threads = []
+        outputs = {
+            "db_path": self.paths["db"], "source_mode": "saved local exports",
+            "lzma_method": "Not applicable", "backup_path": None, "refresh_error": None,
+        }
+
+        def run_pipeline(prefer_online, log_callback):
+            worker_threads.append(threading.get_ident())
+            online_options.append(prefer_online)
+            log_callback("worker progress")
+            return outputs
+
+        with patch.object(self.window, "run_data_pipeline", side_effect=run_pipeline), \
+             patch.object(self.window, "refresh_after_data_pipeline"):
+            started = self.window.start_data_pipeline(
+                prefer_online=False,
+                on_progress=lambda _message: progress_threads.append(threading.get_ident()),
+                on_succeeded=lambda _result: completion_threads.append(threading.get_ident()),
+            )
+            self.assertTrue(started)
+            self.wait_for_pipeline()
+
+        self.assertEqual(len(worker_threads), 1)
+        self.assertNotEqual(worker_threads[0], gui_thread)
+        self.assertEqual(online_options, [False])
+        self.assertEqual(progress_threads, [gui_thread])
+        self.assertEqual(completion_threads, [gui_thread])
 
     def select_weapon(self, name: str):
         self.window.search_edit.setText(name)
@@ -408,6 +453,7 @@ class GuiIntegrationTests(unittest.TestCase):
                        side_effect=AssertionError("network must not be called")) as refresh, \
                  patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as confirm:
                 dialog.use_backup_button.click()
+                self.wait_for_pipeline()
             refresh.assert_not_called()
             self.assertIn("backed up", confirm.call_args.args[2])
             self.assertIn("rebuilt", dialog.status.toPlainText().lower())
@@ -434,6 +480,7 @@ class GuiIntegrationTests(unittest.TestCase):
             with patch("modules.importer.create_database_backup", side_effect=OSError("disk full")), \
                  patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
                 dialog.use_backup_button.click()
+                self.wait_for_pipeline()
             self.assertIn("disk full", dialog.status.toPlainText())
             self.assertTrue(self.critical.called)
             with closing(sqlite3.connect(self.paths["db"])) as connection, connection:
@@ -446,7 +493,7 @@ class GuiIntegrationTests(unittest.TestCase):
         dialog = SettingsDialog(self.window)
         try:
             with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No), \
-                 patch.object(self.window, "run_data_pipeline") as pipeline:
+                 patch.object(self.window, "start_data_pipeline") as pipeline:
                 dialog.use_backup_button.click()
                 dialog.update_and_rebuild_button.click()
             pipeline.assert_not_called()
@@ -456,7 +503,7 @@ class GuiIntegrationTests(unittest.TestCase):
     def test_first_run_declined_does_not_start_a_download(self):
         with patch.object(startup, "database_is_ready", return_value=False), \
              patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.No), \
-             patch.object(self.window, "run_data_pipeline") as pipeline:
+             patch.object(self.window, "start_data_pipeline") as pipeline:
             startup.maybe_bootstrap_database(self.window)
         pipeline.assert_not_called()
 
