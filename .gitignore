@@ -19,6 +19,9 @@ installer_output/
 .venv/
 venv/
 
+# Cross-process export-pair lock (created beside source archives)
+.wdc-exports.lock
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

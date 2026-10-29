@@ -122,6 +122,19 @@ class ElementalCombinationTests(unittest.TestCase):
         self.assertStatMapEqual({k: v for k, v in bonuses.items() if v},
                                 {"RAD": 0.9, "TOXIN": 0.3})
 
+    def test_riven_last_primary_gets_priority_without_reversing_the_rest(self) -> None:
+        # Only the last Riven primary moves ahead of the others. Reversing all
+        # three would pair Electricity with Cold and leave Heat uncombined.
+        riven = equipped(("HEAT", 0.1))[0]
+        riven.mod.name = "Test Riven"
+        riven.effects.extend([
+            ModEffect(code="COLD", value=0.2, text="+20% Cold", position=2),
+            ModEffect(code="ELEC", value=0.3, text="+30% Electricity", position=3),
+        ])
+        bonuses = self.aggregator.aggregate([riven], "Grineer")
+        self.assertStatMapEqual({k: v for k, v in bonuses.items() if v},
+                                {"RAD": 0.4, "COLD": 0.2})
+
     def test_aggregator_and_calculator_agree_for_all_four_effect_sequences(self) -> None:
         elements = ("HEAT", "COLD", "ELEC", "TOXIN")
         for sequence in itertools.product(elements, repeat=4):
