@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import errno
+import importlib
 import os
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import Any
 
 
 class UnfinishedExportPublication(RuntimeError):
@@ -43,6 +45,11 @@ def _windows_lock(handle, mode_name: str) -> None:
     lock_file(handle.fileno(), lock_mode, 1)
 
 
+def _posix_lock_module() -> Any:
+    """Load POSIX-only locking APIs without requiring them in Windows stubs."""
+    return importlib.import_module("fcntl")
+
+
 def _try_lock_file(handle) -> bool:
     """Try an exclusive one-byte lock using the platform's standard library."""
     if os.name == "nt":
@@ -53,8 +60,7 @@ def _try_lock_file(handle) -> bool:
         except OSError:
             return False
 
-    import fcntl
-
+    fcntl = _posix_lock_module()
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
@@ -70,8 +76,7 @@ def _unlock_file(handle) -> None:
         _windows_lock(handle, "LK_UNLCK")
         return
 
-    import fcntl
-
+    fcntl = _posix_lock_module()
     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
