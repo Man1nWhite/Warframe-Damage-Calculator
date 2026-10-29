@@ -24,7 +24,7 @@ from .database_revision import (
 )
 from .database_schema_safety import UnsafeCatalogSchemaError, validate_catalog_schema
 from .export_safety import locked_exports
-from .json_safety import reject_duplicate_keys
+from .json_safety import MAX_EXPORT_JSON_BYTES, read_bounded, reject_duplicate_keys
 from .mod_effect_policy import is_supported_export_mod
 from .mod_parser import parse_effects
 from .weapon_export_policy import order_export_weapons
@@ -186,6 +186,11 @@ def _empty_damage_row() -> dict[str, float | str]:
     return {damage_type.lower(): 0.0 for damage_type in DAMAGE_TYPES}
 
 
+# Bound both the compressed snapshot and the workbook's combined expanded
+# size. The bundled XLSX expands to ~1 MiB and the export ZIPs are smaller.
+MAX_SOURCE_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_WORKBOOK_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
+
 _CachedT = TypeVar("_CachedT")
 
 
@@ -205,7 +210,8 @@ def _cached_source_parse(path: str | Path,
     """
     resolved = Path(path).resolve()
     try:
-        contents = resolved.read_bytes()
+        with resolved.open("rb") as source:
+            contents = read_bounded(source, MAX_SOURCE_ARCHIVE_BYTES, f"Source archive {resolved}")
     except OSError:
         # Nothing to memoize; the cast only satisfies the unflattened return
         # type, which no caller ever sees when the reader raises.
@@ -240,6 +246,14 @@ def rows_from_spreadsheet(xlsx_path: str | Path) -> list[dict[str, float | str]]
 
 def _read_spreadsheet(xlsx_path: Path, contents: bytes | None = None) -> list[dict[str, float | str]]:
     source = io.BytesIO(contents) if contents is not None else xlsx_path
+    # XLSX is itself a ZIP; bound its combined declared expansion before
+    # openpyxl reads any worksheets or shared strings.
+    with zipfile.ZipFile(source) as archive:
+        if sum(info.file_size for info in archive.infolist()) > MAX_WORKBOOK_UNCOMPRESSED_BYTES:
+            raise ValueError(
+                f"Workbook {xlsx_path} exceeds the {MAX_WORKBOOK_UNCOMPRESSED_BYTES}-byte "
+                "uncompressed safety limit."
+            )
     with closing(openpyxl.load_workbook(source, data_only=True)) as workbook:
         sheet = workbook["Weapon-Data"]
         output: list[dict[str, float | str]] = []
@@ -290,6 +304,16 @@ def rows_from_cleaned_json(zip_path: str | Path) -> list[dict[str, float | str]]
     return [dict(items) for items in cached]
 
 
+def _read_export_json(archive: zipfile.ZipFile, member: str, zip_path: Path) -> object:
+    info = archive.getinfo(member)
+    description = f"Export JSON {member} in {zip_path}"
+    if info.file_size > MAX_EXPORT_JSON_BYTES:
+        raise ValueError(f"{description} exceeds the {MAX_EXPORT_JSON_BYTES}-byte safety limit.")
+    with archive.open(info) as source:
+        contents = read_bounded(source, MAX_EXPORT_JSON_BYTES, description)
+    return json.loads(contents, object_pairs_hook=reject_duplicate_keys)
+
+
 def _read_weapons(zip_path: Path, contents: bytes | None = None) -> list[dict[str, float | str]]:
     source = io.BytesIO(contents) if contents is not None else zip_path
     with zipfile.ZipFile(source) as archive:
@@ -298,7 +322,7 @@ def _read_weapons(zip_path: Path, contents: bytes | None = None) -> list[dict[st
             raise ValueError(
                 f"Weapon export ZIP must contain exactly one JSON member; found {len(json_names)}: {zip_path}"
             )
-        payload = json.loads(archive.read(json_names[0]), object_pairs_hook=reject_duplicate_keys)
+        payload = _read_export_json(archive, json_names[0], zip_path)
 
     if not isinstance(payload, dict) or not isinstance(payload.get("ExportWeapons"), list):
         raise ValueError(f"Weapon export is missing its ExportWeapons list: {zip_path}")
@@ -389,7 +413,7 @@ def _read_mods(
         member = "ExportUpgrades_en_Cleaned.json"
         if archive.namelist().count(member) != 1:
             raise ValueError(f"Upgrade export ZIP must contain exactly one {member} member: {zip_path}")
-        payload = json.loads(archive.read(member), object_pairs_hook=reject_duplicate_keys)
+        payload = _read_export_json(archive, member, zip_path)
 
     if not isinstance(payload, dict) or not isinstance(payload.get("ExportUpgrades"), list):
         raise ValueError(f"Upgrade export is missing its ExportUpgrades list: {zip_path}")

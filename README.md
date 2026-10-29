@@ -129,8 +129,16 @@ blank field means zero. Valence Base is an absolute damage amount, not a
 percentage. Invalid text or a numeric overflow leaves the entered text and
 equipped mods in place, shows an inline error, and clears the results until
 corrected. Such a build
-cannot be saved or compared. Invalid numeric values in an existing build file
-are rejected without changing the file or the current build.
+cannot be saved or compared. Invalid numeric values (including explicit JSON
+`null`) and duplicate object keys in an existing build file are rejected without
+changing the file or the current build. Omitted numeric fields in older builds
+still default to zero. Build files are limited to 4 MiB on both load and save.
+
+Negative damage-type bonuses can reduce their own damage bucket to zero but
+cannot subtract from another type. Elemental bonuses still scale from base
+damage before type-specific reductions; combinations of unusual negative
+elemental effects remain an approximation rather than an in-game-validated
+formula.
 
 If the database is locked or unreadable, the app keeps the existing equipped
 slots instead of treating failed mod reads as an empty loadout. Failed
@@ -154,6 +162,7 @@ Inside that folder the app keeps:
 - `source/ExportWeapons_en_Cleaned.zip`
 - `source/ExportKeys_en_Cleaned.zip`
 - `source/Warframe-Damage-Calculator_v2.xlsx`
+- `source/.wdc-export-backup-*/` (displaced original exports retained after refresh)
 - `builds/*.json`
 
 The app does not write a settings file; any other file in this folder (for
@@ -178,11 +187,17 @@ snapshot. If only one saved export is present, WDC does **not** fill the other
 from a potentially different snapshot: restore a known matching pair or use a
 fresh download before rebuilding. Independent reference files are staged and
 published individually without overwriting a file created during the copy.
-First-time automatic seeding requires hard-link support on the app-data
-filesystem; if unavailable, WDC reports an error rather than publishing an
-unsafe partial file. After closing WDC, a complete matching export pair and
-needed reference files can instead be copied there manually without overwriting
-existing user files.
+Automatic seeding and refresh require hard-link support on the app-data
+filesystem; if unavailable, WDC stops publication before moving saved exports.
+After closing WDC, a complete matching export pair and needed reference files
+can instead be copied there manually without overwriting existing user files.
+
+For resource safety, downloads and source archive snapshots are limited to
+512 MiB, the expanded manifest to 32 MiB, each export JSON to 128 MiB, and
+the workbook's declared total uncompressed size to 128 MiB. Oversized sources
+are rejected before they can replace saved exports or be imported; an online
+refresh can still fall back to the saved pair. These limits are not a guarantee
+of fixed memory use when parsing otherwise valid data.
 
 ## Existing Databases And Backups
 
@@ -284,8 +299,8 @@ fails, WDC retains `source/.wdc-refresh-*/PUBLISHING.json` and refuses to
 import or refresh the possibly mixed files. To recover:
 
 1. Close **all** WDC instances. Make a separate copy of the whole app-data
-   `source` folder, including the hidden `.wdc-refresh-*` directories; do not
-   rebuild or refresh yet.
+   `source` folder, including the hidden `.wdc-refresh-*` and
+   `.wdc-export-backup-*` directories; do not rebuild or refresh yet.
 2. Inspect `PUBLISHING.json`. For `"mode": "seed-no-clobber"`, WDC did not
    replace an existing destination, but another program may have created or
    edited one while seeding. Preserve all destinations and the `staged_copy`
@@ -293,17 +308,20 @@ import or refresh the possibly mixed files. To recover:
    `previous_copy` is `null`. Decide which files to keep and restore a verified
    matching pair, or move both destinations to a safe location before retrying
    a fresh first-time seed.
-3. For other markers, copy each `previous_copy` from the staging directory over
-   its `destination` in `source`. If `previous_copy` is `null`, that destination
-   was absent before publication; move any file that appeared there to safety
-   rather than deleting an unrecognized user file. Restore **both** entries,
-   even if only one appears changed. Keep the staged copies until recovery is
-   complete.
+3. For `"mode": "refresh-no-clobber"` or older markers, inspect the
+   `destination`, its `previous_copy` and `staged_copy` in the staging
+   directory, and any `displaced_copy` in the indicated `recovery_directory`.
+   The displaced original can include a later edit and may not match the older
+   recovery copy. Preserve all of these separately before restoring anything,
+   including any destination that appeared after a `null` `previous_copy`.
+   Restore a verified matching pair of **both** exports; never overwrite an
+   unreviewed destination or newer edit.
 4. If a required previous copy is missing, the marker is unreadable, or there
    are multiple interrupted stages and their order is unclear, do not guess or
    simply delete the marker: retain the copies and obtain a known-good matching
    pair of exports. Once the saved pair is verified and restored, remove the
-   resolved staging directory (including its marker), then retry.
+   resolved staging directory (including its marker), then retry. Older markers
+   may not contain a `recovery_directory`.
 
 An interruption during an independent reference-file copy can leave a hidden
 `source/.wdc-reference-*` staging directory. It is not read as a reference
@@ -312,19 +330,23 @@ user wants to keep have been copied elsewhere.
 
 WDC also fingerprints the saved export pair before downloading and checks it
 again before publication, so even a same-size, same-mtime edit made during the
-network request is not silently overwritten. An absent export created during
-that interval is also preserved. The marker and retained previous copies
+network request is not silently overwritten. During publication WDC retains
+actually displaced originals in `source/.wdc-export-backup-*` and creates the
+new destinations without clobbering files created in the meantime. Unrelated
+readers can briefly observe a missing destination during the move. Those
+backups are not automatically pruned, even after successful refreshes; close
+other programs and review them before removing them. The marker and copies
 protect against ordinary exceptions and many process interruptions; WDC does
 not automatically roll back a failed publication because an unrelated program
 may have changed a destination. This is **not** a power-loss durability
-guarantee. Cooperating
-WDC processes use a persistent `source/.wdc-exports.lock` OS lock to serialize
-export publication and import reads; nested reads by the same thread reuse the
-lock. The lock does not prevent unrelated programs from editing files and does
-not lock the database for the whole rebuild. Close other WDC instances before
-refreshing or rebuilding. Export publication and the database rebuild are
-separate operations: if the rebuild fails after a successful refresh, the saved
-exports can be newer than the unchanged database; retry after resolving the error.
+guarantee. Cooperating WDC processes use a persistent `source/.wdc-exports.lock`
+OS lock to serialize export publication and import reads; nested reads by the
+same thread reuse the lock. The lock does not prevent unrelated programs from
+editing files and does not lock the database for the whole rebuild. Close other
+WDC instances before refreshing or rebuilding. Export publication and the
+database rebuild are separate operations: if the rebuild fails after a
+successful refresh, the saved exports can be newer than the unchanged database;
+retry after resolving the error.
 
 ## Riven Stat Tables
 

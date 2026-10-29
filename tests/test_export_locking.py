@@ -98,17 +98,17 @@ from pathlib import Path
 from unittest.mock import patch
 from modules.updater import WarframeDataUpdater
 source, stage, first, release = map(Path, sys.argv[1:5])
-original_replace = os.replace
+original_link = os.link
 def pause_after_first(src, dest):
-    original_replace(src, dest)
+    original_link(src, dest)
     if Path(dest).name == 'ExportWeapons_en_Cleaned.zip':
-        first.write_text('replaced')
+        first.write_text('published')
         deadline = time.monotonic() + 15
         while not release.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
 archives = ((stage / 'ExportWeapons_en_Cleaned.zip', source / 'ExportWeapons_en_Cleaned.zip'),
             (stage / 'ExportKeys_en_Cleaned.zip', source / 'ExportKeys_en_Cleaned.zip'))
-with patch('modules.updater.os.replace', side_effect=pause_after_first):
+with patch('modules.updater.os.link', side_effect=pause_after_first):
     WarframeDataUpdater._publish_exports(archives, stage)
 """
         publisher_b = r"""

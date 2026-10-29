@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -413,6 +414,35 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
         self.assertEqual(self.window.mod_slots[1].rank_spin.value(), 5)
 
+    def test_mod_categories_include_all_factions_without_mislabeling_elements(self):
+        self.select_weapon("Braton")
+        self.window.mod_category_combo.setCurrentText("Faction")
+        faction = {mod.name for mod in self.window.mod_slots[0].current_options}
+        self.assertIn("Primed Bane of Orokin", faction)
+        self.assertIn("Primed Bane of The Murmur", faction)
+        self.assertIn("Bane of Grineer", faction)
+        self.assertNotIn("Hellfire", faction)
+        self.assertNotIn("Serration", faction)
+
+        self.window.mod_category_combo.setCurrentText("Base Damage")
+        base = {mod.name for mod in self.window.mod_slots[0].current_options}
+        self.assertIn("Serration", base)
+        self.assertNotIn("Hellfire", base)
+        self.assertNotIn("Primed Bane of Orokin", base)
+        self.assertNotIn("Primed Bane of The Murmur", base)
+
+        self.window.mod_category_combo.setCurrentText("Elemental")
+        elemental = {mod.name for mod in self.window.mod_slots[0].current_options}
+        self.assertIn("Hellfire", elemental)
+        self.assertNotIn("Serration", elemental)
+
+        # A mod with multiple effects belongs to each applicable category.
+        mixed = replace(self.window.available_mods[0], description="",
+                        effect_summary="+20% Damage, +40% Heat, X1.3 Damage to Murmur")
+        for category in ("Base Damage", "Elemental", "Faction"):
+            self.assertTrue(self.window._mod_matches_category(mixed, category))
+        self.assertFalse(self.window._mod_matches_category(mixed, "Other"))
+
     def test_filtering_reuses_current_results_without_recalculating_each_slot(self):
         self.select_weapon("Alternox Prime")
         for i in range(8):
@@ -668,6 +698,17 @@ class GuiIntegrationTests(unittest.TestCase):
         self.assertTrue(self.warning.called)
         self.assertFalse(list(path.parent.glob(".existing.json.*.tmp")))
 
+    def test_oversized_build_is_not_saved_over_an_existing_file(self):
+        self.select_weapon("Braton")
+        path = self.paths["builds"] / "existing.json"
+        path.write_text("previous contents", encoding="utf-8")
+        with patch.object(QFileDialog, "getSaveFileName", return_value=(str(path), "JSON")), \
+             patch("gui.app.MAX_BUILD_JSON_BYTES", 32):
+            self.window.save_build()
+        self.assertEqual(path.read_text(encoding="utf-8"), "previous contents")
+        self.assertIn("safety limit", str(self.warning.call_args))
+        self.assertFalse(list(path.parent.glob(".existing.json.*.tmp")))
+
     def test_malformed_build_files_are_reported_for_load_and_compare(self):
         self.select_weapon("Alternox Prime")
         path = self.paths["builds"] / "bad.json"
@@ -818,7 +859,8 @@ class GuiIntegrationTests(unittest.TestCase):
         path = self.paths["builds"] / "bad-numbers.json"
         for key, value in (("armor", -100), ("valence_base", "-1"),
                            ("armor", False), ("valence_base", "nan"),
-                           ("armor", "not a number")):
+                           ("armor", "not a number"), ("armor", None),
+                           ("valence_base", None)):
             with self.subTest(key=key, value=value):
                 path.write_text(json.dumps({"weapon": "Alternox Prime", "inputs": {key: value}}),
                                 encoding="utf-8")
@@ -831,6 +873,50 @@ class GuiIntegrationTests(unittest.TestCase):
                 self.assertEqual(self.window.selected_weapon.weapon, "Braton")
                 self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
                 self.assertIs(self.window.current_results, original)
+
+    def test_oversized_or_deeply_nested_build_is_rejected_without_mutation(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        original = self.window.current_results
+        path = self.paths["builds"] / "large-or-deep.json"
+        oversized = json.dumps({"weapon": "Hek", "extra": "x" * 1000})
+        nested = '{"weapon":"Hek", "extra":' + '[' * 2000 + '0' + ']' * 2000 + '}'
+        for content, limit in ((oversized, 256), (nested, 1024 * 1024)):
+            with self.subTest(limit=limit):
+                path.write_text(content, encoding="utf-8")
+                self.warning.reset_mock()
+                with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+                     patch("gui.app.MAX_BUILD_JSON_BYTES", limit), \
+                     patch.object(CompareBuildDialog, "exec", return_value=0):
+                    self.window.load_build()
+                    self.window.compare_build()
+                self.assertEqual(self.warning.call_count, 2)
+                self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+                self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+                self.assertIs(self.window.current_results, original)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+
+    def test_duplicate_build_keys_are_rejected_without_changing_the_build(self):
+        self.select_weapon("Braton")
+        self.equip(0, "Cryo Rounds")
+        original = self.window.current_results
+        path = self.paths["builds"] / "ambiguous.json"
+        for content in (
+            '{"weapon":"Braton", "weapon":"Hek"}',
+            '{"weapon":"Hek", "inputs":{"armor":"0", "armor":"100"}}',
+        ):
+            with self.subTest(content=content):
+                path.write_text(content, encoding="utf-8")
+                self.warning.reset_mock()
+                with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+                     patch.object(CompareBuildDialog, "exec", return_value=0):
+                    self.window.load_build()
+                    self.window.compare_build()
+                self.assertEqual(self.warning.call_count, 2)
+                self.assertEqual(self.window.selected_weapon.weapon, "Braton")
+                self.assertEqual(self.window.mod_slots[0].current_mod.name, "Cryo Rounds")
+                self.assertIs(self.window.current_results, original)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
 
     def test_saved_data_rebuild_does_not_call_the_network_and_shows_backup(self):
         seed_source_files(ROOT)

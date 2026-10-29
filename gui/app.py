@@ -48,16 +48,25 @@ from modules.calculator import DamageCalculator, NumericRangeError, parse_nonneg
 from modules.constants import (
     APP_TITLE,
     APP_VERSION,
+    BASE_ELEMENT_TYPES,
+    COMBINED_ELEMENT_TYPES,
     DAMAGE_TYPES,
     DISPLAY_NAMES,
     FACTION_MULTIPLIERS,
     MOD_SLOT_COUNT,
+    PHYSICAL_DAMAGE_TYPES,
     WINDOW_TITLE,
 )
 from modules.database import ModRepository, WeaponRepository
+from modules.json_safety import read_bounded, reject_duplicate_keys
 from modules.mod_compatibility import ModCompatibility
+from modules.mod_parser import parse_effects
 from modules.models import CalculationInputs, CalculationResults, EquippedMod, Mod, Weapon
 from modules.updater import WarframeDataUpdater
+
+# Builds contain only a weapon, inputs and eight mod slots; bound untrusted
+# files well above ordinary builds before loading them into memory.
+MAX_BUILD_JSON_BYTES = 4 * 1024 * 1024
 
 DARK_STYLESHEET = """
 QWidget {
@@ -1186,20 +1195,34 @@ class DamageCalculatorWindow(QMainWindow):
             self.recalculate()
 
     def _mod_matches_category(self, mod: Mod, category: str) -> bool:
-        summary = f"{mod.effect_summary} {mod.description}".lower()
         if category == "All Mods":
             return True
-        if category == "Elemental":
-            return any(term in summary for term in ("heat", "cold", "electric", "electricity", "toxin", "blast", "radiation", "gas", "magnetic", "viral", "corrosive"))
-        if category == "Base Damage":
-            return "damage" in summary and not any(term in summary for term in ("damage to grineer", "damage to corpus", "damage to infested", "damage to corrupted", "impact", "puncture", "slash"))
-        if category == "Physical":
-            return any(term in summary for term in ("impact", "puncture", "slash"))
-        if category == "Faction":
-            return any(term in summary for term in ("damage to grineer", "damage to corpus", "damage to infested", "damage to corrupted"))
-        if category == "Other":
-            return not self._mod_matches_category(mod, "Elemental") and not self._mod_matches_category(mod, "Base Damage") and not self._mod_matches_category(mod, "Physical") and not self._mod_matches_category(mod, "Faction")
-        return True
+
+        # Summaries are built from the source's stat fragments. Use the same
+        # parser as the calculator rather than guessing from the word "damage":
+        # e.g. Heat Damage is not base damage and Orokin/Murmur are factions.
+        codes = {effect.code for fragment in mod.effect_summary.split(",")
+                 for effect in parse_effects(fragment)}
+        if codes:
+            matches = {
+                "Elemental": bool(codes & (BASE_ELEMENT_TYPES | COMBINED_ELEMENT_TYPES | {"VOID"})),
+                "Base Damage": "TRUE" in codes,
+                "Physical": bool(codes & PHYSICAL_DAMAGE_TYPES),
+                "Faction": any(code.startswith("BANE_") for code in codes),
+            }
+        else:
+            # Preserve a best-effort filter for custom/legacy rows whose summary
+            # uses labels that the official stat parser does not recognize.
+            summary = f"{mod.effect_summary} {mod.description}".lower()
+            elemental = any(term in summary for term in (
+                "heat", "cold", "electric", "toxin", "blast", "radiation", "gas",
+                "magnetic", "viral", "corrosive", "void"))
+            physical = any(term in summary for term in ("impact", "puncture", "slash"))
+            faction = "damage to " in summary
+            matches = {"Elemental": elemental, "Physical": physical, "Faction": faction,
+                       "Base Damage": "damage" in summary and not (elemental or physical or faction)}
+        matches["Other"] = not any(matches.values())
+        return matches.get(category, True)
 
     def on_mod_changed(self) -> None:
         for slot in self.mod_slots:
@@ -1372,13 +1395,16 @@ class DamageCalculatorWindow(QMainWindow):
         target = Path(file_name)
         temporary: Path | None = None
         try:
+            contents = json.dumps(payload, indent=2).encode("utf-8")
+            if len(contents) > MAX_BUILD_JSON_BYTES:
+                raise ValueError(f"Build JSON exceeds the {MAX_BUILD_JSON_BYTES}-byte safety limit.")
             # Do not truncate an existing build before the new JSON is ready.
             descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
             temporary = Path(name)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(contents)
             os.replace(temporary, target)
-        except (OSError, UnicodeError) as exc:
+        except (OSError, UnicodeError, ValueError) as exc:
             QMessageBox.warning(self, "Save Build", f"Could not save the build: {exc}")
             return
         finally:
@@ -1397,7 +1423,10 @@ class DamageCalculatorWindow(QMainWindow):
             # Preserve the original decimal exponent: json's default float
             # parser would turn a tiny nonzero saved value into 0.0 silently.
             try:
-                payload = json.loads(Path(file_name).read_text(encoding="utf-8"), parse_float=Decimal)
+                with Path(file_name).open("rb") as source:
+                    contents = read_bounded(source, MAX_BUILD_JSON_BYTES, "Build JSON")
+                payload = json.loads(contents.decode("utf-8"), parse_float=Decimal,
+                                     object_pairs_hook=reject_duplicate_keys)
             except InvalidOperation as exc:
                 raise ValueError("A number in the build is outside the supported range.") from exc
             if not isinstance(payload, dict):
@@ -1424,13 +1453,10 @@ class DamageCalculatorWindow(QMainWindow):
                 raise ValueError(f"Unknown adversary element: {element}")
             inputs = {"faction": faction, "lich_element": element}
             for key, label in (("armor", "Armor"), ("valence_base", "Valence")):
-                value = raw_inputs.get(key)
-                if value is None:
-                    text = "0"
-                elif isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+                value = raw_inputs.get(key, 0)
+                if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
                     raise ValueError(f"{label} must be a number or numeric text.")
-                else:
-                    text = str(value)
+                text = str(value)
                 self._parse_numeric_input(text, label)
                 inputs[key] = text
 
@@ -1459,7 +1485,8 @@ class DamageCalculatorWindow(QMainWindow):
                     raise ValueError(f"Invalid rank {rank} for {unique_name or 'empty slot'}.")
                 mods.append((mod, rank))
             return weapon, inputs, mods, available_mods
-        except (OSError, UnicodeError, ValueError, TypeError, sqlite3.Error, KeyError, IndexError) as exc:
+        except (OSError, UnicodeError, ValueError, TypeError, sqlite3.Error,
+                KeyError, IndexError, RecursionError) as exc:
             QMessageBox.warning(self, action, f"Could not read the build: {exc}")
             return None
 

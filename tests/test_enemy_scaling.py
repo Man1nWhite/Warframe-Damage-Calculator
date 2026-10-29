@@ -23,6 +23,7 @@ from modules.enemy_scaling import (
     ScalingCurve,
     armor_damage_reduction,
     empowered_multiplier,
+    enemy_armor_damage_multiplier,
     enemy_armor_damage_reduction,
     enemy_damage_multiplier,
     eximus_base_health,
@@ -93,6 +94,16 @@ class IndependentWikiCurveTests(unittest.TestCase):
         self.assertAlmostEqual(enemy_armor_damage_reduction(3000), 3000 / 3300)
         self.assertNotEqual(enemy_armor_damage_reduction(3000),
                             armor_damage_reduction(3000))  # display is rounded
+
+    def test_armor_multiplier_is_stable_above_the_normal_cap(self) -> None:
+        for armor in (0, 500, 2700):
+            self.assertEqual(enemy_armor_damage_multiplier(armor),
+                             1 - enemy_armor_damage_reduction(armor))
+        for armor in (2700.01, 3000, 1e20, 1e308):
+            with self.subTest(armor=armor):
+                multiplier = enemy_armor_damage_multiplier(armor)
+                self.assertGreater(multiplier, 0)
+                self.assertAlmostEqual(multiplier / (300 / (armor + 300)), 1)
 
     def test_faction_shields_use_their_own_curves(self) -> None:
         # q=100 is beyond the transition; values are pre-display rounded.

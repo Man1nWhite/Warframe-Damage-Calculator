@@ -417,9 +417,15 @@ def simulate(build: AkariusBuild,
         route(damage, when, "direct", shot_viral_stacks)
         if target.health <= 0:
             return
-        # One independent status roll per damage instance.
-        if rng.random() < build.status_per_instance:
+        # Each damage instance gets one proc per full 100% status chance,
+        # plus an independent fractional roll (as in the other simulators).
+        chance = max(0.0, build.status_per_instance)
+        guaranteed = int(math.floor(chance))
+        count = guaranteed + (1 if rng.random() < chance - guaranteed else 0)
+        for _ in range(count):
             add_proc(roll(weights), when, cf, base_modded)
+            if target.health <= 0:
+                break
 
     shot_clock = 0.0       # wall-clock time of the next rocket
     now = 0.0
@@ -470,6 +476,8 @@ def simulate(build: AkariusBuild,
             fire_instance(when, cf_aoe, build.blast_instance,
                           build.proc_weights_blast,
                           build.blast_base_modded, shot_viral_stacks)
+            if target.health <= 0:
+                break
         shots += 1
         ammo -= 1
         if trace and shots % max(1, int(trace_interval_s

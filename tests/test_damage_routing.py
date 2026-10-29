@@ -77,6 +77,12 @@ class DamageRoutingTests(unittest.TestCase):
         result = route_enemy_hit({"TRUE": 0.1}, overguard=0, armor=2700)
         self.assertEqual(result.health, 0.1)
 
+    def test_extreme_armor_does_not_round_positive_damage_to_zero(self):
+        result = route_enemy_hit({"IMPACT": 1e20}, overguard=0, armor=1e20)
+        self.assertAlmostEqual(result.health, 300)
+        bypass = route_enemy_hit({"TRUE": 0.1}, overguard=0, armor=1e20)
+        self.assertEqual(bypass.health, 0.1)
+
     def test_single_pass_matches_the_reference_two_pass_route(self):
         """The single-pass route must reproduce Damage/Calculation exactly.
 

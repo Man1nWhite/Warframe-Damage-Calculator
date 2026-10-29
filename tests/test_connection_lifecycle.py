@@ -172,9 +172,17 @@ class ConnectionLifecycleTests(unittest.TestCase):
             def close(self):
                 self.closed = True
         workbook = Workbook()
-        with patch("modules.importer.openpyxl.load_workbook", return_value=workbook):
-            with self.assertRaises(KeyError):
-                rows_from_spreadsheet("missing-sheet.xlsx")
+        # Use a real archive so the size/format preflight succeeds before the
+        # mocked workbook exercises the missing-sheet cleanup path.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "missing-sheet.xlsx"
+            source = openpyxl.Workbook()
+            source.save(path)
+            source.close()
+            with patch("modules.importer.openpyxl.load_workbook", return_value=workbook) as loader:
+                with self.assertRaises(KeyError):
+                    rows_from_spreadsheet(path)
+            loader.assert_called_once()
         self.assertTrue(workbook.closed)
 
     def test_spreadsheet_rows_are_cached_but_never_stale(self):

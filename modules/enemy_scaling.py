@@ -252,6 +252,18 @@ def enemy_armor_damage_reduction(armor: float) -> float:
     return 0.9 * math.sqrt(armor / ARMOR_CAP)
 
 
+def enemy_armor_damage_multiplier(armor: float) -> float:
+    """Unrounded fraction of health damage remaining after enemy armor.
+
+    Above 2700 armor, calculate the complement of ``armor / (armor + 300)``
+    directly. Subtracting that ratio from one rounds to zero for very large
+    but finite armor, incorrectly turning positive hits into zero damage.
+    """
+    if armor > ARMOR_CAP:
+        return 300.0 / (armor + 300.0)
+    return 1.0 - enemy_armor_damage_reduction(armor)
+
+
 def armor_damage_reduction(armor: float) -> float:
     """Enemy armor DR: ``round(sqrt(3 * armor) * 100) / 10000``.
 
