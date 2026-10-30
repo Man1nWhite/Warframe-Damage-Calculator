@@ -26,6 +26,10 @@ def require_json_depth(text: str, max_depth: int, description: str) -> None:
 
     Brackets and braces in strings do not count; backslash-escaped characters
     cannot end a string. Syntax validation remains the JSON decoder's job.
+
+    Unbalanced closing brackets cannot be used to buy headroom: the running
+    depth stops at zero, so ``]]]]`` followed by deeply nested arrays still
+    trips the limit instead of starting from a negative count.
     """
     depth = 0
     in_string = False
@@ -45,7 +49,7 @@ def require_json_depth(text: str, max_depth: int, description: str) -> None:
             if depth > max_depth:
                 raise ValueError(f"{description} exceeds the maximum nesting depth of {max_depth}.")
         elif char in "]}":
-            depth -= 1
+            depth = max(depth - 1, 0)
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

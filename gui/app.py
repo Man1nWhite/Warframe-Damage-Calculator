@@ -1762,7 +1762,8 @@ class DamageCalculatorWindow(QMainWindow):
         return parse_nonnegative_number(value, label, blank_zero=True)
 
 
-def build_application(db_path) -> QApplication:
+def build_application() -> QApplication:
+    """Create the process-wide QApplication and apply the dark theme."""
     app = QApplication.instance() or QApplication([])
     icon_path = Path(__file__).resolve().parents[1] / "wdc.ico"
     if icon_path.exists():

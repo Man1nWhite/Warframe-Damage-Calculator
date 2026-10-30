@@ -91,7 +91,7 @@ def migrate_existing_database(paths: dict[str, Path]) -> MigrationResult:
 def main() -> int:
     project_root = Path(__file__).resolve().parent
     paths = ensure_app_dirs()
-    app = build_application(paths["db"])
+    app = build_application()
     try:
         seed_source_files(project_root)
     except (OSError, RuntimeError) as exc:

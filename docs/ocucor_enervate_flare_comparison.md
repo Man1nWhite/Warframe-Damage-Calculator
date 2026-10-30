@@ -175,16 +175,16 @@ per setup. Shorter is faster. Flare is either zero stacks or 40 stacks at
 
 | Target | Initial tendrils | Enervate | Flare, zero stacks | Flare, 40 stacks |
 | --- | ---: | ---: | ---: | ---: |
-| Ordinary | 0 | 2.147 (2.135) | 2.964 (3.000) | 2.633 (2.656) |
+| Ordinary | 0 | 2.149 (2.135) | 2.965 (3.000) | 2.634 (2.656) |
 | Ordinary | 4 | 2.003 (2.000) | 2.005 (2.000) | 2.001 (2.000) |
-| Eximus | 0 | 5.824 (6.000) | 7.224 (7.000) | 6.653 (7.000) |
-| Eximus | 4 | 4.031 (4.000) | 4.091 (4.000) | 3.989 (4.000) |
+| Eximus | 0 | 5.829 (6.000) | 7.228 (7.000) | 6.655 (7.000) |
+| Eximus | 4 | 4.032 (4.000) | 4.093 (4.000) | 3.990 (4.000) |
 
 The repeated whole-second medians come from the assumed shared Heat pulse,
 not evidence of in-game precision. Against the four-tendril Eximus, the
 paired mean difference `Flare − Enervate` was **−0.042 s** for full Flare
-(approximate 95% Monte Carlo interval **−0.049 to −0.035 s**) and **+0.060 s**
-for cold Flare (**+0.051 to +0.069 s**). These intervals describe sampling
+(approximate 95% Monte Carlo interval **−0.050 to −0.035 s**) and **+0.061 s**
+for cold Flare (**+0.052 to +0.070 s**). These intervals describe sampling
 noise *within this model*, not uncertainty about the model itself.
 
 In the cold-Flare Eximus runs, all trials reached 40 stacks: median time was
@@ -192,7 +192,7 @@ In the cold-Flare Eximus runs, all trials reached 40 stacks: median time was
 ordinary target with four tendrils, only **0.7%** reached 40 before death;
 this highlights why preloaded Flare and startup are different comparisons.
 For the zero-tendril Eximus, a reload occurred in **0.9%** of Enervate trials,
-**95.4%** of cold-Flare trials, and **58.4%** of full-Flare trials.
+**95.7%** of cold-Flare trials, and **58.5%** of full-Flare trials.
 
 ## Illustrative ten-target rooms—not a gameplay ranking
 
@@ -212,10 +212,10 @@ illustration of this particular approximation.
 
 | Ten targets | Initial tendrils | Enervate | Flare, zero stacks | Flare, 40 stacks |
 | --- | ---: | ---: | ---: | ---: |
-| Ordinary | 0 | 8.274 | 9.199 | 8.883 |
+| Ordinary | 0 | 8.275 | 9.200 | 8.887 |
 | Ordinary | 4 | 4.054 | 4.053 | 4.053 |
-| Eximus | 0 | 25.191 | 22.467 | 24.521 |
-| Eximus | 4 | 8.212 | 8.059 | 8.045 |
+| Eximus | 0 | 25.223 | 22.480 | 24.585 |
+| Eximus | 4 | 8.218 | 8.060 | 8.047 |
 
 With four initial tendrils, cold Flare reached its cap in a median **0.417 s**
 in these rooms, because separate targets supply separate damage instances.
@@ -232,9 +232,9 @@ from Enervate's actual reset mechanics**:
 
 | Ten Eximus, initially four tendrils | Enervate mean | Full Flare mean |
 | --- | ---: | ---: |
-| Single-hit average, no extra | 8.212 s | 8.045 s |
-| Hypothetical +50 points at four extra beams | 8.010 s | 8.045 s |
-| Hypothetical +100 points at four extra beams | 6.643 s | 8.045 s |
+| Single-hit average, no extra | 8.218 s | 8.047 s |
+| Hypothetical +50 points at four extra beams | 8.011 s | 8.047 s |
+| Hypothetical +100 points at four extra beams | 6.669 s | 8.047 s |
 
 The reversal demonstrates sensitivity, not that either extra value is correct.
 The community also discusses this Ocucor-specific interaction, but those
@@ -250,13 +250,13 @@ mean seconds over 600 trials; only the stated assumption changes.
 
 | Scenario | Enervate | Flare, zero | Flare, full |
 | --- | ---: | ---: | ---: |
-| Baseline, same-seed subset | 4.025 | 4.079 | 3.979 |
-| Proportional breaking-hit Overguard overflow | 4.006 | 4.061 | 3.974 |
-| Every live Heat stack contributes at the group's next pulse | 3.085 | 3.359 | 3.020 |
-| First Heat proc's **entire** base/crit seed inherited by later stacks | 6.857 | 8.050 | 4.904 |
-| Beam ramp also scales new Heat seeds | 4.094 | 4.150 | 4.015 |
-| Cap Puncture at three stacks throughout | 4.033 | 4.171 | 4.001 |
-| Idealized target starts at full beam ramp | 4.025 | 4.076 | 3.963 |
+| Baseline, same-seed subset | 4.026 | 4.081 | 3.980 |
+| Proportional breaking-hit Overguard overflow | 4.006 | 4.063 | 3.975 |
+| Every live Heat stack contributes at the group's next pulse | 3.087 | 3.364 | 3.020 |
+| First Heat proc's **entire** base/crit seed inherited by later stacks | 6.863 | 8.060 | 4.907 |
+| Beam ramp also scales new Heat seeds | 4.096 | 4.153 | 4.015 |
+| Cap Puncture at three stacks throughout | 4.034 | 4.175 | 4.002 |
+| Idealized target starts at full beam ramp | 4.025 | 4.078 | 3.964 |
 
 The Heat alternatives are deliberately unvalidated. The Wiki documents
 inheritance of the first source's Heat/faction modifiers and notes exceptions
@@ -288,6 +288,13 @@ python -m modules.ocucor_comparison \
   > ocucor_results.jsonl
 python -m unittest tests.test_ocucor_comparison tests.test_ocucor_sim -v
 ```
+
+[`tests/test_ocucor_artifacts.py`](../tests/test_ocucor_artifacts.py) guards the
+JSONL against silent staleness: it checks every record's scenario, order,
+settings and trial count, re-runs one scenario at its recorded trial count and
+requires an exact match. Regenerate the JSONL whenever a simulator change lands;
+this artifact was last regenerated for the Cold-aware critical-damage change,
+which moved most means by less than 0.05 s.
 
 The [formula audit](formula_audit.md) records broader routing and simulator
 limitations. The older [Ocucor report](ocucor_riven_sim.md) is a historical

@@ -204,6 +204,46 @@ def compare(name: str, *, eximus: bool, trials: int, seed: int,
     return record
 
 
+def scenarios(*, seed: int, single_trials: int, room_trials: int,
+              sensitivity_trials: int) -> list[tuple[str, dict[str, Any]]]:
+    """Every report scenario, in artifact order, with its ``compare`` kwargs.
+
+    Exposed so the artifact guard test can check the committed JSONL against
+    the exact set, order and trial counts that regenerate it. Do not reorder
+    without regenerating ``docs/ocucor_enervate_flare_results.jsonl``.
+    """
+    found: list[tuple[str, dict[str, Any]]] = []
+
+    def add(name: str, **kwargs: Any) -> None:
+        found.append((name, kwargs))
+
+    for eximus in (False, True):
+        target = "eximus" if eximus else "ordinary"
+        for tendrils in (0, 4):
+            add(f"single_{target}_{tendrils}_tendrils", eximus=eximus,
+                trials=single_trials, seed=seed, tendrils=tendrils)
+            add(f"room10_{target}_{tendrils}_tendrils", eximus=eximus,
+                trials=room_trials, seed=seed, tendrils=tendrils, room=True)
+
+    common = {"eximus": True, "trials": sensitivity_trials, "seed": seed,
+              "tendrils": 4}
+    add("wiki_overguard_overflow", **common, gate_overguard=False)
+    add("all_live_heat_stacks_tick", **common, shared_heat_clock=True)
+    add("first_whole_heat_seed_inherited", **common, heat_seed_mode="first_hit")
+    add("beam_ramp_in_heat_seed", **common, ramp_heat_seed=True)
+    add("puncture_cap_three", **common, puncture_cap=3)
+    add("idealized_full_target_ramp", **common, full_beam_ramp=True)
+
+    # Hypothetical extra AFCC points, NOT estimates of real multi-beam Enervate.
+    for extra in (50.0, 100.0):
+        add(f"room10_eximus_extra_enervate_{int(extra)}pct", eximus=True,
+            trials=room_trials, seed=seed, tendrils=4, room=True,
+            enervate_extra_pct=extra)
+    # Same-seed baseline subset for a like-for-like sensitivity table.
+    add("baseline_eximus_4_subset", **common)
+    return found
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=20261028)
@@ -214,31 +254,11 @@ def main(argv=None) -> None:
     if min(args.single_trials, args.room_trials, args.sensitivity_trials) < 1:
         parser.error("trial counts must be positive")
 
-    for eximus in (False, True):
-        target = "eximus" if eximus else "ordinary"
-        for tendrils in (0, 4):
-            compare(f"single_{target}_{tendrils}_tendrils", eximus=eximus,
-                    trials=args.single_trials, seed=args.seed, tendrils=tendrils)
-            compare(f"room10_{target}_{tendrils}_tendrils", eximus=eximus,
-                    trials=args.room_trials, seed=args.seed, tendrils=tendrils,
-                    room=True)
-
-    n = args.sensitivity_trials
-    common = {"eximus": True, "trials": n, "seed": args.seed, "tendrils": 4}
-    compare("wiki_overguard_overflow", **common, gate_overguard=False)
-    compare("all_live_heat_stacks_tick", **common, shared_heat_clock=True)
-    compare("first_whole_heat_seed_inherited", **common, heat_seed_mode="first_hit")
-    compare("beam_ramp_in_heat_seed", **common, ramp_heat_seed=True)
-    compare("puncture_cap_three", **common, puncture_cap=3)
-    compare("idealized_full_target_ramp", **common, full_beam_ramp=True)
-
-    # Hypothetical extra AFCC points, NOT estimates of real multi-beam Enervate.
-    for extra in (50.0, 100.0):
-        compare(f"room10_eximus_extra_enervate_{int(extra)}pct",
-                eximus=True, trials=args.room_trials, seed=args.seed,
-                tendrils=4, room=True, enervate_extra_pct=extra)
-    # Same-seed baseline subset for a like-for-like sensitivity table.
-    compare("baseline_eximus_4_subset", **common)
+    for name, kwargs in scenarios(seed=args.seed,
+                                  single_trials=args.single_trials,
+                                  room_trials=args.room_trials,
+                                  sensitivity_trials=args.sensitivity_trials):
+        compare(name, **kwargs)
 
 
 if __name__ == "__main__":
