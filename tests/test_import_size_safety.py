@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 import zipfile
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,7 +72,7 @@ class ImportSizeSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             db = root / "user.db"
-            with sqlite3.connect(db) as connection:
+            with closing(sqlite3.connect(db)) as connection, connection:
                 connection.execute("CREATE TABLE custom_data (value TEXT)")
                 connection.execute("INSERT INTO custom_data VALUES ('keep me')")
             before = db.read_bytes()

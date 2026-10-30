@@ -896,6 +896,28 @@ class GuiIntegrationTests(unittest.TestCase):
                 self.assertIs(self.window.current_results, original)
                 self.assertEqual(path.read_text(encoding="utf-8"), content)
 
+    def test_build_depth_limit_is_explicit_and_ignores_brackets_in_strings(self):
+        from gui.app import MAX_BUILD_JSON_DEPTH
+
+        self.select_weapon("Braton")
+        original = self.window.current_results
+        path = self.paths["builds"] / "depth-boundary.json"
+        # The outer object is one level; brackets in the quoted value do not
+        # count, including after escaped quotes and backslashes.
+        value = json.dumps('[{"quoted": "brackets"}] \\')
+        for nesting, accepted in ((MAX_BUILD_JSON_DEPTH - 1, True), (MAX_BUILD_JSON_DEPTH, False)):
+            with self.subTest(nesting=nesting):
+                content = '{"weapon":"Braton", "extra":' + '[' * nesting + value + ']' * nesting + '}'
+                path.write_text(content, encoding="utf-8")
+                self.warning.reset_mock()
+                with patch.object(QFileDialog, "getOpenFileName", return_value=(str(path), "JSON")), \
+                     patch.object(CompareBuildDialog, "exec", return_value=0) as dialog:
+                    self.window.compare_build()
+                self.assertEqual(self.warning.call_count, 0 if accepted else 1)
+                self.assertEqual(dialog.call_count, 1 if accepted else 0)
+                self.assertIs(self.window.current_results, original)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+
     def test_duplicate_build_keys_are_rejected_without_changing_the_build(self):
         self.select_weapon("Braton")
         self.equip(0, "Cryo Rounds")

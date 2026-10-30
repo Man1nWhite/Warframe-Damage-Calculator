@@ -58,7 +58,7 @@ from modules.constants import (
     WINDOW_TITLE,
 )
 from modules.database import ModRepository, WeaponRepository
-from modules.json_safety import read_bounded, reject_duplicate_keys
+from modules.json_safety import read_bounded, reject_duplicate_keys, require_json_depth
 from modules.mod_compatibility import ModCompatibility
 from modules.mod_parser import parse_effects
 from modules.models import CalculationInputs, CalculationResults, EquippedMod, Mod, Weapon
@@ -67,6 +67,7 @@ from modules.updater import WarframeDataUpdater
 # Builds contain only a weapon, inputs and eight mod slots; bound untrusted
 # files well above ordinary builds before loading them into memory.
 MAX_BUILD_JSON_BYTES = 4 * 1024 * 1024
+MAX_BUILD_JSON_DEPTH = 64
 
 DARK_STYLESHEET = """
 QWidget {
@@ -1425,8 +1426,9 @@ class DamageCalculatorWindow(QMainWindow):
             try:
                 with Path(file_name).open("rb") as source:
                     contents = read_bounded(source, MAX_BUILD_JSON_BYTES, "Build JSON")
-                payload = json.loads(contents.decode("utf-8"), parse_float=Decimal,
-                                     object_pairs_hook=reject_duplicate_keys)
+                text = contents.decode("utf-8")
+                require_json_depth(text, MAX_BUILD_JSON_DEPTH, "Build JSON")
+                payload = json.loads(text, parse_float=Decimal, object_pairs_hook=reject_duplicate_keys)
             except InvalidOperation as exc:
                 raise ValueError("A number in the build is outside the supported range.") from exc
             if not isinstance(payload, dict):

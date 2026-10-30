@@ -132,7 +132,8 @@ corrected. Such a build
 cannot be saved or compared. Invalid numeric values (including explicit JSON
 `null`) and duplicate object keys in an existing build file are rejected without
 changing the file or the current build. Omitted numeric fields in older builds
-still default to zero. Build files are limited to 4 MiB on both load and save.
+still default to zero. Build files are limited to 4 MiB on both load and save;
+loading also limits JSON nesting to 64 levels.
 
 Negative damage-type bonuses can reduce their own damage bucket to zero but
 cannot subtract from another type. Elemental bonuses still scale from base
