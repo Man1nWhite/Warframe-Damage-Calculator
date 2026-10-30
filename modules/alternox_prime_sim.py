@@ -696,6 +696,8 @@ def simulate(
                     # stacks still feed the target's Critical Damage bonus, so
                     # a Cold-only mix behaves correctly if one is added.
                     target.add_cold(now, PROC_DURATION)
+                if target.health <= 0:
+                    break
             if target.health > 0:
                 advance_events(now)  # Electricity's first tick is immediate.
             if target.health <= 0:

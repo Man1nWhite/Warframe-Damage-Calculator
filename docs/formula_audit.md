@@ -10,6 +10,39 @@ export snapshots and player reports may be incomplete or outdated.
 
 ## 2026-10-29 follow-up: data safety and simulator corrections
 
+### History-guided regression pass
+
+- Negative type modifiers are summed before their damage bucket is floored at
+  zero; physical negatives do not reduce the base used by elemental mods.
+  Flooring a negative combined-element bucket is a conservative model, not
+  in-game verification of every unusual negative elemental interaction.
+- Above the normal 2700 armor cap, the remaining damage fraction now uses
+  `300 / (armor + 300)` rather than subtracting a rounded ratio from one.
+  Tiny positive armored hits retain their per-type minimum even if the product
+  underflows; normal-cap calculations keep the same numerical path.
+- Akarius now applies guaranteed and fractional procs above 100% status and
+  stops firing additional rockets at a dead target. Alternox and Akarius stop
+  adding subsequent procs when a Blast detonation kills. The fatal hit still
+  reports its overkill, but later hits no longer inflate totals. In a ten-seed
+  fixed benchmark only Akarius changed (one direct-damage total); all TTKs and
+  the other six benchmark models' records were unchanged.
+- Saved builds reject duplicate keys, explicit `null` numeric values, excessive
+  size and deeply nested JSON without changing the active build or the file.
+  Missing numeric fields retain their older zero default. The mod category
+  filter now recognizes Orokin and Murmur faction effects and distinguishes
+  elemental from base damage, while allowing mixed-effect mods in both.
+- Export JSON, archive snapshots and workbook expansion now have explicit size
+  limits before those sources can be imported or published; a failed online
+  refresh can still fall back to the saved pair. Pretty-printed export ZIPs are
+  written incrementally within the JSON limit. These bounds reduce
+  decompression/allocation risks but are not a fixed memory guarantee.
+- Publication no longer overwrites a destination in the gap after its last
+  fingerprint check: existing originals are moved into retained backup
+  directories, checked again, and staged replacements are linked without
+  clobbering newly created files. Backups also preserve late writes to an open
+  original file. Interrupted publication retains its marker for review; all
+  refreshes now require hard-link support and backups are not auto-pruned.
+
 - The desktop filter keeps the active weapon and unsaved mod slots when a
   search hides the weapon. Missing damage components now produce an explicit
   result/UI warning rather than an apparently complete zero or partial total;

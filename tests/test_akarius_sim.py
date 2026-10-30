@@ -156,6 +156,55 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(len(target.heat_procs), 1)
         self.assertEqual(result.shots, 1)
 
+    def test_status_above_100_percent_applies_guaranteed_and_fractional_procs(self) -> None:
+        build = replace(build_akarius(), multishot=1.0, afcc_pct=0.0,
+                        status_per_instance=2.0, proc_weights_blast={"HEAT": 1.0})
+        target = AkariusTarget(1e9, 0, 0)
+        simulate(build, target, seed=1, max_time=0.001, direct_hits=False)
+        self.assertEqual(len(target.heat_procs), 2)
+
+        build = replace(build, status_per_instance=2.5)
+        counts = []
+        for seed in (1, 2):
+            target = AkariusTarget(1e9, 0, 0)
+            simulate(build, target, seed=seed, max_time=0.001, direct_hits=False)
+            counts.append(len(target.heat_procs))
+        self.assertEqual(counts, [2, 3])
+
+    def test_fatal_status_detonation_stops_procs_and_damage_instances(self) -> None:
+        from modules.kuva_nukor_sim import BlastProc
+
+        build = replace(build_akarius(), multishot=3.0, afcc_pct=0.0,
+                        status_per_instance=3.0, impact_instance={"IMPACT": 1.0},
+                        blast_instance={"BLAST": 1.0},
+                        proc_weights_impact={"BLAST": 1.0},
+                        proc_weights_blast={"BLAST": 1.0})
+        for direct_hits in (True, False):
+            with self.subTest(direct_hits=direct_hits):
+                target = AkariusTarget(1000, 0, 0, boss=True)
+                target.blast_stacks.extend(BlastProc(0, 1.5, 10000, 1) for _ in range(3))
+                result = simulate(build, target, seed=1, max_time=0.001, direct_hits=direct_hits)
+                self.assertLessEqual(target.health, 0)
+                self.assertEqual(result.shots, 1)
+                self.assertGreater(result.blast_proc_to_health, 1000)
+                self.assertLess(result.direct_to_health, 2)
+                self.assertEqual(target.blast_stacks, [])
+
+    def test_no_further_rockets_hit_after_a_fatal_explosion(self) -> None:
+        build = replace(build_akarius(), multishot=3.0, afcc_pct=0.0,
+                        status_per_instance=0.0,
+                        impact_instance={"IMPACT": 22.0}, impact_base_modded=22.0,
+                        blast_instance={"BLAST": 100.0}, blast_base_modded=100.0)
+        for direct_hits, expected in ((True, 115.0), (False, 100.0)):
+            with self.subTest(direct_hits=direct_hits):
+                target = AkariusTarget(50, 0, 0)
+                result = simulate(build, target, seed=1, max_time=0.001,
+                                  direct_hits=direct_hits)
+                self.assertEqual(result.shots, 1)
+                # The fatal hit's overkill is reported, but no subsequent
+                # projectile or explosion is routed to the already-dead target.
+                self.assertAlmostEqual(result.direct_to_health, expected)
+
     def test_gunco_still_uses_status_from_earlier_multishot(self) -> None:
         # Unlike Viral's damage vulnerability, Galvanized Shot treats
         # multishot impacts as sequential for counting distinct statuses.

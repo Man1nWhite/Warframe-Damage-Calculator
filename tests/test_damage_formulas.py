@@ -313,6 +313,52 @@ class NumericInputTests(DamageFixture, unittest.TestCase):
         result = self.calculate({"IMPACT": 100}, mods={"TRUE": -0.5})
         self.assertEqual(result.hud_total, 50)
 
+    def test_negative_physical_bonus_cannot_subtract_other_damage_types(self):
+        # A -150% Impact Riven removes Impact, not Puncture or Heat. Elemental
+        # bonuses still scale from the original 100 base damage.
+        result = self.calculate({"IMPACT": 60, "PUNC": 40}, faction="Corpus",
+                                mods={"IMPACT": -1.5, "HEAT": 0.9})
+        self.assertEqual(result.hud_damage_by_type["IMPACT"], 0)
+        self.assertEqual(result.final_damage_by_type["IMPACT"], 0)
+        self.assertEqual(result.hud_damage_by_type["PUNC"], 40)
+        self.assertEqual(result.hud_damage_by_type["HEAT"], 90)
+        self.assertEqual(result.hud_total, 130)
+        self.assertAlmostEqual(result.final_total, 151.5625)
+
+        # Opposing bonuses add before the physical multiplier is clamped.
+        result = self.calculate({"IMPACT": 100}, faction="Corpus",
+                                slots=equipped(("IMPACT", -1.5), ("IMPACT", 0.75)))
+        self.assertEqual(result.hud_damage_by_type["IMPACT"], 25)
+
+    def test_negative_elemental_bucket_does_not_subtract_physical_damage(self):
+        result = self.calculate({"IMPACT": 100}, faction="Corpus", mods={"HEAT": -0.9})
+        self.assertEqual(result.hud_damage_by_type["HEAT"], 0)
+        self.assertEqual(result.final_damage_by_type["HEAT"], 0)
+        self.assertEqual(result.hud_total, 100)
+        self.assertEqual(result.final_total, 100)
+
+        # A negative elemental bonus can still reduce that same innate type.
+        result = self.calculate({"IMPACT": 40, "HEAT": 60}, faction="Corpus",
+                                mods={"HEAT": -0.2})
+        self.assertEqual(result.hud_damage_by_type["HEAT"], 40)
+        self.assertEqual(result.hud_total, 80)
+
+    def test_extreme_armor_retains_the_positive_damage_minimum(self):
+        result = self.calculate({"IMPACT": 100}, faction="Corpus", armor=1e20)
+        self.assertGreater(result.armor_modifiers["IMPACT"], 0)
+        self.assertAlmostEqual(result.armor_modifiers["IMPACT"] / (300 / (1e20 + 300)), 1)
+        self.assertEqual(result.final_damage_by_type["IMPACT"], 1)
+        self.assertEqual(result.final_total, 1)
+
+        # Even a representable positive multiplier can underflow during the
+        # product; the armor minimum still applies to the positive hit.
+        tiny = self.calculate({"IMPACT": 1e-100}, faction="Corpus", armor=1e300)
+        self.assertEqual(tiny.final_total, 1)
+        self.assertEqual(tiny.final_total_with_bane, 1)
+        no_bane = self.calculate({"IMPACT": 1e-100}, faction="Corpus", armor=1e300,
+                                 mods={"BANE": -1})
+        self.assertEqual(no_bane.final_total_with_bane, 0)
+
 
 class WikiDamageExamplesTests(DamageFixture, unittest.TestCase):
     """Independent examples from /w/Damage/Calculation and /w/Armor."""

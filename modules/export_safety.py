@@ -51,7 +51,10 @@ def _export_directories(paths: tuple[str | Path, ...]) -> set[Path]:
     for item in paths:
         path = Path(item)
         directories.add(path.parent.resolve())
-        directories.add(path.resolve().parent)
+        # On Windows, resolving a dangling symlink can leave its target's
+        # parent in a different spelling (for example an 8.3 short name).
+        # Resolve that directory itself so identical folders share one lock.
+        directories.add(path.resolve().parent.resolve())
     return directories
 
 

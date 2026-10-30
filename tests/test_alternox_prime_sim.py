@@ -308,6 +308,20 @@ class StochasticSimulationTests(unittest.TestCase):
                        + result.blast_procs + len(target.cold_expiries))
         self.assertGreater(total_procs, result.pellets)
 
+    def test_fatal_blast_stops_remaining_status_procs(self) -> None:
+        from modules.kuva_nukor_sim import BlastProc
+
+        build = dataclasses.replace(build_alternox(), multishot=1.0, crit_chance=0.0,
+                                    status_per_pellet=3.0,
+                                    mix=sim.ElementMix({"BLAST": 1.0}, ("BLAST",)))
+        target = AlternoxTarget(1000, 0, boss=True)
+        target.blast_stacks.extend(BlastProc(0, 1.5, 10000, 1) for _ in range(3))
+        result = simulate(build, target, seed=1, max_time=0.001)
+        self.assertLessEqual(target.health, 0)
+        self.assertEqual(result.blast_detonations, 1)
+        self.assertEqual(result.blast_procs, 1)
+        self.assertEqual(target.blast_stacks, [])
+
     def test_magnetic_stacks_are_capped_at_ten(self) -> None:
         build = build_alternox((R_BLAST, R_ELEC, R_DAMAGE))
         target = sim.alternox_dummy_factory()

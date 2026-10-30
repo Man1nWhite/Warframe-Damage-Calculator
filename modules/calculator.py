@@ -23,7 +23,7 @@ from .constants import (
     PHYSICAL_DAMAGE_TYPES,
     faction_key,
 )
-from .enemy_scaling import enemy_armor_damage_reduction
+from .enemy_scaling import enemy_armor_damage_multiplier
 from .mod_engine import ModAggregator, ordered_mod_effects
 from .models import CalculationInputs, CalculationResults, Weapon
 from .status_damage import wiki_quantized_damage
@@ -114,8 +114,13 @@ class DamageCalculator:
                 raw = base_value * (1.0 + mod_value)
             else:
                 raw = base_value + weapon_total_damage * mod_value
+            _require_finite("Calculated damage", raw)
+            # A negative damage-type modifier can remove its bucket, but it
+            # cannot subtract from other types or make a hit heal the target.
+            # Sum all modifiers first so positive bonuses can offset negatives.
+            raw = max(0.0, raw)
             hud_damage_by_type[damage_type] = raw * base_multiplier
-            _require_finite("Calculated damage", raw, hud_damage_by_type[damage_type])
+            _require_finite("Calculated damage", hud_damage_by_type[damage_type])
             try:
                 quantized = (
                     wiki_quantized_damage(hud_damage_by_type[damage_type], modded_base)
@@ -127,11 +132,12 @@ class DamageCalculator:
             bane_dealt = dealt * bane_multiplier
             _require_finite("Calculated damage", quantized, dealt, bane_dealt)
             # The wiki's armor article states a minimum of 1 per positive
-            # damage type reduced by armor.  Zero-quantized types stay zero.
-            if armor_value > 0:
-                if dealt > 0:
-                    dealt = max(1.0, dealt)
-                if bane_dealt > 0:
+            # damage type reduced by armor. Test the input factors, not the
+            # product: an extremely small positive result can underflow to 0.
+            # Zero-quantized types and a zero Bane multiplier stay zero.
+            if armor_value > 0 and quantized > 0 and armor_modifiers[damage_type] > 0:
+                dealt = max(1.0, dealt)
+                if bane_multiplier > 0:
                     bane_dealt = max(1.0, bane_dealt)
             final_damage_by_type[damage_type] = dealt
             bane_final_by_type[damage_type] = bane_dealt
@@ -262,5 +268,5 @@ class DamageCalculator:
 
     @staticmethod
     def _build_armor_modifiers(armor_value: float, faction_modifiers: dict[str, float]) -> dict[str, float]:
-        armor_term = 1.0 - enemy_armor_damage_reduction(armor_value)
+        armor_term = enemy_armor_damage_multiplier(armor_value)
         return {kind: armor_term * faction_modifiers[kind] for kind in DAMAGE_TYPES}

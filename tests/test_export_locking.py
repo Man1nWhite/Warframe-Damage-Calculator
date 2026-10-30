@@ -98,17 +98,17 @@ from pathlib import Path
 from unittest.mock import patch
 from modules.updater import WarframeDataUpdater
 source, stage, first, release = map(Path, sys.argv[1:5])
-original_replace = os.replace
+original_link = os.link
 def pause_after_first(src, dest):
-    original_replace(src, dest)
+    original_link(src, dest)
     if Path(dest).name == 'ExportWeapons_en_Cleaned.zip':
-        first.write_text('replaced')
+        first.write_text('published')
         deadline = time.monotonic() + 15
         while not release.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
 archives = ((stage / 'ExportWeapons_en_Cleaned.zip', source / 'ExportWeapons_en_Cleaned.zip'),
             (stage / 'ExportKeys_en_Cleaned.zip', source / 'ExportKeys_en_Cleaned.zip'))
-with patch('modules.updater.os.replace', side_effect=pause_after_first):
+with patch('modules.updater.os.link', side_effect=pause_after_first):
     WarframeDataUpdater._publish_exports(archives, stage)
 """
         publisher_b = r"""
@@ -206,6 +206,30 @@ except ExportLockTimeout:
                 with self.assertRaisesRegex(RuntimeError, "order"):
                     with export_lock(lower_first, timeout=0.1):
                         pass
+
+    def test_partially_resolved_dangling_symlink_does_not_lock_one_folder_twice(self) -> None:
+        # Windows realpath can return a short/alias parent unchanged when a
+        # dangling link's final target does not exist. Both spellings below
+        # refer to the same real directory and must use one OS lock.
+        alias = self.root / "source-alias"
+        try:
+            alias.symlink_to(self.source, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlink creation is unavailable on this platform")
+        export = self.source / "dangling.zip"
+        real_resolve = Path.resolve
+
+        def partial_resolve(path: Path, *args, **kwargs) -> Path:
+            if path == export:
+                return alias / "missing-target.zip"
+            return real_resolve(path, *args, **kwargs)
+
+        with patch.object(Path, "resolve", partial_resolve):
+            with export_lock(export, timeout=0.2):
+                # A nested access through the other spelling must reuse the
+                # same lock instead of trying to lock the inode a second time.
+                with export_lock(self.source / UPGRADES, timeout=0.2):
+                    pass
 
     def test_symlinked_export_locks_both_entry_and_target_directories(self) -> None:
         external = self.root / "external"

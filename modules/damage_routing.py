@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .enemy_scaling import enemy_armor_damage_reduction
+from .enemy_scaling import enemy_armor_damage_multiplier
 
 # Overguard is neutral to every damage type except Void (Overguard page).
 VOID_OVERGUARD_MULTIPLIER = 1.5
@@ -88,7 +88,7 @@ def route_enemy_hit(
 
     health_mult = status_vulnerability(viral_stacks)
     armored = armor > 0
-    armor_mult = (1.0 - enemy_armor_damage_reduction(armor)) if armored else 1.0
+    armor_mult = enemy_armor_damage_multiplier(armor) if armored else 1.0
     health_damage = 0.0
     for kind, amount in damage_by_type.items():
         if amount <= 0:

@@ -23,7 +23,7 @@ from .export_safety import (
     locked_exports,
     require_complete_exports,
 )
-from .json_safety import reject_duplicate_keys
+from .json_safety import MAX_EXPORT_JSON_BYTES, read_bounded, reject_duplicate_keys
 
 KEY_URL = "https://origin.warframe.com/PublicExport/index_en.txt.lzma"
 DATA_URL = "https://content.warframe.com/PublicExport/Manifest/"
@@ -91,7 +91,7 @@ class WarframeDataUpdater:
             weapons_clean = self._clean_json(downloaded["ExportWeapons_en.json"])
             upgrades_clean = self._clean_json(downloaded["ExportUpgrades_en.json"])
 
-            # Stage on the destination filesystem so each os.replace is atomic.
+            # Stage on the destination filesystem for no-clobber hard links.
             stage = Path(tempfile.mkdtemp(prefix=".wdc-refresh-", dir=source))
             try:
                 staged_weapons = stage / weapons_zip.name
@@ -228,15 +228,36 @@ class WarframeDataUpdater:
     def _publish_exports_locked(archives: tuple[tuple[Path, Path], ...], stage: Path,
                                 *, expected: dict[Path, ExportFingerprint] | None = None) -> None:
         """Publish under the export lock, preserving uncertain destinations on failure."""
+        # Replacing an existing destination after a fingerprint check can still
+        # overwrite a non-cooperating writer in the gap. Move the actual inode
+        # into a retained backup, then publish the staged file with a no-clobber
+        # hard link. Check support before moving any user's file.
+        if archives:
+            probe = stage / ".hardlink-probe"
+            try:
+                os.link(archives[0][0], probe)
+            except OSError as exc:
+                raise DataRefreshError(f"Cannot publish exports safely; hard links are unavailable: {exc}") from exc
+            probe.unlink()
+
+        staged_fingerprints = {target: WarframeDataUpdater._export_fingerprint(staged)
+                               for staged, target in archives}
+        if any(fingerprint is None for fingerprint in staged_fingerprints.values()):
+            raise DataRefreshError("A staged export disappeared before publication.")
+
         backups: dict[Path, Path | None] = {}
         for _, target in archives:
             try:
                 info = target.lstat()
             except FileNotFoundError:
+                if expected is not None and expected.get(target) is not None:
+                    raise DataRefreshRecoveryError(
+                        f"Saved export {target} was removed before publication. "
+                        "No exports were published; review the current files before retrying."
+                    ) from None
                 backups[target] = None
                 continue
-            # os.replace would replace a symlink itself, not the file it points
-            # to. Do not silently destroy a user's linked-source configuration.
+            # Do not silently move a user's linked-source configuration.
             if stat.S_ISLNK(info.st_mode):
                 raise DataRefreshError(f"Cannot refresh a symbolic-link export: {target}. Preserve and review it first.")
             if not stat.S_ISREG(info.st_mode):
@@ -253,15 +274,33 @@ class WarframeDataUpdater:
                     )
             backups[target] = backup
 
+        recovery_dir = (Path(tempfile.mkdtemp(prefix=".wdc-export-backup-", dir=stage.parent))
+                        if any(backups.values()) else None)
         marker = stage / "PUBLISHING.json"
-        with marker.open("x", encoding="utf-8") as handle:
-            json.dump({"archives": [
-                {"destination": target.name,
-                 "previous_copy": (backup_path.name if (backup_path := backups[target]) else None)}
-                for _, target in archives
-            ]}, handle, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
+        try:
+            with marker.open("x", encoding="utf-8") as handle:
+                json.dump({
+                    "mode": "refresh-no-clobber",
+                    "recovery_directory": recovery_dir.name if recovery_dir else None,
+                    "archives": [
+                        {"destination": target.name,
+                         "previous_copy": (backup_path.name if (backup_path := backups[target]) else None),
+                         "displaced_copy": target.name if backup_path else None,
+                         "staged_copy": staged.name}
+                        for staged, target in archives
+                    ],
+                }, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException:
+            # Nothing has been displaced yet. Only remove an empty directory;
+            # never delete files another process may have put there.
+            if recovery_dir is not None:
+                try:
+                    recovery_dir.rmdir()
+                except OSError:
+                    pass
+            raise
 
         try:
             for staged, target in archives:
@@ -271,12 +310,33 @@ class WarframeDataUpdater:
                             f"Saved export {target} changed immediately before publication. "
                             f"No further files were published; inspect the recovery copies in {stage}."
                         )
-                if backups[target] is None:
-                    # A file created after the backup check belongs to its
-                    # creator; publish only if this entry is still absent.
-                    os.link(staged, target)
-                else:
-                    os.replace(staged, target)
+                if backups[target] is not None:
+                    assert recovery_dir is not None
+                    displaced = recovery_dir / target.name
+                    os.rename(target, displaced)
+                    # Check the file we actually displaced, not just the path
+                    # inspected before rename. A late edit is retained here.
+                    if expected is not None and WarframeDataUpdater._export_fingerprint(displaced) != expected.get(target):
+                        raise DataRefreshRecoveryError(
+                            f"Saved export {target} changed during publication; "
+                            f"the displaced file is preserved at {displaced}."
+                        )
+                # Also prevents clobbering a file created after the old target
+                # was displaced (or after an initially absent target was checked).
+                os.link(staged, target)
+            # A third party can also modify a newly published target while the
+            # second file is being linked. Keep the marker rather than import
+            # a pair that no longer matches the staged snapshots.
+            for _, target in archives:
+                if WarframeDataUpdater._export_fingerprint(target) != staged_fingerprints[target]:
+                    raise DataRefreshRecoveryError(f"Published export {target} changed during publication.")
+                if expected is not None and backups[target] is not None:
+                    assert recovery_dir is not None
+                    displaced = recovery_dir / target.name
+                    if WarframeDataUpdater._export_fingerprint(displaced) != expected.get(target):
+                        raise DataRefreshRecoveryError(
+                            f"Displaced original {displaced} changed during publication."
+                        )
         except BaseException as exc:
             # A signal can arrive after a filesystem operation succeeds, and
             # another program may have changed a destination. Automatically
@@ -284,9 +344,10 @@ class WarframeDataUpdater:
             # marker, prior copies and current destinations for manual review.
             if not isinstance(exc, Exception):
                 raise
+            displaced_note = f" and displaced originals in {recovery_dir}" if recovery_dir else ""
             raise DataRefreshRecoveryError(
                 "Export publication stopped; do not rebuild from the current pair. "
-                f"Preserve the destinations and review the previous copies in {stage}. "
+                f"Preserve the destinations and review the previous copies in {stage}{displaced_note}. "
                 f"No automatic rollback was attempted. Publication error: {exc}"
             ) from exc
         marker.unlink()
@@ -465,12 +526,32 @@ class WarframeDataUpdater:
         # Refuse ambiguous duplicate keys instead of silently accepting the
         # last occurrence. Do not strip whitespace around escaped newlines:
         # it changes string contents.
-        data = json.loads(json_path.read_text(encoding="utf-8"),
-                          object_pairs_hook=reject_duplicate_keys)
+        with json_path.open("rb") as source:
+            contents = read_bounded(source, MAX_EXPORT_JSON_BYTES, f"Export JSON {json_path}")
+        data = json.loads(contents.decode("utf-8"), object_pairs_hook=reject_duplicate_keys)
         if not isinstance(data, dict):
             raise ValueError(f"Export root must be a JSON object: {json_path}")
         return data
 
     def _write_zip(self, zip_path: Path, member_name: str, data: dict) -> None:
+        # Pretty printing can expand a compact download substantially. Stream
+        # the encoder instead of materializing an unbounded formatted string.
+        encoder = json.JSONEncoder(indent=4)
+        total = 0
+        pending = bytearray()
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(member_name, json.dumps(data, indent=4))
+            with archive.open(member_name, "w") as destination:
+                for fragment in encoder.iterencode(data):
+                    encoded = fragment.encode("utf-8")
+                    total += len(encoded)
+                    if total > MAX_EXPORT_JSON_BYTES:
+                        raise ValueError(
+                            f"Export JSON {member_name} exceeds the "
+                            f"{MAX_EXPORT_JSON_BYTES}-byte safety limit."
+                        )
+                    pending.extend(encoded)
+                    if len(pending) >= 64 * 1024:
+                        destination.write(pending)
+                        pending.clear()
+                if pending:
+                    destination.write(pending)
