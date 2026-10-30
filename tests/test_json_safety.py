@@ -16,6 +16,15 @@ class JsonDepthTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nesting depth"):
             require_json_depth("[" * 65 + "0" + "]" * 65, 64, "Build JSON")
 
+    def test_unbalanced_closing_brackets_do_not_buy_extra_depth(self) -> None:
+        # A negative running depth would let a prefixed run of closers hide
+        # nesting far past the limit, so the counter must stop at zero.
+        text = "]" * 1000 + "[" * 65 + "0" + "]" * 65
+        with self.assertRaisesRegex(ValueError, "nesting depth"):
+            require_json_depth(text, 64, "Build JSON")
+        with self.assertRaisesRegex(ValueError, "nesting depth"):
+            require_json_depth("]" * 10 + "[" * 3 + "]", 2, "Build JSON")
+
     def test_brackets_quotes_and_backslashes_inside_strings_are_not_nesting(self) -> None:
         value = {"text": '[[{]}}] "escaped" \\\\ \\" [still text]',
                  "nested": [{"name": "fixture"}]}

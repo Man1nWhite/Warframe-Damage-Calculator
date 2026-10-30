@@ -3,34 +3,41 @@
 ## Current state
 
 - Repo: `/home/user/Warframe-Damage-Calculator` (`Man1nWhite/Warframe-Damage-Calculator`).
-- Stay on branch `arena/f058f23e-warframe-damage-calculator`; do not switch or rename it.
-- Base/HEAD: `f781ac0`; all current work is uncommitted. Preserve the user's data and fix every confirmed issue found along the way.
-- User asked to keep auditing and fixing, then requested this handoff be optimized for the next AI session. Read this file first, then check `git status` and the current diff; do not repeat completed investigations unnecessarily.
+- Work happens on branch `arena/8c8c0412-warframe-damage-calculator`; do not switch or rename it.
+- Base: `9b2a1d0` (merge of PR #9). Uncommitted work is the current audit round; read `git status` and the diff before repeating investigations.
+- The audit brief is unchanged: keep finding and fixing confirmed defects, preserve user data, and state verification limits honestly.
 
-## What has been fixed
+## Verification environment
 
-The current diff includes calculator/GUI validation and preservation, simulator corrections, offline revision-4 migration, custom-schema guards, export/database safety, import-cache fixes, tests and docs. In particular:
+- Python venv: `/home/user/.cache/wdc-venv`; Qt shims: `/home/user/.cache/wdc-qtlibs` (`libxkbcommon.so.0` via `xkb.map`, `libGL`, `libEGL`, `libdbus-1`); exports in `/home/user/.cache/wdcenv.sh`.
+- These caches are outside the repository and are not snapshotted. Rebuild them (venv + shim libraries) if a later session starts without them; `libxkbcommon.so.0` is the one that blocks `QtGui` import on a bare image.
+- Offscreen recipe: `source /home/user/.cache/wdcenv.sh && WDC_REQUIRE_GUI_TESTS=1 $VENV tools/run_tests_ci.py`.
 
-- Invalid/non-finite/underflowed Armor and Valence inputs fail visibly; invalid builds cannot be saved or compared. Loading preflights effects and calculation before changing the current build.
-- Direct calculations reject non-finite components and overflow. Shadow Clones' unmodeled Finisher damage warns rather than being guessed. Percentile edge cases are covered.
-- Sirocco imports 2,000 Void. Guarded migration protects identifiable user edits/custom rows and retains a consistent SQLite backup. Custom triggers, affected foreign keys, and populated reparsed effect extensions cause refusal; rebuilds have related guards.
-- Failed catalog reads do not masquerade as empty data. Missing/empty DB files with WAL/SHM/rollback-journal sidecars are refused before SQLite can discard recoverable data.
-- Export publication preserves prior copies and recovery markers on uncertain failures; it never rolls back over a possibly user-edited destination. Same-size/same-mtime edits during download are detected, absent concurrent files are preserved, symlinked exports are rejected, and lock/recovery checks cover symlink targets.
-- Import rejects ambiguous multi-JSON weapon ZIPs, duplicate upgrade ZIP members and duplicate JSON object keys. Cache keys and parsing use the same immutable bytes.
-- HTTP `Content-Length` is not compared with Requests' transparently decoded body. Download size is capped at 512 MiB; manifest LZMA expansion is capped at 32 MiB incrementally.
-- Research caveats/results are in `docs/formula_audit.md`, `docs/wiki_formula_verification.md`, and `docs/verglas_prime_sim.md`. Do not describe simulator results as in-game validation.
+## Verification status (this round)
 
-## Verification and limits
+- Full required-offscreen suite: **868 tests OK** in ~40 s (`tools/run_tests_ci.py`, `WDC_REQUIRE_GUI_TESTS=1`).
+- `ruff check .` clean; `python -m mypy` clean (**38 source files**); `tools/bench_models.py --check` reproduces the stored digest `53f9bcd7469a73ce…` (simulators unchanged).
+- Coverage (informational, not enforced): 93 % of `modules/` and `gui/` statements, measured before this round's edits.
 
-- Latest focused updater/importer/weapon-export/migration/rebuild suites: **115 tests passed**. Re-run with `PYTHONPATH=/home/user/.cache/wdc-review-deps python -m unittest tests.test_updater tests.test_weapon_export_safety tests.test_import_cache_safety tests.test_database_migration tests.test_database_rebuild_safety -q`.
-- A prior full required-offscreen suite passed **809 tests**, before the latest refresh/import-parser changes. It has not been rerun: the refreshed environment lacks `libxkbcommon.so.0`, so QtGui cannot import. A Qt offscreen shim existed in a disposable cache but did not persist.
-- Latest static checks passed: Ruff, mypy (**38 source files**), compileall, and `git diff --check`.
-- Bundled DB: revision 4; `quick_check=ok`; 827 weapons, 1,594 mods, 1,856 effects. Two stored benchmark digests matched before the latest non-simulation changes.
-- Native graphics, live DE refresh, Windows packaging, and remote CI for this uncommitted diff are unverified. Historical CI success is not evidence for current changes.
+## What changed this round
+
+- **Both Ocucor artifacts were stale and are regenerated.** `docs/ocucor_enervate_flare_results.jsonl` (17 scenarios, 35,100 runs) and `docs/ocucor_viral_dilution_results.jsonl` (35 scenarios, 50,880 trials) no longer reproduced after the Cold-aware critical-damage change; means moved by up to ~0.05 s while the steady-state ordering held. The two reports' tables and prose now match the new artifacts.
+- **Artifact drift guard added.** `modules/ocucor_comparison.scenarios(...)` and `modules/ocucor_viral_comparison.scenarios(...)` now own the scenario list, order and arguments, and `tests/test_ocucor_artifacts.py` checks every record's name, order, settings and trial counts, then re-runs the cheapest scenario of each artifact at its recorded trial count and requires an exact match (~9 s of the suite).
+- **`require_json_depth` no longer lets unbalanced closing brackets buy headroom**; the running depth stops at zero. Regression test added.
+- **Dead parameter removed:** `build_application(db_path)` ignored its argument (only `main.py` called it with one).
+- **`.coverage` and coverage output are ignored** so local coverage runs cannot be committed by accident.
+
+## Known open items (not defects)
+
+- The artifacts still need manual regeneration when a simulator changes; the guard only re-runs one scenario per artifact, so a room-model-only change is caught by review, not by that test. Both reports state this.
+- Three `PLW2901` loop-variable reassignments (`database_migration.py`, `verglas_prime_sim.py`, `weapon_export_policy.py`) are readable as written and were left alone rather than reshaped for a lint rule the project does not enable.
+- The mod-slot `QComboBox` is editable but only changes state through `currentIndexChanged`: text typed without picking an item leaves the previous mod selected while the box shows other text. This is a UI wart, not a calculation bug; changing it needs a product decision.
+- `_bane_bonus`'s label-free fallback treats a stored `1.0` as a +100 % bonus. No production call site omits the stat label, so it is unreachable today; do not "fix" it without deciding how `+100 %` bonuses are stored.
+- `_publish_seed_exports_locked`/`seed_source_files` deliberately fail loudly when the filesystem has no hard links (see `tests/test_app_paths.py`), instead of risking a partial copy.
 
 ## Next steps
 
-1. Re-establish a usable Qt/offscreen environment if feasible; run `PYTHONPATH=/home/user/.cache/wdc-review-deps LD_LIBRARY_PATH=/home/user/.cache/wdc-qt-libs QT_QPA_PLATFORM=offscreen WDC_REQUIRE_GUI_TESTS=1 python tools/run_tests_ci.py`. If blocked, report it accurately; do not claim a fresh full-suite pass.
-2. Rerun Ruff, mypy, compileall, `git diff --check`, the focused 115-test command, database quick-check, and benchmark equivalence checks if simulator code changed.
-3. Continue the targeted bug audit; add a regression before each confirmed fix. Check updated code/tests before trusting older counts or claims.
-4. Keep documentation concise and consistent. Do not commit, push, or open a PR unless asked.
+1. Continue the targeted audit; add a regression test with every confirmed fix.
+2. Re-run the full offscreen suite, `ruff`, `mypy`, and `bench_models.py --check` if simulator or GUI code changes.
+3. Regenerate the Ocucor artifacts (and update both reports) whenever `ocucor_sim`, `kuva_nukor_sim` routing, or the shared crit/status models change.
+4. Keep documentation concise and consistent; never describe simulator output as in-game validation.

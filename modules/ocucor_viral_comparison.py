@@ -204,6 +204,64 @@ def compare(name: str, *, eximus: bool, arcane: str, initial_flare: int,
     return record
 
 
+def scenarios(*, seed: int, single_trials: int, room_trials: int,
+              sensitivity_trials: int) -> list[tuple[str, dict[str, Any]]]:
+    """Every report scenario, in artifact order, with its ``compare`` kwargs.
+
+    Exposed so the artifact guard test can check the committed JSONL against
+    the exact set, order and trial counts that regenerate it. Do not reorder
+    without regenerating ``docs/ocucor_viral_dilution_results.jsonl``.
+    """
+    found: list[tuple[str, dict[str, Any]]] = []
+
+    def add(name: str, **kwargs: Any) -> None:
+        found.append((name, kwargs))
+
+    arcanes = (("enervate", ARCANE_ENERVATE, 0),
+               ("flare_cold", ARCANE_FLARE, 0),
+               ("flare_full", ARCANE_FLARE, FLARE_MAX_STACKS))
+    # Main one-target comparisons, including two explicit causal controls.
+    for eximus in (True, False):
+        target = "eximus" if eximus else "ordinary"
+        for tendrils in (4, 0):
+            for arc_name, arcane, flare in arcanes:
+                add(f"single_{target}_{tendrils}_{arc_name}", eximus=eximus,
+                    arcane=arcane, initial_flare=flare, tendrils=tendrils,
+                    trials=single_trials, seed=seed)
+    # Same-seed sensitivity variants; no claim that any Heat policy is proven.
+    for sensitivity, extra in (
+            ("shared_heat", {"shared_heat_clock": True}),
+            ("first_heat_seed", {"heat_seed_mode": "first_hit"}),
+            ("external_viral_10", {"preprimed_viral_stacks": 10})):
+        for arc_name, arcane, flare in arcanes:
+            add(f"{sensitivity}_eximus_4_{arc_name}", eximus=True,
+                arcane=arcane, initial_flare=flare, tendrils=4,
+                trials=sensitivity_trials, seed=seed, specs=REAL_SPECS,
+                **extra)
+
+    # Illustrative only: the ordinary single-hit Enervate AFCC is not a
+    # simulation of charging/resetting when multiple tendrils hit targets.
+    for eximus, tendrils in ((True, 4), (True, 0), (False, 4)):
+        target = "eximus" if eximus else "ordinary"
+        for arc_name, arcane, flare in arcanes:
+            add(f"room10_{target}_{tendrils}_{arc_name}", eximus=eximus,
+                arcane=arcane, initial_flare=flare, tendrils=tendrils,
+                trials=room_trials, seed=seed, room=True, specs=REAL_SPECS)
+    # A realizable, lower-grade Viral trait within the two-positive layout.
+    for arc_name, arcane, flare in arcanes:
+        add(f"low_grade_viral_eximus_4_{arc_name}", eximus=True, arcane=arcane,
+            initial_flare=flare, tendrils=4, trials=sensitivity_trials,
+            seed=seed, specs=(RIVEN_TWO_POS, RIVEN_LOW_VIRAL_TWO_POS))
+
+    # Isolate reload-speed effects in two artificial zero-tendril rooms.
+    for arc_name, arcane, flare in (arcanes[0], arcanes[2]):
+        add(f"room10_eximus_0_{arc_name}_reload_control", eximus=True,
+            arcane=arcane, initial_flare=flare, tendrils=0,
+            trials=room_trials, seed=seed, room=True,
+            specs=(RIVEN_TWO_POS, RIVEN_THREE_POS, RIVEN_NO_RELOAD))
+    return found
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=20261028)
@@ -214,52 +272,11 @@ def main(argv=None) -> None:
     if min(args.single_trials, args.room_trials, args.sensitivity_trials) < 1:
         parser.error("trial counts must be positive")
 
-    arcanes = (("enervate", ARCANE_ENERVATE, 0),
-               ("flare_cold", ARCANE_FLARE, 0),
-               ("flare_full", ARCANE_FLARE, FLARE_MAX_STACKS))
-    # Main one-target comparisons, including two explicit causal controls.
-    for eximus in (True, False):
-        target = "eximus" if eximus else "ordinary"
-        for tendrils in (4, 0):
-            for arc_name, arcane, flare in arcanes:
-                compare(f"single_{target}_{tendrils}_{arc_name}",
-                        eximus=eximus, arcane=arcane, initial_flare=flare,
-                        tendrils=tendrils, trials=args.single_trials, seed=args.seed)
-
-    # Same-seed sensitivity variants; no claim that any Heat policy is proven.
-    for sensitivity, kwargs in (
-            ("shared_heat", {"shared_heat_clock": True}),
-            ("first_heat_seed", {"heat_seed_mode": "first_hit"}),
-            ("external_viral_10", {"preprimed_viral_stacks": 10})):
-        for arc_name, arcane, flare in arcanes:
-            compare(f"{sensitivity}_eximus_4_{arc_name}", eximus=True,
-                    arcane=arcane, initial_flare=flare, tendrils=4,
-                    trials=args.sensitivity_trials, seed=args.seed,
-                    specs=REAL_SPECS, **kwargs)
-
-    # Illustrative only: the ordinary single-hit Enervate AFCC is not a
-    # simulation of charging/resetting when multiple tendrils hit targets.
-    for eximus, tendrils in ((True, 4), (True, 0), (False, 4)):
-        target = "eximus" if eximus else "ordinary"
-        for arc_name, arcane, flare in arcanes:
-            compare(f"room10_{target}_{tendrils}_{arc_name}", eximus=eximus,
-                    arcane=arcane, initial_flare=flare, tendrils=tendrils,
-                    trials=args.room_trials, seed=args.seed, room=True,
-                    specs=REAL_SPECS)
-
-    # A realizable, lower-grade Viral trait within the two-positive layout.
-    for arc_name, arcane, flare in arcanes:
-        compare(f"low_grade_viral_eximus_4_{arc_name}", eximus=True,
-                arcane=arcane, initial_flare=flare, tendrils=4,
-                trials=args.sensitivity_trials, seed=args.seed,
-                specs=(RIVEN_TWO_POS, RIVEN_LOW_VIRAL_TWO_POS))
-
-    # Isolate reload-speed effects in two artificial zero-tendril rooms.
-    for arc_name, arcane, flare in (arcanes[0], arcanes[2]):
-        compare(f"room10_eximus_0_{arc_name}_reload_control", eximus=True,
-                arcane=arcane, initial_flare=flare, tendrils=0,
-                trials=args.room_trials, seed=args.seed, room=True,
-                specs=(RIVEN_TWO_POS, RIVEN_THREE_POS, RIVEN_NO_RELOAD))
+    for name, kwargs in scenarios(seed=args.seed,
+                                  single_trials=args.single_trials,
+                                  room_trials=args.room_trials,
+                                  sensitivity_trials=args.sensitivity_trials):
+        compare(name, **kwargs)
 
 
 if __name__ == "__main__":
