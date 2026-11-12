@@ -16,7 +16,7 @@
 ## Verification status (this round)
 
 - Full required-offscreen suite: **868 tests OK** in ~40 s (`tools/run_tests_ci.py`, `WDC_REQUIRE_GUI_TESTS=1`).
-- `ruff check .` clean; `python -m mypy` clean (**39 source files**); `tools/bench_models.py --snapshot` reports `91f7170679045c8c…` with seven models (the Corinth Prime model is new this round, so the older `53f9bcd7469a73ce…` digest no longer applies).
+- `ruff check .` clean; `python -m mypy` clean (**39 source files**); `tools/bench_models.py --snapshot` reports `f02bb548e84cab15…` with seven models (the Corinth Prime model is new this round, so the older `53f9bcd7469a73ce…` digest no longer applies).
 - Coverage (informational, not enforced): 93 % of `modules/` and `gui/` statements, measured before this round's edits.
 
 ## What changed this round

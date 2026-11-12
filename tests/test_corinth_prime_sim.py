@@ -12,6 +12,7 @@ import unittest
 from contextlib import redirect_stdout
 
 import modules.corinth_prime_sim as sim
+from modules.constants import FACTION_MULTIPLIERS
 from modules.corinth_prime_sim import (
     ARMOR_CURVE_AUDITED,
     ARMOR_CURVE_LINEAR,
@@ -465,6 +466,90 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(results[0]["roll"], RivenRoll(BEST_THREE, DEFAULT_CURSE))
 
 
+class TargetTests(unittest.TestCase):
+    def test_plain_factory_has_no_overguard(self) -> None:
+        target = corinth_dummy_factory()
+        self.assertEqual(target.overguard_max, 0.0)
+        self.assertAlmostEqual(target.max_health, 286139.57, places=2)
+        self.assertAlmostEqual(target.max_armor, 2700.0)
+
+    def test_eximus_factory_adds_overguard_and_eximus_health(self) -> None:
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        self.assertAlmostEqual(target.overguard_max, 269918.97, places=2)
+        self.assertAlmostEqual(target.max_health, 1716837.41, places=2)
+        self.assertAlmostEqual(target.max_armor, 2700.0)
+
+    def test_unknown_target_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            corinth_dummy_factory(target="sortie")
+
+    def test_overguard_absorbs_before_health(self) -> None:
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        health = target.health
+        target.absorb({"VIRAL": 1000.0}, 0.0, sim.HEAT_RAMP_INTERVAL,
+                      faction_type_modifiers=FACTION_MULTIPLIERS["Grineer"])
+        self.assertAlmostEqual(target.health, health, places=6)
+        self.assertAlmostEqual(target.overguard, 269918.97 - 1000.0, places=2)
+
+    def test_overguard_is_neutral_to_grineer_type_modifiers(self) -> None:
+        # Grineer Corrosive is x1.5 on the health layer; Overguard is neutral.
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        target.absorb({"CORR": 500.0}, 0.0, sim.HEAT_RAMP_INTERVAL,
+                      faction_type_modifiers=FACTION_MULTIPLIERS["Grineer"])
+        self.assertAlmostEqual(target.overguard, 269918.97 - 500.0, places=2)
+
+    def test_eximus_dummy_dies_and_reports_the_break(self) -> None:
+        build = build_corinth(RivenRoll(BEST_SPLICED, DEFAULT_CURSE))
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        result = simulate(build, target, seed=3)
+        self.assertTrue(math.isfinite(result.ttk))
+        self.assertTrue(math.isfinite(result.overguard_break))
+        self.assertLessEqual(result.overguard_break, result.ttk)
+        self.assertEqual(target.overguard, 0.0)
+        self.assertLessEqual(target.health, 0.0)
+
+    def test_only_the_unrivend_build_needs_a_second_pull_to_break(self) -> None:
+        step = 1.0 / BASE_FIRE_RATE
+        weak = simulate(build_corinth(None),
+                        corinth_dummy_factory(target=sim.TARGET_EXIMUS), seed=1)
+        self.assertAlmostEqual(weak.overguard_break, step, places=6)
+        strong = simulate(build_corinth(RivenRoll(BEST_SPLICED, DEFAULT_CURSE)),
+                          corinth_dummy_factory(target=sim.TARGET_EXIMUS), seed=1)
+        self.assertAlmostEqual(strong.overguard_break, 0.0, places=6)
+
+    def test_run_trials_reports_overguard_telemetry(self) -> None:
+        eximus = run_trials(None, trials=2, target=sim.TARGET_EXIMUS)
+        self.assertGreater(eximus["overguard_max"], 0.0)
+        self.assertGreater(eximus["overguard_break_median"], 0.0)
+        self.assertEqual(eximus["target"], sim.TARGET_EXIMUS)
+        plain = run_trials(None, trials=2)
+        self.assertEqual(plain["overguard_max"], 0.0)
+        self.assertEqual(plain["overguard_break_median"], 0.0)
+        self.assertEqual(plain["target"], sim.TARGET_PLAIN)
+
+    def test_eximus_target_is_slower_than_the_plain_one(self) -> None:
+        roll = RivenRoll(BEST_SPLICED, DEFAULT_CURSE)
+        plain = run_trials(roll, trials=40, base_seed=11)
+        eximus = run_trials(roll, trials=40, base_seed=11,
+                            target=sim.TARGET_EXIMUS)
+        self.assertLess(plain["ttk_mean"], eximus["ttk_mean"])
+
+    def test_dot_seeds_exclude_the_crit_factor(self) -> None:
+        # Regression: the proc seed must not already contain the pellet's crit
+        # multiplier, because every tick applies ``seed * crit_factor`` once.
+        build = build_corinth(RivenRoll(BEST_SPLICED, DEFAULT_CURSE))
+        expected = build.modded_base * (1.0 + build.faction_bonus)
+        procs = []
+        for seed in range(6):
+            target = corinth_dummy_factory()
+            simulate(build, target, seed=seed)
+            procs.extend(target.electric_procs)
+            procs.extend(target.bleed_procs)
+        self.assertTrue(procs)
+        for proc in procs:
+            self.assertAlmostEqual(proc.seed, expected, places=6)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_prints_tables(self) -> None:
         buffer = io.StringIO()
@@ -475,6 +560,18 @@ class CliTests(unittest.TestCase):
         self.assertIn("Analytic steady-state DPS", text)
         self.assertIn("Monte Carlo TTK", text)
         self.assertIn("Damage to Grineer", text)
+
+    def test_cli_target_flag_selects_the_dummy(self) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            sim.main(["--trials", "2", "--top", "1", "--target", "plain"])
+        self.assertIn("SP150 Heavy Gunner", buffer.getvalue())
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            sim.main(["--trials", "2", "--top", "1", "--target", "eximus"])
+        text = buffer.getvalue()
+        self.assertIn("Eximus Heavy Gunner", text)
+        self.assertIn("Overguard", text)
 
     def test_weapon_stat_constants_match_the_export(self) -> None:
         self.assertEqual(WEAPON_NAME, "Corinth Prime")

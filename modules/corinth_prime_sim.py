@@ -61,6 +61,26 @@ the higher consumed value, which at average grade is the ordinary element
 value (``COMBINED_ELEMENT_STATS``). A spliced trait is pre-combined: it never
 joins the Cold/Toxin/Electricity groups of the fixed mods.
 
+Targets: two Steel Path level-150 Heavy Gunners, both faction Grineer. The
+plain one is 286,139.57 HP at 2,700 armor; the Eximus one
+(:data:`TARGET_EXIMUS`, the CLI default, and the target of the 2026-11-12
+follow-up request) is 1,716,837.41 HP at 2,700 armor behind 269,918.97
+Overguard. The plain target stays the factory default so the benchmark digest
+in ``tools/bench_models.py`` keeps its reference value.
+
+Overguard routing follows ``modules/damage_routing.py``: the layer is neutral to
+every damage type except Void, so the Grineer type table (Corrosive x1.5,
+Impact x1.5, Heat x0.5) applies to the health layer only, while a Bane-style
+faction *damage* bonus is applied to the hit before routing and therefore
+reaches both layers. Status effects are still applied while Overguard stands,
+which matches the Overguard page's "immunity to most crowd control effects"
+wording; the only consequence here is the damage those procs deal to the
+Overguard layer. Magnetic is modelled as inert: against an Overguarded target
+it would amplify Overguard damage and break-proc Electricity, so a
+Magnetic-spliced Riven is undercounted. Every ranked roll still stands at least
+1.4 s ahead of the best Magnetic splice analytically, and Overguard is only
+16% of the Eximus target's health, so the gap is not in doubt.
+
 Status model (shared with the other simulators):
 
 * Viral: 2 + 0.25 x (stacks - 1) health damage, 10 stacks / 4.25x, 6 s.
@@ -71,9 +91,10 @@ Status model (shared with the other simulators):
   application, buffed by the Electricity elemental bonus and reduced by armor.
 * Slash: six ticks over 6 s at 0.35x modded base, first tick after 1 s,
   bypasses armor.
-* Impact staggers and Radiation/Magnetic only matter for other target types;
-  they are modelled as inert statuses here (Magnetic has no Overguard to
-  amplify on a plain Heavy Gunner).
+* Impact stagger and Radiation confusion have no single-target damage effect
+  and are recorded as inert statuses. Magnetic is inert as well; on the Eximus
+  target it would amplify Overguard damage and break-proc Electricity, which is
+  the documented undercount for Magnetic splices.
 * Bane-style faction damage is one multiplier on direct hits and double dips
   the DoT seeds, exactly as in the Verglas and Kuva Nukor models.
 
@@ -93,6 +114,9 @@ Caveats worth repeating in the report:
   do), so the usual free -Zoom curse is not available here.
 * One target, no headshots, no punch-through geometry, no falloff, no
   companion/aura, and the arcane is assumed held at its 250% cap.
+* The analytic table is a health-only steady-state number: it has no Overguard
+  layer, no armor strip ramp and no ramp-up, so it is a ranking aid. The Monte
+  Carlo TTK is the number to quote against either target.
 """
 from __future__ import annotations
 
@@ -107,7 +131,11 @@ from pathlib import Path
 from .calculator import DamageCalculator
 from .constants import FACTION_MULTIPLIERS
 from .crit import crit_multiplier_for_tier, quantize_crit_multiplier
-from .enemy_scaling import enemy_armor_damage_multiplier, steel_path_heavy_gunner
+from .enemy_scaling import (
+    enemy_armor_damage_multiplier,
+    steel_path_eximus_heavy_gunner,
+    steel_path_heavy_gunner,
+)
 from .kuva_nukor_sim import DummyTarget, roll_multishot
 from .models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from .status_damage import electricity_tick, slash_tick
@@ -153,6 +181,16 @@ PUNCTURE_CRIT_PER_STACK = 0.05
 PUNCTURE_CAP = 5
 PUNCTURE_DURATION = 10.0
 HEAT_RAMP_INTERVAL = 0.5      # unused (no Heat source), kept for the target API
+
+# --- Targets -----------------------------------------------------------------
+
+TARGET_PLAIN = "plain"
+TARGET_EXIMUS = "eximus"
+TARGETS = (TARGET_PLAIN, TARGET_EXIMUS)
+TARGET_LABELS = {
+    TARGET_PLAIN: "SP150 Heavy Gunner",
+    TARGET_EXIMUS: "SP150 Eximus Heavy Gunner (with Overguard)",
+}
 
 # Statuses this module can apply. Heat/Cold/Toxin/Blast/Gas need DoT or cloud
 # models this build cannot reach, so a layout producing them is rejected.
@@ -719,13 +757,25 @@ class CorinthTrial:
     final_viral_stacks: int
     final_corrosive_stacks: int
     final_armor: float
+    overguard_max: float = 0.0
+    overguard_break: float = math.inf
     trace: list[str] = field(default_factory=list)
 
 
-def corinth_dummy_factory(armor_curve: str = ARMOR_CURVE_AUDITED) -> CorinthTarget:
-    """Plain (non-Eximus) SP150 Heavy Gunner: 286,139.57 HP, 2,700 armor."""
-    gunner = steel_path_heavy_gunner(150)
-    return CorinthTarget(gunner.health, gunner.armor, gunner.overguard,
+def corinth_dummy_factory(armor_curve: str = ARMOR_CURVE_AUDITED,
+                          target: str = TARGET_PLAIN) -> CorinthTarget:
+    """Fresh SP150 Heavy Gunner for one trial.
+
+    ``TARGET_PLAIN`` (the default, so the benchmark digest stays stable) is
+    286,139.57 HP / 2,700 armor with no Overguard. ``TARGET_EXIMUS`` is the
+    Eximus variant: 1,716,837.41 HP / 2,700 armor behind 269,918.97 Overguard.
+    The CLI defaults to the Eximus target; see :data:`TARGETS`.
+    """
+    if target not in TARGETS:
+        raise ValueError(f"unknown target {target!r}")
+    enemy = (steel_path_eximus_heavy_gunner(150) if target == TARGET_EXIMUS
+             else steel_path_heavy_gunner(150))
+    return CorinthTarget(enemy.health, enemy.armor, enemy.overguard,
                          armor_curve=armor_curve)
 
 
@@ -867,7 +917,11 @@ def simulate(build: CorinthBuild,
                     # no Overguard for Magnetic to amplify.
                     target.record_status(ptype, now, proc_duration)
                 else:
-                    proc_seed = build.modded_base * faction * crit
+                    # Seed without the crit factor: ``DoTProc`` carries the
+                    # pellet's crit multiplier separately and every tick
+                    # applies it once (``seed * crit_factor``), as the other
+                    # simulators do.
+                    proc_seed = build.modded_base * faction
                     if ptype == "ELEC":
                         target.record_status(ptype, now, proc_duration)
                         target.electric_procs.append(
@@ -896,6 +950,12 @@ def simulate(build: CorinthBuild,
         death = settle_dots(max_time)
         now = death if death is not None else max_time
     ttk = now if target.health <= 0 else math.inf
+    if target.overguard_max <= 0:
+        break_time = 0.0
+    elif target.overguard_broken_at is not None:
+        break_time = target.overguard_broken_at
+    else:
+        break_time = math.inf
     return CorinthTrial(
         ttk=ttk,
         shots=shots,
@@ -910,6 +970,8 @@ def simulate(build: CorinthBuild,
             ttk if math.isfinite(ttk) else now),
         final_armor=target.current_armor(ttk if math.isfinite(ttk) else now,
                                          HEAT_RAMP_INTERVAL),
+        overguard_max=target.overguard_max,
+        overguard_break=break_time,
         trace=log,
     )
 
@@ -919,26 +981,40 @@ def run_trials(roll: RivenRoll | None,
                *,
                base_seed: int = 20261112,
                armor_curve: str = ARMOR_CURVE_AUDITED,
+               target: str = TARGET_PLAIN,
                factory=None) -> dict:
-    """Run ``trials`` seeded fights for one roll and summarize the TTKs."""
+    """Run ``trials`` seeded fights for one roll and summarize the TTKs.
+
+    ``target`` selects the plain or Eximus Heavy Gunner; a custom ``factory``
+    overrides it. Overguard break times are summarized only when the target
+    has Overguard, and fights that never break it report ``inf``.
+    """
     if trials < 1:
         raise ValueError("trials must be positive")
     build = build_corinth(roll)
-    spawn = factory or (lambda: corinth_dummy_factory(armor_curve))
+    spawn = factory or (lambda: corinth_dummy_factory(armor_curve, target))
     ttks: list[float] = []
     reloads: list[float] = []
     viral: list[float] = []
     corrosive: list[float] = []
+    breaks: list[float] = []
+    overguard_max = 0.0
     for index in range(trials):
-        result = simulate(build, spawn(), seed=base_seed + index)
+        foe = spawn()
+        overguard_max = max(overguard_max, foe.overguard_max)
+        result = simulate(build, foe, seed=base_seed + index)
         if math.isfinite(result.ttk):
             ttks.append(result.ttk)
             reloads.append(result.reloads)
             viral.append(result.final_viral_stacks)
             corrosive.append(result.final_corrosive_stacks)
+            if math.isfinite(result.overguard_break):
+                breaks.append(result.overguard_break)
     return {
         "roll": roll,
         "build": build,
+        "target": target,
+        "overguard_max": overguard_max,
         "trials": len(ttks),
         "trials_attempted": trials,
         "timed_out": trials - len(ttks),
@@ -948,6 +1024,10 @@ def run_trials(roll: RivenRoll | None,
         "reloads_median": sample_percentile(reloads, 0.5),
         "viral_median": sample_percentile(viral, 0.5),
         "corrosive_median": sample_percentile(corrosive, 0.5),
+        "overguard_break_median": (sample_percentile(breaks, 0.5, empty=math.inf)
+                                   if overguard_max > 0 else 0.0),
+        "overguard_break_mean": ((sum(breaks) / len(breaks)) if breaks
+                                 else math.inf if overguard_max > 0 else 0.0),
     }
 
 
@@ -995,7 +1075,8 @@ def rank_rolls(rolls: list[RivenRoll], *,
 
 def rank_by_ttk(rolls: list[RivenRoll | None], trials: int = 200, *,
                 base_seed: int = 20261112,
-                armor_curve: str = ARMOR_CURVE_AUDITED) -> list[dict]:
+                armor_curve: str = ARMOR_CURVE_AUDITED,
+                target: str = TARGET_PLAIN) -> list[dict]:
     """Rank rolls by simulated mean TTK against the SP150 Heavy Gunner.
 
     Rolls whose element mix can proc a status this module does not model are
@@ -1003,7 +1084,7 @@ def rank_by_ttk(rolls: list[RivenRoll | None], trials: int = 200, *,
     every kill to a shot time, which makes the median jump a whole pull.
     """
     results = [run_trials(roll, trials, base_seed=base_seed,
-                          armor_curve=armor_curve)
+                          armor_curve=armor_curve, target=target)
                for roll in rolls if supports_simulation(build_corinth(roll))]
     results.sort(key=lambda result: (result["ttk_mean"], result["ttk_median"]))
     return results
@@ -1013,6 +1094,16 @@ def rank_by_ttk(rolls: list[RivenRoll | None], trials: int = 200, *,
 
 def _format_row(cells: list[str], widths: list[int]) -> str:
     return "  ".join(cell.rjust(width) for cell, width in zip(cells, widths, strict=True))
+
+
+def _print_target_summary(target: str) -> None:
+    enemy = (steel_path_eximus_heavy_gunner(150) if target == TARGET_EXIMUS
+             else steel_path_heavy_gunner(150))
+    print(f"Target: {TARGET_LABELS[target]}")
+    print(f"  {enemy.health:,.0f} HP at {enemy.armor:,.0f} armor "
+          f"({enemy.armor_dr:.0%} reduction), "
+          f"{enemy.overguard:,.0f} Overguard, faction Grineer")
+    print()
 
 
 def _print_build_summary() -> CorinthBuild:
@@ -1071,25 +1162,38 @@ def _print_analytic(top: int) -> list[RivenRoll]:
 
 
 def _print_trials(rolls: list[RivenRoll | None], trials: int, seed: int,
-                  armor_curve: str, title: str) -> list[dict]:
-    results = rank_by_ttk(rolls, trials, base_seed=seed, armor_curve=armor_curve)
+                  armor_curve: str, title: str,
+                  target: str = TARGET_PLAIN) -> list[dict]:
+    results = rank_by_ttk(rolls, trials, base_seed=seed,
+                          armor_curve=armor_curve, target=target)
     print(f"== {title} ({trials} seeded trials per roll)")
-    widths = [72, 10, 10, 10, 8, 8]
-    print(_format_row(["roll", "mean", "median", "p90", "viral", "corr"], widths))
+    overguarded = any(result["overguard_max"] > 0 for result in results)
+    if overguarded:
+        widths = [72, 10, 10, 10, 9, 8, 8]
+        print(_format_row(["roll", "mean", "median", "p90", "OG break",
+                           "viral", "corr"], widths))
+    else:
+        widths = [72, 10, 10, 10, 8, 8]
+        print(_format_row(["roll", "mean", "median", "p90", "viral", "corr"],
+                          widths))
     for result in results:
-        print(_format_row([
+        cells = [
             result["roll"].label() if result["roll"] else "no Riven",
             f"{result['ttk_mean']:.2f} s",
             f"{result['ttk_median']:.2f} s",
             f"{result['ttk_p90']:.2f} s",
-            f"{result['viral_median']:.0f}",
-            f"{result['corrosive_median']:.0f}",
-        ], widths))
+        ]
+        if overguarded:
+            cells.append(f"{result['overguard_break_median']:.2f} s")
+        cells.extend([f"{result['viral_median']:.0f}",
+                      f"{result['corrosive_median']:.0f}"])
+        print(_format_row(cells, widths))
     print()
     return results
 
 
-def _print_curses(roll: RivenRoll, trials: int, seed: int) -> None:
+def _print_curses(roll: RivenRoll, trials: int, seed: int,
+                  target: str = TARGET_PLAIN) -> None:
     print(f"== Curse ranking for +{' / '.join(roll.positives)} "
           f"({trials} seeded trials each)")
     rows: list[tuple[float, str, float]] = []
@@ -1101,7 +1205,8 @@ def _print_curses(roll: RivenRoll, trials: int, seed: int) -> None:
         if not supports_simulation(build_corinth(candidate)):
             continue
         report = steady_state_dps(build_corinth(candidate))
-        result = run_trials(candidate, trials, base_seed=seed)
+        result = run_trials(candidate, trials, base_seed=seed,
+                            target=target)
         rows.append((result["ttk_mean"], curse, report.total_dps))
     rows.sort()
     widths = [24, 10, 12]
@@ -1123,7 +1228,12 @@ def main(argv: list[str] | None = None) -> None:
                         help="also run the linear armor-curve sensitivity table")
     parser.add_argument("--curses", action="store_true",
                         help="also rank the curses for the leading roll")
+    parser.add_argument("--target", choices=TARGETS, default=TARGET_EXIMUS,
+                        help="enemy variant: the Eximus Heavy Gunner with "
+                             "Overguard (default) or the plain one")
     args = parser.parse_args(argv)
+    label = TARGET_LABELS[args.target]
+    _print_target_summary(args.target)
     _print_build_summary()
     winners = _print_analytic(args.top)
     rolls: list[RivenRoll | None] = list(dict.fromkeys(winners))
@@ -1131,12 +1241,13 @@ def main(argv: list[str] | None = None) -> None:
         rolls.insert(0, None)
     results = _print_trials(
         rolls, args.trials, args.seed, ARMOR_CURVE_AUDITED,
-        "Monte Carlo TTK, SP150 Heavy Gunner, audited armor curve")
+        f"Monte Carlo TTK, {label}, audited armor curve", args.target)
     if args.sensitivity:
         _print_trials(rolls, args.trials, args.seed, ARMOR_CURVE_LINEAR,
-                      "Sensitivity: same rolls on the linear armor reading")
+                      "Sensitivity: same rolls on the linear armor reading",
+                      args.target)
     if args.curses:
-        _print_curses(results[0]["roll"], args.trials, args.seed)
+        _print_curses(results[0]["roll"], args.trials, args.seed, args.target)
 
 
 if __name__ == "__main__":
