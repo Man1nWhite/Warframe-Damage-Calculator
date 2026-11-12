@@ -16,10 +16,12 @@
 ## Verification status (this round)
 
 - Full required-offscreen suite: **868 tests OK** in ~40 s (`tools/run_tests_ci.py`, `WDC_REQUIRE_GUI_TESTS=1`).
-- `ruff check .` clean; `python -m mypy` clean (**38 source files**); `tools/bench_models.py --check` reproduces the stored digest `53f9bcd7469a73ce…` (simulators unchanged).
+- `ruff check .` clean; `python -m mypy` clean (**39 source files**); `tools/bench_models.py --snapshot` reports `91f7170679045c8c…` with seven models (the Corinth Prime model is new this round, so the older `53f9bcd7469a73ce…` digest no longer applies).
 - Coverage (informational, not enforced): 93 % of `modules/` and `gui/` statements, measured before this round's edits.
 
 ## What changed this round
+
+- **Corinth Prime Riven simulator added** (`modules/corinth_prime_sim.py`, `tests/test_corinth_prime_sim.py`, `docs/corinth_prime_riven_sim.md`). Semi-Shotgun Cannonade / Galvanized Hell / Primed Ravage / Blunderbuss / Primed Chilling Grasp / Toxic Barrage / Primed Charged Shell plus a Riven in the Galvanized Acceleration slot, Primary Overcharge assumed at its 250 % cap, target `steel_path_heavy_gunner(150)`. It ranks 754 three-positive and 156 two-positive Riven rolls analytically, includes Riven Splicer combined-element traits (Corrosive leads them), and re-ranks the finalists by seeded Monte Carlo TTK. Registered in `tools/bench_models.py` (`corinth_prime_sim`, seed 1700).
 
 - **Both Ocucor artifacts were stale and are regenerated.** `docs/ocucor_enervate_flare_results.jsonl` (17 scenarios, 35,100 runs) and `docs/ocucor_viral_dilution_results.jsonl` (35 scenarios, 50,880 trials) no longer reproduced after the Cold-aware critical-damage change; means moved by up to ~0.05 s while the steady-state ordering held. The two reports' tables and prose now match the new artifacts.
 - **Artifact drift guard added.** `modules/ocucor_comparison.scenarios(...)` and `modules/ocucor_viral_comparison.scenarios(...)` now own the scenario list, order and arguments, and `tests/test_ocucor_artifacts.py` checks every record's name, order, settings and trial counts, then re-runs the cheapest scenario of each artifact at its recorded trial count and requires an exact match (~9 s of the suite).
