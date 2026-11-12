@@ -70,7 +70,7 @@ difference; **fixed this pass** — the code was changed to follow the wiki;
 | Toxin bypasses shields; Treasurer/Hounds excepted | Damage/Calculation | n/a (shields not modeled) | not implemented |
 | Average/normal/critical shot, AoE direct+radial sum, weak point | Damage/Calculation | `modules/crit.py` | fixed this pass (new module) |
 | Critical tiers `1 + tier × (CDM − 1)`; `floor`/`ceil` split above 100% | Damage/Calculation | `modules/crit.py`, simulators | match |
-| 12-bit base critical-damage quantization | Critical_Hit | `modules/crit.py`, six simulators | fixed this pass |
+| 12-bit base critical-damage quantization | Critical_Hit | `modules/crit.py`, seven simulators | fixed this pass |
 | Relative vs absolute critical-chance bonuses | Critical_Hit | `modules/crit.py` | fixed this pass (documented; sims use the formulas) |
 | Burst/sustained/charge/burst-trigger DPS and lifetime damage | Damage/Calculation | docs only | not implemented |
 

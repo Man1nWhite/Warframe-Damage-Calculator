@@ -19,6 +19,7 @@ class SnapshotTests(unittest.TestCase):
         # Every bundled simulator is covered, so a change to any of them is
         # checked against the same digest.
         self.assertEqual(sorted(payload), ["akarius_sim", "alternox_prime_sim",
+                                           "corinth_prime_sim",
                                            "jat_kittag_sim",
                                            "jat_kittag_slam_counts",
                                            "kuva_nukor_sim", "ocucor_sim",

@@ -28,7 +28,7 @@ itself needs network access:
 - **A behaviour-neutral optimisation gate.** The simulators are the slowest
   part of the tree, and every published figure is seeded model output.
   `tools/bench_models.py --snapshot` / `--check` hashes complete fixed-seed
-  trial records from all six simulators and the scalar slam-count model, so a
+  trial records from all seven simulators and the scalar slam-count model, so a
   speed change can be checked for bit-identical results in those scenarios.
   Adding Verglas changes the digest: take a new reference before optimizing;
   older snapshots are not comparable. [`docs/optimization_review.md`](docs/optimization_review.md)
@@ -522,8 +522,9 @@ The repository also contains simulations for [Kuva Nukor](docs/kuva_nukor_build_
 [Akarius Prime](docs/akarius_prime_riven_sim.md),
 [Ocucor](docs/ocucor_riven_sim.md),
 [Jat Kittag](docs/jat_kittag_heavy_slam_sim.md),
-[Alternox Prime](docs/alternox_prime_riven_sim.md), and
-[Verglas Prime](docs/verglas_prime_sim.md). Newer, explicitly
+[Alternox Prime](docs/alternox_prime_riven_sim.md),
+[Verglas Prime](docs/verglas_prime_sim.md), and
+[Corinth Prime](docs/corinth_prime_riven_sim.md). Newer, explicitly
 experimental comparisons for [Kuva Nukor](docs/kuva_nukor_three_mod_comparison.md),
 [Akarius Prime](docs/akarius_prime_viral_corrosive_comparison.md), and
 [Ocucor](docs/ocucor_enervate_flare_comparison.md) record their assumptions,
