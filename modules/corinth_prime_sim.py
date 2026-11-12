@@ -1213,8 +1213,10 @@ def _print_build_summary(
           f"per-pellet {sum(baseline.hud_by_type.values()):.1f}")
     print(f"  elements: {ELEMENT_LAYOUT_LABELS[element_layout]} "
           f"({', '.join(sorted(baseline.hud_by_type))})")
-    print(f"  un-rivend steady-state DPS (Viral saturated, no Corrosive): "
-          f"{steady_state_dps(baseline).total_dps:,.0f}")
+    viral_note = ("Viral saturated" if "VIRAL" in baseline.hud_by_type
+                  else "no Viral to saturate")
+    print(f"  un-rivend steady-state health DPS ({viral_note}, no Corrosive "
+          f"stacks): {steady_state_dps(baseline).total_dps:,.0f}")
     print()
     return baseline
 
