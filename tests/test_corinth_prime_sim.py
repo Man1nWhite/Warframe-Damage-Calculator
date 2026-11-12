@@ -466,6 +466,93 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(results[0]["roll"], RivenRoll(BEST_THREE, DEFAULT_CURSE))
 
 
+class ElementLayoutTests(unittest.TestCase):
+    def test_layout_swaps_which_elements_combine(self) -> None:
+        viral = build_corinth(None)
+        corrosive = build_corinth(None, element_layout=sim.ELEMENT_LAYOUT_CORROSIVE_COLD)
+        self.assertEqual(set(viral.hud_by_type), {"IMPACT", "PUNC", "SLASH",
+                                                  "ELEC", "VIRAL"})
+        self.assertEqual(set(corrosive.hud_by_type), {"IMPACT", "PUNC", "SLASH",
+                                                      "COLD", "CORR"})
+        # Same three mods, only the pairing changes.
+        self.assertAlmostEqual(corrosive.hud_by_type["CORR"],
+                               viral.hud_by_type["VIRAL"], places=6)
+        self.assertAlmostEqual(corrosive.hud_by_type["COLD"],
+                               viral.hud_by_type["ELEC"], places=6)
+        self.assertAlmostEqual(corrosive.modded_base, viral.modded_base, places=6)
+
+    def test_unknown_layout_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            build_corinth(None, element_layout="radtox")
+
+    def test_cold_and_magnetic_builds_are_simulatable(self) -> None:
+        for trait in ("Viral", "Magnetic", "Cold", "Corrosive"):
+            roll = RivenRoll((trait, "Damage"), DEFAULT_CURSE)
+            build = build_corinth(roll, element_layout=sim.ELEMENT_LAYOUT_CORROSIVE_COLD)
+            self.assertTrue(sim.supports_simulation(build), trait)
+
+
+class ColdAndMagneticTests(unittest.TestCase):
+    def test_cold_caps_at_four_stacks_under_overguard(self) -> None:
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        for _ in range(8):
+            target.add_cold(0.0, 6.0)
+        self.assertEqual(target.cold_stacks(0.0), 4)
+        target.overguard = 0.0
+        for _ in range(10):
+            target.add_cold(0.0, 6.0)
+        self.assertEqual(target.cold_stacks(0.0), 10)
+
+    def test_cold_stacks_raise_critical_damage(self) -> None:
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        base = build_corinth(None).crit_multiplier
+        self.assertAlmostEqual(target.crit_damage_multiplier(base, 0.0), base, places=6)
+        for _ in range(4):
+            target.add_cold(0.0, 6.0)
+        self.assertAlmostEqual(target.crit_damage_multiplier(base, 0.0),
+                               base + 0.25, places=6)
+
+    def test_corrosive_cold_build_strips_armor_and_freezes(self) -> None:
+        roll = RivenRoll(("Viral", "Damage"), DEFAULT_CURSE)
+        build = build_corinth(roll, element_layout=sim.ELEMENT_LAYOUT_CORROSIVE_COLD)
+        target = corinth_dummy_factory()
+        result = simulate(build, target, seed=9)
+        self.assertGreater(result.corrosive_procs, 0)
+        self.assertGreater(result.cold_procs, 0)
+        self.assertLess(result.final_armor, 2700.0)
+        self.assertLessEqual(result.final_cold_stacks, 10)
+
+    def test_magnetic_stacks_amplify_overguard_damage(self) -> None:
+        plain = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        magnetised = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        for _ in range(10):
+            magnetised.add_magnetic(0.0, 6.0)
+        self.assertEqual(magnetised.mag_stacks(0.0), 10)
+        first = plain.absorb({"CORR": 1000.0}, 0.0, sim.HEAT_RAMP_INTERVAL)
+        second = magnetised.absorb({"CORR": 1000.0}, 0.0, sim.HEAT_RAMP_INTERVAL)
+        self.assertAlmostEqual(first.overguard, 1000.0, places=6)
+        # Magnetic: 2.0 + 0.25 x (stacks - 1) to Overguard, 4.25x at ten.
+        self.assertAlmostEqual(second.overguard, 1000.0 * 4.25, places=6)
+        self.assertEqual(plain.health, magnetised.health)
+
+    def test_magnetic_splice_is_applied_in_a_trial(self) -> None:
+        roll = RivenRoll(("Magnetic", "Damage"), DEFAULT_CURSE)
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        result = simulate(build_corinth(roll, element_layout=sim.ELEMENT_LAYOUT_CORROSIVE_COLD),
+                          target, seed=3)
+        self.assertGreater(result.magnetic_procs, 0)
+        self.assertGreater(result.final_magnetic_stacks, 0)
+        self.assertAlmostEqual(target.overguard, 0.0)
+
+    def test_cold_procs_show_up_in_the_trial(self) -> None:
+        roll = RivenRoll(("Viral", "Damage"), DEFAULT_CURSE)
+        target = corinth_dummy_factory(target=sim.TARGET_EXIMUS)
+        result = simulate(build_corinth(roll, element_layout=sim.ELEMENT_LAYOUT_CORROSIVE_COLD),
+                          target, seed=5)
+        self.assertGreater(result.cold_procs, 0)
+        self.assertGreater(result.final_cold_stacks, 0)
+
+
 class TargetTests(unittest.TestCase):
     def test_plain_factory_has_no_overguard(self) -> None:
         target = corinth_dummy_factory()
@@ -560,6 +647,15 @@ class CliTests(unittest.TestCase):
         self.assertIn("Analytic steady-state DPS", text)
         self.assertIn("Monte Carlo TTK", text)
         self.assertIn("Damage to Grineer", text)
+
+    def test_cli_element_flag_selects_the_pairing(self) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            sim.main(["--trials", "2", "--top", "1",
+                      "--elements", "corrosive_cold"])
+        text = buffer.getvalue()
+        self.assertIn("Corrosive + Cold", text)
+        self.assertIn("CORR", text)
 
     def test_cli_target_flag_selects_the_dummy(self) -> None:
         buffer = io.StringIO()

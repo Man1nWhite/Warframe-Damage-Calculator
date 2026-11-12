@@ -11,8 +11,8 @@
 armor behind 269,919 Overguard). The plain, non-Eximus Gunner is kept as a
 second column throughout, because the two targets do not give the same answer.
 
-**Short answer: splice Corrosive and take `+Corrosive / +Damage / +Damage to
-Grineer`.** It is the fastest roll on both readings of the armor formula —
+**Short answer (original Viral + Electricity base): splice Corrosive and take
+`+Corrosive / +Damage / +Damage to Grineer`.** It is the fastest roll on both readings of the armor formula —
 **2.67 s mean** against the Eximus target versus **4.29 s** for the best
 non-spliced roll and **11.69 s** with Galvanized Acceleration instead of a
 Riven. Every one of the six Corrosive-spliced three-positive rolls beats every
@@ -26,6 +26,14 @@ in one or two trigger pulls, so the strip never compounds and
 `+Damage / +Critical Damage / +Damage to Grineer` was the better buy (0.92 s vs
 0.77 s for Corrosive). Against the Eximus the health pool is six times larger
 and the Corrosive roll wins on both armor readings.
+
+**Short answer (base re-paired to Corrosive + Cold): fish Viral, not
+Magnetic.** With Corrosive already in the fixed mods, `+Viral / +Damage /
++Damage to Grineer` runs **2.43 s** — better than the 2.67 s that the original
+base can reach at best — while the best Magnetic splice is **3.88 s**, worse
+than simply taking `+Damage / +Critical Damage / +Damage to Grineer` (3.16 s)
+with no splice at all. The full comparison is in
+[the Corrosive + Cold variant section](#variant-base-re-paired-to-corrosive--cold).
 
 ## The build the request fixes
 
@@ -123,6 +131,11 @@ two-positive rolls, all with a curse. Two ranking aids are reported:
   median can jump a whole pull. **This is the ranking the recommendation
   follows.**
 
+The element pairing is a build option, not a Riven property: with
+`--elements viral_electric` (default) Cold and Toxin form Viral and Electricity
+stays single; with `--elements corrosive_cold` Toxin and Electricity form
+Corrosive and Cold stays single. Same mods, same magnitudes.
+
 Status rules are the ones already audited elsewhere in the repository: Viral
 2 + 0.25 x (stacks - 1) to 10 stacks / 4.25x; Corrosive 26% of current armor on
 the first stack and +6% per further stack, 10 stacks / 80%, 8 s; Puncture +5
@@ -130,10 +143,12 @@ absolute crit points per stack to 5 stacks; Electricity six 0.5x ticks with the
 first on application and the Electricity elemental bonus applied; Slash six
 0.35x ticks that bypass armor. Bane-style faction damage multiplies direct hits
 once and the DoT seeds twice. Proc types are drawn from the modded damage
-distribution. Heat, Toxin, Cold, Blast and Gas cannot appear in this build's
-modelled layouts (Cold and Toxin are always inside Viral, a Heat Riven makes
-Radiation, and no fixed mod supplies Heat), so the simulator refuses a layout
-that would proc them instead of dropping the proc silently.
+distribution. Cold, Magnetic and Corrosive are all modelled, including Cold's
+four-stack cap under Overguard and its Critical Damage bonus, and Magnetic's
+Overguard amplification plus the Electricity released when the layer breaks.
+Heat, Toxin, Blast and Gas are not: a Heat Riven pairs with the fixed
+Electricity into Radiation, so the simulator refuses a layout that would proc
+one of them instead of dropping the proc silently.
 
 ## Results — Eximus target
 
@@ -293,6 +308,67 @@ positive-only trait in this table, not a curse. Compared with the plain target,
 -Status Chance and -Status Duration are much more expensive here: the strip is
 the damage, so weakening it costs a third to half the fight.
 
+## Variant: base re-paired to Corrosive + Cold
+
+The three elemental mods can be paired the other way: Toxin and Electricity
+combine, Cold stays single. Same mods, same percentages, different pairing —
+`--elements corrosive_cold`. That leaves the Riven free to carry a spliced
+**Viral** or **Magnetic** trait, which is the question.
+
+### Viral vs Magnetic vs nothing (Eximus, 500 trials per row)
+
+| Riven (Corrosive + Cold base) | Audited curve | Linear armor reading |
+| --- | ---: | ---: |
+| **+Viral / +Damage / +Damage to Grineer** | **2.43 s** | **3.41 s** |
+| +Viral / +Damage / +Critical Damage | 2.52 s | 3.53 s |
+| +Viral / +Critical Damage / +Damage to Grineer | 2.55 s | 3.57 s |
+| +Damage / +Critical Damage / +Damage to Grineer (no splice) | 3.16 s | 4.64 s |
+| +Corrosive / +Damage / +Damage to Grineer (duplicate Corrosive) | 3.32 s | 4.96 s |
+| **+Magnetic / +Damage / +Damage to Grineer** | 3.88 s | 5.66 s |
+| +Radiation / +Damage / +Damage to Grineer | 3.90 s | 5.68 s |
+| +Magnetic / +Damage / +Critical Damage | 4.06 s | 5.93 s |
+| no Riven (Galvanized Acceleration) | 7.60 s | 11.58 s |
+
+**Viral wins by 1.45 s and it is not close.** The reasons are worth stating,
+because "Magnetic shreds Overguard" is true and still not what this fight
+needs:
+
+* Overguard is 269,919 of the target's 2.0M total health and dies inside the
+  first trigger pull for every roll on this page, Magnetic or not. Magnetic's
+  4.25x Overguard amplification has one pull to act on and the break
+  Electricity (3% of maximum Overguard per stack, ~81k at ten stacks) is a
+  third of a pull's health damage.
+* The health layer is 1.7M HP behind 90% DR. Viral's 4.25x multiplies all of
+  that, and it stacks off the Riven's own proc share within two pulls.
+* Magnetic adds a *neutral* damage type to a 2,700-armor Grineer (no type
+  bonus, no strip) and takes proc share away from Corrosive, so it slows the
+  strip while it pays for itself only on a layer that is already free.
+
+### Is the switch itself worth making?
+
+| Build | Audited | Linear |
+| --- | ---: | ---: |
+| Corrosive + Cold base, +Viral / +Damage / +Damage to Grineer | **2.43 s** | **3.41 s** |
+| Viral + Electricity base, +Corrosive / +Damage / +Damage to Grineer | 2.67 s | 3.70 s |
+| Corrosive + Cold base, no Riven | 7.60 s | 11.58 s |
+| Viral + Electricity base, no Riven | 11.69 s | 11.69 s |
+
+Yes, by about 9-10% at the top and far more before the Riven: with the base
+already stripping armor, the un-rivend build drops from 11.69 s to 7.60 s.
+The Corrosive + Cold base also makes the Riven decision cheaper — the splicer
+now buys Viral instead of Corrosive, and Viral is the trait the original base
+was getting for free.
+
+Two things the switch costs: the fixed Electricity DoT disappears (it is now
+inside Corrosive), and the Riven must carry Viral or the build loses the health
+amplifier entirely — a non-spliced Riven on this base is 3.16 s, i.e. the worst
+of the three "reasonable" configurations.
+
+Cold is not a passenger, though: with 165% Cold in the build it holds 5-9
+stacks at the kill on the Eximus target, adding +0.25x Critical Damage while
+Overguard stands (four-stack cap) and +0.30x to +0.50x once the layer is gone,
+on a 5.875x base.
+
 ## Results — plain target, for comparison
 
 500 seeded trials, Corrosive rolls only on the left of the pairs:
@@ -315,6 +391,11 @@ is 0.03 s quicker on the linear reading.
 
 ## Recommendation
 
+0. **If you switch the base to Corrosive + Cold, fish Viral**: `+Viral /
+   +Damage / +Damage to Grineer` (2.43 s / 3.41 s). Do not fish Magnetic
+   (3.88 s / 5.66 s) — it is slower than a plain `+Damage / +Critical Damage /
+   +Damage to Grineer` Riven, and the switch only pays off if the Riven carries
+   Viral. The rest of this list assumes the original Viral + Electricity base.
 1. **Splice Corrosive and take `+Corrosive / +Damage / +Damage to Grineer`.**
    2.67 s Eximus / 0.77 s plain on the audited curve, 3.70 s / 0.95 s on the
    linear one — first on every reading tested, and 38% faster than the best
@@ -352,6 +433,8 @@ is 0.03 s quicker on the linear reading.
 python -m modules.corinth_prime_sim --trials 500 --top 8 --sensitivity --curses
 # the plain Gunner tables in this report
 python -m modules.corinth_prime_sim --trials 500 --top 8 --sensitivity --curses --target plain
+# the Corrosive + Cold variant (Viral vs Magnetic)
+python -m modules.corinth_prime_sim --trials 500 --top 8 --elements corrosive_cold
 python -m unittest tests.test_corinth_prime_sim -v
 ```
 
@@ -378,7 +461,9 @@ armor-curve mapping.
   first pull and nothing else changes, because that phase is under one pull.
 * Magnetic is modelled as inert, so a Magnetic-spliced Riven is undercounted.
   It ranks well below every Corrosive roll anyway.
-* Blast, Gas, Heat, Toxin and Cold procs are outside the Monte Carlo; layouts
-  that would roll them are ranked analytically only.
+* Blast, Gas, Heat and Toxin procs are outside the Monte Carlo; layouts that
+  would roll them are ranked analytically only, with their proc damage
+  unmodelled. Cold is modelled, but its Freeze only matters for the plain
+  target (Overguard caps Cold at four stacks).
 * Every TTK here is model output under the repository's audited formulas, not
   a measurement of the live game.

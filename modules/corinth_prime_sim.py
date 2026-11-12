@@ -75,11 +75,16 @@ faction *damage* bonus is applied to the hit before routing and therefore
 reaches both layers. Status effects are still applied while Overguard stands,
 which matches the Overguard page's "immunity to most crowd control effects"
 wording; the only consequence here is the damage those procs deal to the
-Overguard layer. Magnetic is modelled as inert: against an Overguarded target
-it would amplify Overguard damage and break-proc Electricity, so a
-Magnetic-spliced Riven is undercounted. Every ranked roll still stands at least
-1.4 s ahead of the best Magnetic splice analytically, and Overguard is only
-16% of the Eximus target's health, so the gap is not in doubt.
+Overguard layer, and Cold's four-stack cap while the layer holds.
+
+Element pairing: the three fixed elemental mods are the same in both layouts,
+but Warframe combines primary elements in mod-slot order, so
+``element_layout`` decides the result. :data:`ELEMENT_LAYOUT_VIRAL_ELEC`
+(Cold + Toxin -> Viral, Electricity single) is the original build;
+:data:`ELEMENT_LAYOUT_CORROSIVE_COLD` (Toxin + Electricity -> Corrosive,
+Cold single) is the variant that pairs the base into Corrosive and leaves Cold
+as its own damage type. The magnitudes are identical -- only the pairing
+changes.
 
 Status model (shared with the other simulators):
 
@@ -91,18 +96,26 @@ Status model (shared with the other simulators):
   application, buffed by the Electricity elemental bonus and reduced by armor.
 * Slash: six ticks over 6 s at 0.35x modded base, first tick after 1 s,
   bypasses armor.
+* Cold: +0.10x Critical Damage on the first stack, +0.05x per further stack,
+  +1.0x while Frozen; capped at four stacks (+0.25x) while Overguard stands,
+  freezing at ten for half the status duration and leaving three stacks. The
+  target owns that state machine; this module only has to apply the proc.
+* Magnetic: amplifies Overguard damage by 2.0 + 0.25 x (stacks - 1) to 4.25x
+  and, when the layer breaks, releases Electricity worth 3% of maximum
+  Overguard per stack over the proc duration. Both are delegated to the shared
+  target: the amplification happens inside ``route_enemy_hit`` because the
+  target now carries Magnetic stacks, and the break tick is settled from
+  ``next_magnetic_electric_tick`` alongside the other DoTs.
 * Impact stagger and Radiation confusion have no single-target damage effect
-  and are recorded as inert statuses. Magnetic is inert as well; on the Eximus
-  target it would amplify Overguard damage and break-proc Electricity, which is
-  the documented undercount for Magnetic splices.
+  and are recorded as inert statuses.
 * Bane-style faction damage is one multiplier on direct hits and double dips
   the DoT seeds, exactly as in the Verglas and Kuva Nukor models.
 
 Proc selection weights each damage type by its share of the modded hit
-(``docs/damage_formula_reference.md`` section 3). Heat, Toxin, Cold, Blast and
-Gas are not modelled: in this build Cold and Toxin can only exist inside Viral
-and a Heat Riven only produces Radiation, so :func:`build_corinth` rejects a
-layout that would produce one of those procs instead of silently dropping it.
+(``docs/damage_formula_reference.md`` section 3). Heat, Toxin, Blast and Gas are
+not modelled; a Heat Riven pairs with the fixed Electricity into Radiation, so
+:func:`build_corinth` builds such layouts but :func:`simulate` rejects them
+instead of silently dropping a proc.
 
 Caveats worth repeating in the report:
 
@@ -136,7 +149,7 @@ from .enemy_scaling import (
     steel_path_eximus_heavy_gunner,
     steel_path_heavy_gunner,
 )
-from .kuva_nukor_sim import DummyTarget, roll_multishot
+from .kuva_nukor_sim import DummyTarget, MagneticSource, roll_multishot
 from .models import CalculationInputs, EquippedMod, Mod, ModEffect, Weapon
 from .status_damage import electricity_tick, slash_tick
 from .trial_statistics import sample_percentile
@@ -192,10 +205,23 @@ TARGET_LABELS = {
     TARGET_EXIMUS: "SP150 Eximus Heavy Gunner (with Overguard)",
 }
 
-# Statuses this module can apply. Heat/Cold/Toxin/Blast/Gas need DoT or cloud
-# models this build cannot reach, so a layout producing them is rejected.
+# Element pairing of the three fixed elemental mods. Warframe combines primary
+# elements in mod-slot order: the first two form a combined element and the
+# third stays single. The user's first build pairs Cold + Toxin (Viral) and
+# leaves Electricity single; the alternative pairs Toxin + Electricity
+# (Corrosive) and leaves Cold single.
+ELEMENT_LAYOUT_VIRAL_ELEC = "viral_electric"
+ELEMENT_LAYOUT_CORROSIVE_COLD = "corrosive_cold"
+ELEMENT_LAYOUTS = (ELEMENT_LAYOUT_VIRAL_ELEC, ELEMENT_LAYOUT_CORROSIVE_COLD)
+ELEMENT_LAYOUT_LABELS = {
+    ELEMENT_LAYOUT_VIRAL_ELEC: "Viral + Electricity",
+    ELEMENT_LAYOUT_CORROSIVE_COLD: "Corrosive + Cold",
+}
+
+# Statuses this module can apply. Blast and Gas need cloud/detonation models
+# this build cannot reach, so a layout producing them is rejected.
 SUPPORTED_PROC_TYPES = frozenset(
-    {"VIRAL", "CORR", "ELEC", "SLASH", "IMPACT", "PUNC", "RAD", "MAG"})
+    {"VIRAL", "CORR", "ELEC", "SLASH", "IMPACT", "PUNC", "RAD", "MAG", "COLD"})
 
 # --- Riven tables ------------------------------------------------------------
 
@@ -451,8 +477,22 @@ def _mod(name: str, effects: dict[str, float]) -> EquippedMod:
         for code, value in effects.items() if value])
 
 
+def _element_mods(element_layout: str) -> list[EquippedMod]:
+    """The three elemental mods in the slot order that fixes their pairing."""
+    cold = _mod("Primed Chilling Grasp", {"COLD": PRIMED_CHILLING_GRASP_COLD})
+    toxin = _mod("Toxic Barrage", {"TOXIN": TOXIC_BARRAGE_TOXIN,
+                                   "STATUS_CHANCE": TOXIC_BARRAGE_STATUS})
+    elec = _mod("Primed Charged Shell", {"ELEC": PRIMED_CHARGED_SHELL_ELEC})
+    if element_layout == ELEMENT_LAYOUT_VIRAL_ELEC:
+        return [cold, toxin, elec]
+    if element_layout == ELEMENT_LAYOUT_CORROSIVE_COLD:
+        return [toxin, elec, cold]
+    raise ValueError(f"unknown element layout {element_layout!r}")
+
+
 def _equipped(roll: RivenRoll | None,
-              effects: dict[str, float]) -> list[EquippedMod]:
+              effects: dict[str, float],
+              element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC) -> list[EquippedMod]:
     """Eight slots in the request's order, with the Riven in slot eight."""
     slots = [
         _mod("Semi-Shotgun Cannonade",
@@ -460,10 +500,7 @@ def _equipped(roll: RivenRoll | None,
         _mod("Galvanized Hell", {"MULTISHOT": GALVANIZED_HELL_MULTISHOT}),
         _mod("Primed Ravage", {"CRIT_DAMAGE": PRIMED_RAVAGE_CRIT_DAMAGE}),
         _mod("Blunderbuss", {"CRIT_CHANCE": BLUNDERBUSS_CRIT_CHANCE}),
-        _mod("Primed Chilling Grasp", {"COLD": PRIMED_CHILLING_GRASP_COLD}),
-        _mod("Toxic Barrage", {"TOXIN": TOXIC_BARRAGE_TOXIN,
-                               "STATUS_CHANCE": TOXIC_BARRAGE_STATUS}),
-        _mod("Primed Charged Shell", {"ELEC": PRIMED_CHARGED_SHELL_ELEC}),
+        *_element_mods(element_layout),
     ]
     if roll is not None:
         slots.append(_mod("Riven", effects))
@@ -479,6 +516,7 @@ class CorinthBuild:
 
     roll: RivenRoll | None
     effects: dict[str, float]
+    element_layout: str
     hud_by_type: dict[str, float]      # per pellet, 1/32-quantized
     modded_base: float                 # 90 x (1 + base-damage bonuses)
     crit_chance: float
@@ -516,8 +554,13 @@ def supports_simulation(build: CorinthBuild) -> bool:
 
 
 def build_corinth(roll: RivenRoll | None = None, *,
-                  riven_values: dict[str, float] | None = None) -> CorinthBuild:
+                  riven_values: dict[str, float] | None = None,
+                  element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC) -> CorinthBuild:
     """Resolve one Riven roll on top of the seven fixed mods.
+
+    ``element_layout`` selects how the three fixed elemental mods pair:
+    ``viral_electric`` (Cold + Toxin -> Viral, Electricity single) or
+    ``corrosive_cold`` (Toxin + Electricity -> Corrosive, Cold single).
 
     ``roll=None`` returns the eight-mod baseline with Galvanized Acceleration
     in place of the Riven. Builds are constructed even when their element mix
@@ -541,7 +584,7 @@ def build_corinth(roll: RivenRoll | None = None, *,
         corinth_prime_weapon(),
         CalculationInputs(weapon_name=WEAPON_NAME, faction="Grineer",
                           armor_value=0.0,
-                          equipped_mods=_equipped(roll, riven_fx)),
+                          equipped_mods=_equipped(roll, riven_fx, element_layout)),
     )
     hud = {kind: value for kind, value in results.hud_damage_by_type.items()
            if value > 0}
@@ -554,6 +597,7 @@ def build_corinth(roll: RivenRoll | None = None, *,
     return CorinthBuild(
         roll=roll,
         effects=effects,
+        element_layout=element_layout,
         hud_by_type=hud,
         modded_base=PELLET_DAMAGE * (1.0 + effects.get("TRUE", 0.0)),
         crit_chance=BASE_CRIT_CHANCE * (1.0 + effects.get("CRIT_CHANCE", 0.0)),
@@ -615,7 +659,7 @@ def _crit_expectation(build: CorinthBuild) -> float:
 
 
 def steady_state_dps(build: CorinthBuild, *,
-                     viral_stacks: int = VIRAL_CAP,
+                     viral_stacks: int | None = None,
                      corrosive_stacks: int = 0,
                      faction: str = "Grineer") -> DpsReport:
     """Expected DPS with Viral (and, if any, Corrosive) already saturated.
@@ -624,13 +668,17 @@ def steady_state_dps(build: CorinthBuild, *,
     already complete and that every pellet hits one target at full damage.
     Direct hits use the audited per-type armor and faction modifiers; DoT
     ticks use their own coefficients and the same faction modifier once more
-    (the deliberate Bane double dip).
+    (the deliberate Bane double dip). ``viral_stacks=None`` saturates Viral
+    only when the build actually deals Viral damage, so a Corrosive + Cold
+    layout is not credited with a Viral amplifier it cannot apply.
     """
     types = FACTION_MULTIPLIERS[faction]
     armor = steel_path_heavy_gunner(150).armor * corrosive_armor_factor(corrosive_stacks)
     armor_multiplier = enemy_armor_damage_multiplier(armor)
     crit = _crit_expectation(build)
     bane = 1.0 + build.faction_bonus
+    if viral_stacks is None:
+        viral_stacks = VIRAL_CAP if "VIRAL" in build.hud_by_type else 0
     viral = viral_health_multiplier(viral_stacks)
     pellets_per_second = build.pellets_per_second
 
@@ -759,6 +807,10 @@ class CorinthTrial:
     final_armor: float
     overguard_max: float = 0.0
     overguard_break: float = math.inf
+    cold_procs: int = 0
+    magnetic_procs: int = 0
+    final_cold_stacks: int = 0
+    final_magnetic_stacks: int = 0
     trace: list[str] = field(default_factory=list)
 
 
@@ -815,13 +867,18 @@ def simulate(build: CorinthBuild,
     corrosive_duration = CORROSIVE_DURATION * build.status_duration_multiplier
     puncture_duration = PUNCTURE_DURATION * build.status_duration_multiplier
     faction = 1.0 + build.faction_bonus
+    magnetic_source = MagneticSource(
+        faction_bonus=build.faction_bonus,
+        electricity_bonus=build.electricity_bonus,
+        duration_multiplier=build.status_duration_multiplier,
+    )
     proc_types = list(build.proc_weights)
     proc_weights = list(build.proc_weights.values())
 
     now = 0.0
     ammo = build.magazine
     shots = pellets_fired = reloads = 0
-    counts = {"VIRAL": 0, "CORR": 0, "ELEC": 0, "SLASH": 0}
+    counts = {"VIRAL": 0, "CORR": 0, "ELEC": 0, "SLASH": 0, "COLD": 0, "MAG": 0}
     log: list[str] = []
 
     def route(damage: dict[str, float], when: float, *, bypass: bool = False) -> None:
@@ -833,7 +890,10 @@ def simulate(build: CorinthBuild,
     def settle_dots(until: float) -> float | None:
         """Apply every DoT tick due at or before ``until``, in time order."""
         while target.health > 0:
-            due_time = math.inf
+            # The Electricity released by an Overguard break has its own clock
+            # and is applied inside the target, so it is settled first.
+            magnetic_due = target.next_magnetic_electric_tick()
+            due_time = magnetic_due
             for procs, duration in ((target.electric_procs, proc_duration),
                                     (target.bleed_procs, proc_duration)):
                 for proc in procs:
@@ -841,6 +901,13 @@ def simulate(build: CorinthBuild,
                         due_time = min(due_time, proc.next_tick)
             if due_time > until:
                 return None
+            if magnetic_due == due_time:
+                target.process_magnetic_electric_until(
+                    due_time, HEAT_RAMP_INTERVAL,
+                    faction_type_modifiers=gunner_types)
+                if target.health <= 0:
+                    return due_time
+                continue
             for procs, duration, kind, bypass in (
                     (target.electric_procs, proc_duration, "ELEC", False),
                     (target.bleed_procs, proc_duration, "SLASH", True)):
@@ -912,9 +979,15 @@ def simulate(build: CorinthBuild,
                 elif ptype == "PUNC":
                     target.add_puncture(now, puncture_duration,
                                         max_stacks=PUNCTURE_CAP)
-                elif ptype in {"IMPACT", "RAD", "MAG"}:
-                    # Modelled as inert on this target: no bleed/ignite DoT and
-                    # no Overguard for Magnetic to amplify.
+                elif ptype == "COLD":
+                    # Cold raises Critical Damage per stack and caps at four
+                    # while Overguard stands; the target owns that state.
+                    target.record_status(ptype, now, proc_duration)
+                elif ptype == "MAG":
+                    target.add_magnetic(now, proc_duration, magnetic_source)
+                elif ptype in {"IMPACT", "RAD"}:
+                    # No single-target damage effect: Impact staggers and
+                    # Radiation only confuses other enemies.
                     target.record_status(ptype, now, proc_duration)
                 else:
                     # Seed without the crit factor: ``DoTProc`` carries the
@@ -972,6 +1045,12 @@ def simulate(build: CorinthBuild,
                                          HEAT_RAMP_INTERVAL),
         overguard_max=target.overguard_max,
         overguard_break=break_time,
+        cold_procs=counts["COLD"],
+        magnetic_procs=counts["MAG"],
+        final_cold_stacks=target.cold_stacks(
+            ttk if math.isfinite(ttk) else now),
+        final_magnetic_stacks=target.mag_stacks(
+            ttk if math.isfinite(ttk) else now),
         trace=log,
     )
 
@@ -982,6 +1061,7 @@ def run_trials(roll: RivenRoll | None,
                base_seed: int = 20261112,
                armor_curve: str = ARMOR_CURVE_AUDITED,
                target: str = TARGET_PLAIN,
+               element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC,
                factory=None) -> dict:
     """Run ``trials`` seeded fights for one roll and summarize the TTKs.
 
@@ -991,13 +1071,15 @@ def run_trials(roll: RivenRoll | None,
     """
     if trials < 1:
         raise ValueError("trials must be positive")
-    build = build_corinth(roll)
+    build = build_corinth(roll, element_layout=element_layout)
     spawn = factory or (lambda: corinth_dummy_factory(armor_curve, target))
     ttks: list[float] = []
     reloads: list[float] = []
     viral: list[float] = []
     corrosive: list[float] = []
     breaks: list[float] = []
+    cold: list[float] = []
+    magnetic: list[float] = []
     overguard_max = 0.0
     for index in range(trials):
         foe = spawn()
@@ -1008,12 +1090,15 @@ def run_trials(roll: RivenRoll | None,
             reloads.append(result.reloads)
             viral.append(result.final_viral_stacks)
             corrosive.append(result.final_corrosive_stacks)
+            cold.append(result.final_cold_stacks)
+            magnetic.append(result.final_magnetic_stacks)
             if math.isfinite(result.overguard_break):
                 breaks.append(result.overguard_break)
     return {
         "roll": roll,
         "build": build,
         "target": target,
+        "element_layout": element_layout,
         "overguard_max": overguard_max,
         "trials": len(ttks),
         "trials_attempted": trials,
@@ -1024,6 +1109,8 @@ def run_trials(roll: RivenRoll | None,
         "reloads_median": sample_percentile(reloads, 0.5),
         "viral_median": sample_percentile(viral, 0.5),
         "corrosive_median": sample_percentile(corrosive, 0.5),
+        "cold_median": sample_percentile(cold, 0.5),
+        "magnetic_median": sample_percentile(magnetic, 0.5),
         "overguard_break_median": (sample_percentile(breaks, 0.5, empty=math.inf)
                                    if overguard_max > 0 else 0.0),
         "overguard_break_mean": ((sum(breaks) / len(breaks)) if breaks
@@ -1061,12 +1148,14 @@ def candidate_rolls(positives: int = 3,
 
 
 def rank_rolls(rolls: list[RivenRoll], *,
-               viral_stacks: int = VIRAL_CAP,
-               corrosive_stacks: int = 0) -> list[DpsReport]:
+               viral_stacks: int | None = None,
+               corrosive_stacks: int = 0,
+               element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC
+               ) -> list[DpsReport]:
     """Rank rolls by steady-state DPS under the given saturation."""
     reports = []
     for roll in rolls:
-        build = build_corinth(roll)
+        build = build_corinth(roll, element_layout=element_layout)
         reports.append(steady_state_dps(build, viral_stacks=viral_stacks,
                                         corrosive_stacks=corrosive_stacks))
     reports.sort(key=lambda report: -report.total_dps)
@@ -1076,7 +1165,8 @@ def rank_rolls(rolls: list[RivenRoll], *,
 def rank_by_ttk(rolls: list[RivenRoll | None], trials: int = 200, *,
                 base_seed: int = 20261112,
                 armor_curve: str = ARMOR_CURVE_AUDITED,
-                target: str = TARGET_PLAIN) -> list[dict]:
+                target: str = TARGET_PLAIN,
+                element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC) -> list[dict]:
     """Rank rolls by simulated mean TTK against the SP150 Heavy Gunner.
 
     Rolls whose element mix can proc a status this module does not model are
@@ -1084,8 +1174,11 @@ def rank_by_ttk(rolls: list[RivenRoll | None], trials: int = 200, *,
     every kill to a shot time, which makes the median jump a whole pull.
     """
     results = [run_trials(roll, trials, base_seed=base_seed,
-                          armor_curve=armor_curve, target=target)
-               for roll in rolls if supports_simulation(build_corinth(roll))]
+                          armor_curve=armor_curve, target=target,
+                          element_layout=element_layout)
+               for roll in rolls
+               if supports_simulation(build_corinth(
+                   roll, element_layout=element_layout))]
     results.sort(key=lambda result: (result["ttk_mean"], result["ttk_median"]))
     return results
 
@@ -1106,8 +1199,9 @@ def _print_target_summary(target: str) -> None:
     print()
 
 
-def _print_build_summary() -> CorinthBuild:
-    baseline = build_corinth(None)
+def _print_build_summary(
+        element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC) -> CorinthBuild:
+    baseline = build_corinth(None, element_layout=element_layout)
     print(f"Build: {WEAPON_NAME}, {PELLETS:g} pellets x "
           f"{1.0 + GALVANIZED_HELL_MULTISHOT + PRIMARY_OVERCHARGE_MULTISHOT:.2f} "
           f"multishot = {baseline.multishot:.1f} pellets per trigger pull")
@@ -1117,25 +1211,28 @@ def _print_build_summary() -> CorinthBuild:
           f"status {baseline.status_chance:.1%}/pellet, "
           f"modded base {baseline.modded_base:.1f}, "
           f"per-pellet {sum(baseline.hud_by_type.values()):.1f}")
-    print(f"  element mix: {', '.join(sorted(baseline.hud_by_type))}")
+    print(f"  elements: {ELEMENT_LAYOUT_LABELS[element_layout]} "
+          f"({', '.join(sorted(baseline.hud_by_type))})")
     print(f"  un-rivend steady-state DPS (Viral saturated, no Corrosive): "
           f"{steady_state_dps(baseline).total_dps:,.0f}")
     print()
     return baseline
 
 
-def _print_analytic(top: int) -> list[RivenRoll]:
+def _print_analytic(top: int, element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC
+                    ) -> list[RivenRoll]:
     winners: list[RivenRoll] = []
     for positives in (3, 2):
         rolls = candidate_rolls(positives)
-        ranked = rank_rolls(rolls)
+        ranked = rank_rolls(rolls, element_layout=element_layout)
         print(f"== Analytic steady-state DPS: {positives} positives + 1 curse "
               f"({len(rolls)} rolls)")
         widths = [74, 12, 14, 12]
         print(_format_row(["roll", "DPS", "DPS at 10 Corr", "sustained"], widths))
         for report in ranked[:top]:
-            strip = steady_state_dps(build_corinth(report.roll),
-                                     corrosive_stacks=CORROSIVE_CAP)
+            strip = steady_state_dps(
+                build_corinth(report.roll, element_layout=element_layout),
+                corrosive_stacks=CORROSIVE_CAP)
             print(_format_row([report.label, f"{report.total_dps:,.0f}",
                                f"{strip.total_dps:,.0f}",
                                f"{report.sustained_dps:,.0f}"], widths))
@@ -1147,8 +1244,10 @@ def _print_analytic(top: int) -> list[RivenRoll]:
                                None)
         top_labels = {report.label for report in ranked[:top]}
         if leading_spliced is not None and leading_spliced.label not in top_labels:
-            strip = steady_state_dps(build_corinth(leading_spliced.roll),
-                                     corrosive_stacks=CORROSIVE_CAP)
+            strip = steady_state_dps(
+                build_corinth(leading_spliced.roll,
+                              element_layout=element_layout),
+                corrosive_stacks=CORROSIVE_CAP)
             print(_format_row([leading_spliced.label + "   [leading spliced]",
                                f"{leading_spliced.total_dps:,.0f}",
                                f"{strip.total_dps:,.0f}",
@@ -1163,19 +1262,21 @@ def _print_analytic(top: int) -> list[RivenRoll]:
 
 def _print_trials(rolls: list[RivenRoll | None], trials: int, seed: int,
                   armor_curve: str, title: str,
-                  target: str = TARGET_PLAIN) -> list[dict]:
+                  target: str = TARGET_PLAIN,
+                  element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC) -> list[dict]:
     results = rank_by_ttk(rolls, trials, base_seed=seed,
-                          armor_curve=armor_curve, target=target)
+                          armor_curve=armor_curve, target=target,
+                          element_layout=element_layout)
     print(f"== {title} ({trials} seeded trials per roll)")
     overguarded = any(result["overguard_max"] > 0 for result in results)
+    header = ["roll", "mean", "median", "p90"]
+    widths = [68, 9, 9, 9]
     if overguarded:
-        widths = [72, 10, 10, 10, 9, 8, 8]
-        print(_format_row(["roll", "mean", "median", "p90", "OG break",
-                           "viral", "corr"], widths))
-    else:
-        widths = [72, 10, 10, 10, 8, 8]
-        print(_format_row(["roll", "mean", "median", "p90", "viral", "corr"],
-                          widths))
+        header.append("OG break")
+        widths.append(10)
+    header += ["viral", "corr", "cold", "mag"]
+    widths += [6, 6, 6, 6]
+    print(_format_row(header, widths))
     for result in results:
         cells = [
             result["roll"].label() if result["roll"] else "no Riven",
@@ -1186,14 +1287,17 @@ def _print_trials(rolls: list[RivenRoll | None], trials: int, seed: int,
         if overguarded:
             cells.append(f"{result['overguard_break_median']:.2f} s")
         cells.extend([f"{result['viral_median']:.0f}",
-                      f"{result['corrosive_median']:.0f}"])
+                      f"{result['corrosive_median']:.0f}",
+                      f"{result['cold_median']:.0f}",
+                      f"{result['magnetic_median']:.0f}"])
         print(_format_row(cells, widths))
     print()
     return results
 
 
 def _print_curses(roll: RivenRoll, trials: int, seed: int,
-                  target: str = TARGET_PLAIN) -> None:
+                  target: str = TARGET_PLAIN,
+                  element_layout: str = ELEMENT_LAYOUT_VIRAL_ELEC) -> None:
     print(f"== Curse ranking for +{' / '.join(roll.positives)} "
           f"({trials} seeded trials each)")
     rows: list[tuple[float, str, float]] = []
@@ -1202,11 +1306,12 @@ def _print_curses(roll: RivenRoll, trials: int, seed: int,
         if curse in roll.positives:
             continue
         candidate = RivenRoll(roll.positives, curse)
-        if not supports_simulation(build_corinth(candidate)):
+        build = build_corinth(candidate, element_layout=element_layout)
+        if not supports_simulation(build):
             continue
-        report = steady_state_dps(build_corinth(candidate))
-        result = run_trials(candidate, trials, base_seed=seed,
-                            target=target)
+        report = steady_state_dps(build)
+        result = run_trials(candidate, trials, base_seed=seed, target=target,
+                            element_layout=element_layout)
         rows.append((result["ttk_mean"], curse, report.total_dps))
     rows.sort()
     widths = [24, 10, 12]
@@ -1231,23 +1336,29 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--target", choices=TARGETS, default=TARGET_EXIMUS,
                         help="enemy variant: the Eximus Heavy Gunner with "
                              "Overguard (default) or the plain one")
+    parser.add_argument("--elements", choices=ELEMENT_LAYOUTS,
+                        default=ELEMENT_LAYOUT_VIRAL_ELEC,
+                        help="pairing of the three elemental mods: Viral + "
+                             "Electricity (default) or Corrosive + Cold")
     args = parser.parse_args(argv)
     label = TARGET_LABELS[args.target]
     _print_target_summary(args.target)
-    _print_build_summary()
-    winners = _print_analytic(args.top)
+    _print_build_summary(args.elements)
+    winners = _print_analytic(args.top, args.elements)
     rolls: list[RivenRoll | None] = list(dict.fromkeys(winners))
     if None not in rolls:
         rolls.insert(0, None)
     results = _print_trials(
         rolls, args.trials, args.seed, ARMOR_CURVE_AUDITED,
-        f"Monte Carlo TTK, {label}, audited armor curve", args.target)
+        f"Monte Carlo TTK, {label}, audited armor curve", args.target,
+        args.elements)
     if args.sensitivity:
         _print_trials(rolls, args.trials, args.seed, ARMOR_CURVE_LINEAR,
                       "Sensitivity: same rolls on the linear armor reading",
-                      args.target)
+                      args.target, args.elements)
     if args.curses:
-        _print_curses(results[0]["roll"], args.trials, args.seed, args.target)
+        _print_curses(results[0]["roll"], args.trials, args.seed, args.target,
+                      args.elements)
 
 
 if __name__ == "__main__":
